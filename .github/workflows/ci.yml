@@ -95,7 +95,8 @@ jobs:
   deploy:
     name: Deploy web (GCP Cloud Run)
     runs-on: ubuntu-latest
-    needs: [check, build-web, build-desktop, build-android]
+    # Add back in build-android when we have a way to sign the APK. 
+    needs: [check, build-web, build-desktop]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     environment: production
     steps:
