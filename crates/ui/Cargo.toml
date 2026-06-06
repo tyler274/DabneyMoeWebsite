@@ -1,0 +1,24 @@
+[package]
+name = "ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+leptos = { workspace = true }
+leptos_meta = { workspace = true }
+leptos_router = { workspace = true }
+
+[features]
+default = []
+# Client-side rendering (used by the Tauri/Trunk build).
+csr = ["leptos/csr"]
+# Browser hydration of server-rendered HTML (used by the web build).
+hydrate = ["leptos/hydrate"]
+# Server-side rendering (used by the Axum server).
+ssr = [
+  "leptos/ssr",
+  "leptos_meta/ssr",
+  "leptos_router/ssr",
+]

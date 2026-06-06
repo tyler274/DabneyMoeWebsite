@@ -1,1 +1,25 @@
-.direnv/
+# Rust / Cargo
+/target
+**/target
+
+# Leptos / Trunk build output
+/dist
+/crates/**/dist
+/style/output.css
+
+# Tauri generated files
+/src-tauri/gen
+/src-tauri/target
+
+# JS tooling (Bun)
+/node_modules
+bun.lockb
+
+# Nix / direnv
+/.direnv
+result
+result-*
+
+# Editor / OS
+.DS_Store
+*.swp

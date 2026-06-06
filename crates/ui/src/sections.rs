@@ -1,0 +1,248 @@
+use leptos::prelude::*;
+
+use crate::data::{EXPERIENCE, SERVICES, SKILLS, SUMMARY, TAGLINE};
+
+pub const EMAIL: &str = "tp@dabney.moe";
+pub const GITHUB: &str = "https://github.com/tyler274";
+pub const LINKEDIN: &str = "https://linkedin.com/in/tyler-port-9a795455";
+
+#[component]
+pub fn NavBar() -> impl IntoView {
+    view! {
+        <header class="sticky top-0 z-50 border-b border-white/5 bg-slate-950/70 backdrop-blur">
+            <nav class="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
+                <a href="#top" class="text-lg font-semibold tracking-tight text-white">
+                    "Tyler Port"
+                    <span class="text-cyan-400">"."</span>
+                </a>
+                <div class="hidden items-center gap-8 text-sm text-slate-300 md:flex">
+                    <a href="#services" class="transition hover:text-white">"Services"</a>
+                    <a href="#experience" class="transition hover:text-white">"Experience"</a>
+                    <a href="#skills" class="transition hover:text-white">"Skills"</a>
+                    <a
+                        href="#contact"
+                        class="rounded-full bg-cyan-500 px-4 py-1.5 font-medium text-slate-950 transition hover:bg-cyan-400"
+                    >
+                        "Hire me"
+                    </a>
+                </div>
+            </nav>
+        </header>
+    }
+}
+
+#[component]
+pub fn Hero() -> impl IntoView {
+    view! {
+        <section
+            id="top"
+            class="relative overflow-hidden border-b border-white/5 px-6 py-24 sm:py-32"
+        >
+            <div class="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60%_50%_at_50%_0%,rgba(34,211,238,0.18),transparent)]"></div>
+            <div class="mx-auto max-w-5xl">
+                <p class="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium uppercase tracking-widest text-cyan-300">
+                    "Available for freelance & contract work"
+                </p>
+                <h1 class="max-w-3xl text-4xl font-bold leading-tight tracking-tight text-white sm:text-6xl">
+                    "Tyler Alamo Port"
+                </h1>
+                <p class="mt-4 text-xl font-medium text-cyan-300">{TAGLINE}</p>
+                <p class="mt-6 max-w-2xl text-lg leading-relaxed text-slate-300">{SUMMARY}</p>
+                <div class="mt-10 flex flex-wrap gap-4">
+                    <a
+                        href="#contact"
+                        class="rounded-full bg-cyan-500 px-6 py-3 font-semibold text-slate-950 transition hover:bg-cyan-400"
+                    >
+                        "Start a project"
+                    </a>
+                    <a
+                        href="/resume.pdf"
+                        target="_blank"
+                        rel="noopener"
+                        class="rounded-full border border-white/15 px-6 py-3 font-semibold text-white transition hover:border-white/40 hover:bg-white/5"
+                    >
+                        "Download résumé"
+                    </a>
+                </div>
+            </div>
+        </section>
+    }
+}
+
+#[component]
+pub fn Services() -> impl IntoView {
+    view! {
+        <Section id="services" eyebrow="What I do" title="Services">
+            <div class="grid gap-6 sm:grid-cols-2">
+                {SERVICES
+                    .iter()
+                    .map(|s| {
+                        view! {
+                            <div class="group rounded-2xl border border-white/10 bg-white/[0.02] p-6 transition hover:border-cyan-400/40 hover:bg-white/[0.04]">
+                                <div class="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-cyan-400/10 text-xl text-cyan-300">
+                                    {s.icon}
+                                </div>
+                                <h3 class="text-lg font-semibold text-white">{s.title}</h3>
+                                <p class="mt-2 text-sm leading-relaxed text-slate-400">
+                                    {s.blurb}
+                                </p>
+                            </div>
+                        }
+                    })
+                    .collect_view()}
+            </div>
+        </Section>
+    }
+}
+
+#[component]
+pub fn Experience() -> impl IntoView {
+    view! {
+        <Section id="experience" eyebrow="Track record" title="Experience">
+            <ol class="relative space-y-10 border-l border-white/10 pl-6">
+                {EXPERIENCE
+                    .iter()
+                    .map(|r| {
+                        view! {
+                            <li class="relative">
+                                <span class="absolute -left-[31px] top-1.5 h-3 w-3 rounded-full border-2 border-cyan-400 bg-slate-950"></span>
+                                <div class="flex flex-wrap items-baseline justify-between gap-x-4">
+                                    <h3 class="text-lg font-semibold text-white">
+                                        {r.company}
+                                        <span class="text-slate-500">" · "</span>
+                                        <span class="text-slate-400">{r.location}</span>
+                                    </h3>
+                                    <span class="text-sm font-medium text-cyan-300">
+                                        {r.period}
+                                    </span>
+                                </div>
+                                <p class="mt-0.5 text-sm font-medium text-slate-300">{r.title}</p>
+                                <ul class="mt-3 space-y-2">
+                                    {r.points
+                                        .iter()
+                                        .map(|p| {
+                                            view! {
+                                                <li class="flex gap-3 text-sm leading-relaxed text-slate-400">
+                                                    <span class="mt-2 h-1 w-1 shrink-0 rounded-full bg-cyan-400"></span>
+                                                    <span>{*p}</span>
+                                                </li>
+                                            }
+                                        })
+                                        .collect_view()}
+                                </ul>
+                            </li>
+                        }
+                    })
+                    .collect_view()}
+            </ol>
+        </Section>
+    }
+}
+
+#[component]
+pub fn Skills() -> impl IntoView {
+    view! {
+        <Section id="skills" eyebrow="Toolbox" title="Skills">
+            <div class="grid gap-6 sm:grid-cols-3">
+                {SKILLS
+                    .iter()
+                    .map(|g| {
+                        view! {
+                            <div class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
+                                <h3 class="mb-4 text-sm font-semibold uppercase tracking-widest text-cyan-300">
+                                    {g.label}
+                                </h3>
+                                <ul class="flex flex-wrap gap-2">
+                                    {g.items
+                                        .iter()
+                                        .map(|item| {
+                                            view! {
+                                                <li class="rounded-lg bg-white/5 px-2.5 py-1 text-xs text-slate-300">
+                                                    {*item}
+                                                </li>
+                                            }
+                                        })
+                                        .collect_view()}
+                                </ul>
+                            </div>
+                        }
+                    })
+                    .collect_view()}
+            </div>
+        </Section>
+    }
+}
+
+#[component]
+pub fn Contact() -> impl IntoView {
+    let mailto = format!("mailto:{EMAIL}");
+    view! {
+        <Section id="contact" eyebrow="Get in touch" title="Let's build something">
+            <div class="rounded-2xl border border-white/10 bg-gradient-to-br from-cyan-500/10 to-transparent p-8 sm:p-10">
+                <p class="max-w-2xl text-lg leading-relaxed text-slate-300">
+                    "Have a project that needs systems expertise, GPU performance, or a "
+                    "full-stack build? I take on freelance and contract work — let's talk."
+                </p>
+                <div class="mt-8 flex flex-wrap gap-4">
+                    <a
+                        href=mailto
+                        class="rounded-full bg-cyan-500 px-6 py-3 font-semibold text-slate-950 transition hover:bg-cyan-400"
+                    >
+                        {EMAIL}
+                    </a>
+                    <a
+                        href=GITHUB
+                        target="_blank"
+                        rel="noopener"
+                        class="rounded-full border border-white/15 px-6 py-3 font-semibold text-white transition hover:border-white/40 hover:bg-white/5"
+                    >
+                        "GitHub"
+                    </a>
+                    <a
+                        href=LINKEDIN
+                        target="_blank"
+                        rel="noopener"
+                        class="rounded-full border border-white/15 px-6 py-3 font-semibold text-white transition hover:border-white/40 hover:bg-white/5"
+                    >
+                        "LinkedIn"
+                    </a>
+                </div>
+            </div>
+        </Section>
+    }
+}
+
+#[component]
+pub fn Footer() -> impl IntoView {
+    view! {
+        <footer class="border-t border-white/5 px-6 py-10">
+            <div class="mx-auto flex max-w-5xl flex-col items-center justify-between gap-2 text-sm text-slate-500 sm:flex-row">
+                <span>"© 2026 Tyler Port · dabney.moe"</span>
+                <span>"Built with Rust, Leptos & Tauri"</span>
+            </div>
+        </footer>
+    }
+}
+
+/// Shared section wrapper: consistent spacing, eyebrow label, and heading.
+#[component]
+fn Section(
+    id: &'static str,
+    eyebrow: &'static str,
+    title: &'static str,
+    children: Children,
+) -> impl IntoView {
+    view! {
+        <section id=id class="border-b border-white/5 px-6 py-20">
+            <div class="mx-auto max-w-5xl">
+                <p class="mb-2 text-sm font-semibold uppercase tracking-widest text-cyan-400">
+                    {eyebrow}
+                </p>
+                <h2 class="mb-10 text-3xl font-bold tracking-tight text-white sm:text-4xl">
+                    {title}
+                </h2>
+                {children()}
+            </div>
+        </section>
+    }
+}

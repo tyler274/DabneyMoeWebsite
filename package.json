@@ -1,0 +1,15 @@
+{
+  "name": "dabney-moe",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tooling (Tailwind CSS, scripts) for the dabney.moe Leptos + Tauri project. Managed with Bun.",
+  "type": "module",
+  "scripts": {
+    "css": "tailwindcss -i style/input.css -o style/output.css",
+    "css:watch": "tailwindcss -i style/input.css -o style/output.css --watch",
+    "css:build": "tailwindcss -i style/input.css -o style/output.css --minify"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  }
+}

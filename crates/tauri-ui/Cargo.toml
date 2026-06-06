@@ -1,0 +1,15 @@
+[package]
+name = "tauri-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "tauri-ui"
+path = "src/main.rs"
+
+[dependencies]
+ui = { workspace = true, features = ["csr"] }
+leptos = { workspace = true, features = ["csr"] }
+console_error_panic_hook = { workspace = true }

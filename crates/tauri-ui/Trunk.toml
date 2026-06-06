@@ -1,0 +1,12 @@
+# Trunk build for the Tauri CSR frontend.
+# Invoke from the repo root: `trunk build --config crates/tauri-ui/Trunk.toml`.
+# Paths are resolved relative to this file's directory.
+
+[build]
+target = "index.html"
+# Emit into the repo-root `dist/`, which `src-tauri/tauri.conf.json` serves.
+dist = "../../dist"
+
+[serve]
+address = "127.0.0.1"
+port = 1420

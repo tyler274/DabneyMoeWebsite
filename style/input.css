@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* Offset in-page anchor jumps so the sticky navbar doesn't cover headings. */
+  :target {
+    scroll-margin-top: 5rem;
+  }
+
+  ::selection {
+    background-color: rgb(34 211 238 / 0.3);
+  }
+}
