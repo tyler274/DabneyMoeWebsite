@@ -23,4 +23,5 @@ with pkgs; [
   python3
   # Nix formatter (matches the flake `formatter`); also gated in CI.
   nixpkgs-fmt
+  # clippy
 ]
