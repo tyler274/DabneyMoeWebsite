@@ -16,8 +16,8 @@ fn try_tauri_open(url: &str) -> bool {
         Some(w) => w,
         None => return false,
     };
-    let tauri = Reflect::get(win.as_ref(), &JsValue::from_str("__TAURI__"))
-        .unwrap_or(JsValue::UNDEFINED);
+    let tauri =
+        Reflect::get(win.as_ref(), &JsValue::from_str("__TAURI__")).unwrap_or(JsValue::UNDEFINED);
     if tauri.is_undefined() || tauri.is_null() {
         return false;
     }
