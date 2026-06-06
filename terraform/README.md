@@ -154,6 +154,32 @@ doppler run --name-transformer tf-var -- tofu -chdir=terraform/gcp apply ...
 The Terraform `doppler` provider stores secret values in state, so secure your
 state (see below). Leaving `doppler_token` empty disables all Doppler resources.
 
+### CI/CD deploy (GitHub Actions)
+
+When `doppler_token` is set, the GCP root also provisions everything CI needs to
+deploy (`terraform/gcp/ci.tf`):
+
+- a `ci-deployer` service account with `artifactregistry.writer`, `run.admin`,
+  and `iam.serviceAccountUser`,
+- a JSON key for it, stored in Doppler as `GCP_SA_KEY`, and
+- a read-only Doppler **service token** (output `doppler_ci_token`).
+
+Wire it up once:
+
+```bash
+# from terraform/gcp, after apply:
+gh secret set DOPPLER_TOKEN --repo <owner>/<repo> \
+  --body "$(tofu output -raw doppler_ci_token)"
+```
+
+On green `main`, `.github/workflows/ci.yml`'s `deploy` job runs
+`doppler run -- ...` (its only GitHub secret is `DOPPLER_TOKEN`), which injects
+`GCP_SA_KEY` / `GCP_PROJECT_ID` / `GCP_REGION`. It then builds the Nix image,
+pushes it (by commit SHA + `latest`), and rolls a new Cloud Run revision with
+`gcloud run deploy`. Terraform owns the infra; CI owns the image — the Cloud Run
+module sets `ignore_changes` on the container image so `tofu apply` never reverts
+the live revision.
+
 ## State
 
 Each root uses **local state** by default. Commented remote-backend stanzas

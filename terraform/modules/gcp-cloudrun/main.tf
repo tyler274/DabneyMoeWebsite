@@ -63,6 +63,13 @@ resource "google_cloud_run_v2_service" "web" {
   }
 
   depends_on = [google_project_service.services]
+
+  # Terraform provisions the service with the initial image; subsequent image
+  # rollouts are owned by CI/CD (`gcloud run deploy`). Ignore image drift so the
+  # two don't fight (a `tofu apply` won't revert CI's latest revision).
+  lifecycle {
+    ignore_changes = [template[0].containers[0].image]
+  }
 }
 
 # Public access. Cloud Run is private by default; this opens it to the world.

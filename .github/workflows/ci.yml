@@ -82,92 +82,62 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  # Deploy on green main. The website ships to Google Cloud Run via the Nix
-  # image + Terraform under ./terraform (default cloud = GCP; the AWS/Azure
-  # modules are ready but their jobs stay gated). Play Store publishing remains
-  # a placeholder pending the Play Console account.
+  # Deploy on green main. Infra (Artifact Registry, the Cloud Run service,
+  # Cloudflare DNS, the domain mapping) is provisioned out-of-band by Terraform
+  # under ./terraform; this job only builds the Nix image, pushes it, and rolls a
+  # new Cloud Run revision (`gcloud run deploy`). The Cloud Run module ignores
+  # image drift, so CI and Terraform don't fight over the running revision.
   #
-  # This job no-ops cleanly until the GCP secrets are set: add GCP_SA_KEY (a
-  # service-account JSON key) and GCP_PROJECT, and — so state persists across
-  # runs — uncomment the `gcs` backend in terraform/gcp/backend.tf.
+  # Secrets come from Doppler: the only GitHub secret is DOPPLER_TOKEN (a
+  # read-only service token, created by Terraform). `doppler run` injects
+  # GCP_SA_KEY, GCP_PROJECT_ID, and GCP_REGION at runtime. The job no-ops cleanly
+  # until DOPPLER_TOKEN is set.
   deploy:
     name: Deploy web (GCP Cloud Run)
     runs-on: ubuntu-latest
     needs: [check, build-web, build-desktop, build-android]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     environment: production
-    env:
-      IMAGE_TAG: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@v22
       - uses: DeterminateSystems/magic-nix-cache-action@v14
 
-      - name: Check for GCP credentials
+      - name: Check for Doppler token
         id: creds
         env:
-          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |
-          if [ -n "$GCP_SA_KEY" ]; then
+          if [ -n "$DOPPLER_TOKEN" ]; then
             echo "configured=true" >> "$GITHUB_OUTPUT"
           else
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::GCP_SA_KEY not set; skipping web deploy. See terraform/README.md."
+            echo "::notice::DOPPLER_TOKEN not set; skipping web deploy. See terraform/README.md."
           fi
 
-      - name: Authenticate to Google Cloud
-        if: steps.creds.outputs.configured == 'true'
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-
-      - name: Set up gcloud
-        if: steps.creds.outputs.configured == 'true'
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Build SSR server image
-        if: steps.creds.outputs.configured == 'true'
-        run: nix build .#serverImage
-
-      - name: Terraform init
-        if: steps.creds.outputs.configured == 'true'
-        run: nix develop -c tofu -chdir=terraform/gcp init -input=false
-
-      # Phase 1: ensure the Artifact Registry repo exists before pushing.
-      - name: Terraform apply (registry)
+      # Build the image, push it (by commit SHA + latest), and roll a new
+      # Cloud Run revision. gcloud/skopeo/doppler all come from the Nix dev
+      # shell; Doppler injects the GCP creds + project/region.
+      - name: Build, push, and deploy revision
         if: steps.creds.outputs.configured == 'true'
         env:
-          GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |
-          nix develop -c tofu -chdir=terraform/gcp apply -input=false -auto-approve \
-            -var="project_id=$GCP_PROJECT" \
-            -target=module.site.google_project_service.services \
-            -target=module.site.google_artifact_registry_repository.repo
+          nix develop -c doppler run -- bash -euo pipefail -c '
+            printf "%s" "$GCP_SA_KEY" > "$RUNNER_TEMP/gcp-sa.json"
+            gcloud auth activate-service-account --key-file="$RUNNER_TEMP/gcp-sa.json"
+            gcloud config set project "$GCP_PROJECT_ID"
 
-      - name: Push image to Artifact Registry
-        if: steps.creds.outputs.configured == 'true'
-        run: |
-          REPO=$(nix develop -c tofu -chdir=terraform/gcp output -raw registry_repository_url)
-          IMAGE="$REPO/web:$IMAGE_TAG"
-          TOKEN=$(gcloud auth print-access-token)
-          nix develop -c skopeo --insecure-policy copy --dest-creds "oauth2accesstoken:$TOKEN" \
-            docker-archive:result "docker://$IMAGE"
-          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+            nix build .#serverImage
 
-      # Phase 2: roll the service out to the freshly-pushed image.
-      - name: Terraform apply (service)
-        if: steps.creds.outputs.configured == 'true'
-        env:
-          GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
-        run: |
-          nix develop -c tofu -chdir=terraform/gcp apply -input=false -auto-approve \
-            -var="project_id=$GCP_PROJECT" \
-            -var="image=$IMAGE"
+            REPO="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/dabney"
+            IMAGE="$REPO/web:$GITHUB_SHA"
+            TOKEN="$(gcloud auth print-access-token)"
+            skopeo --insecure-policy copy --dest-creds "oauth2accesstoken:$TOKEN" docker-archive:result "docker://$IMAGE"
+            skopeo --insecure-policy copy --dest-creds "oauth2accesstoken:$TOKEN" docker-archive:result "docker://$REPO/web:latest"
 
-      # To deploy to AWS or Azure instead, mirror the steps above against
-      # terraform/aws or terraform/azure (the modules are ready): build
-      # .#serverImage, push to ECR/ACR with skopeo, and run the two-phase
-      # `tofu apply`. See terraform/README.md.
+            gcloud run deploy dabney-web --image "$IMAGE" --region "$GCP_REGION" --quiet
+          '
 
       - name: Publish app
         run: |
