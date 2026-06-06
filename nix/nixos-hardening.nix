@@ -99,13 +99,14 @@ in
       after = [ "network.target" ];
 
       environment = {
-        LEPTOS_OUTPUT_NAME  = "dabney";
-        LEPTOS_SITE_ROOT    = if cfg.siteRoot != "" then cfg.siteRoot
-                              else "${cfg.package}/share/site";
+        LEPTOS_OUTPUT_NAME = "dabney";
+        LEPTOS_SITE_ROOT =
+          if cfg.siteRoot != "" then cfg.siteRoot
+          else "${cfg.package}/share/site";
         LEPTOS_SITE_PKG_DIR = "pkg";
-        LEPTOS_SITE_ADDR    = cfg.listenAddr;
-        LEPTOS_ENV          = "PROD";
-        SSL_CERT_FILE       = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+        LEPTOS_SITE_ADDR = cfg.listenAddr;
+        LEPTOS_ENV = "PROD";
+        SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
       };
 
       serviceConfig = {
@@ -119,36 +120,36 @@ in
         # The Nix store is read-only by kernel CoW semantics; these directives
         # additionally prevent the process from seeing or modifying anything
         # outside the store.
-        ProtectSystem        = "strict";   # / read-only except allowed paths
-        ProtectHome          = true;       # /home, /root, /run/user invisible
-        PrivateTmp           = true;       # private /tmp, not shared with host
-        PrivateDevices       = true;       # no /dev access except null/zero/random
+        ProtectSystem = "strict"; # / read-only except allowed paths
+        ProtectHome = true; # /home, /root, /run/user invisible
+        PrivateTmp = true; # private /tmp, not shared with host
+        PrivateDevices = true; # no /dev access except null/zero/random
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
-        ProtectKernelLogs    = true;
+        ProtectKernelLogs = true;
         ProtectControlGroups = true;
-        ProtectClock         = true;
-        ProtectHostname      = true;
+        ProtectClock = true;
+        ProtectHostname = true;
 
         # Nothing to write at runtime — make that explicit.
-        ReadOnlyPaths    = [ "/" ];
-        ReadWritePaths   = [ ];          # override here if the server ever needs a writable dir
+        ReadOnlyPaths = [ "/" ];
+        ReadWritePaths = [ ]; # override here if the server ever needs a writable dir
         InaccessiblePaths = [ "/proc/sys" "/sys/fs" ];
 
         # ── Capability bounding set ────────────────────────────────────────
         # A static-musl HTTP server listening on port > 1024 needs zero Linux
         # capabilities.  Drop them all so a root escalation from inside the
         # process is impossible.
-        CapabilityBoundingSet = "";       # empty = drop all
-        AmbientCapabilities   = "";
-        NoNewPrivileges       = true;
+        CapabilityBoundingSet = ""; # empty = drop all
+        AmbientCapabilities = "";
+        NoNewPrivileges = true;
 
         # ── Namespace isolation ────────────────────────────────────────────
         # Give the process its own network namespace view (no access to host
         # internal interfaces) and PID namespace (can't signal other processes).
-        PrivateNetwork   = false;         # must be false to accept external TCP
-        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];  # no UNIX, netlink, raw sockets
-        IPAddressDeny    = "any";         # deny all outbound by default …
+        PrivateNetwork = false; # must be false to accept external TCP
+        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ]; # no UNIX, netlink, raw sockets
+        IPAddressDeny = "any"; # deny all outbound by default …
         # … re-open only what the SSR server legitimately needs:
         # (add upstream API CIDRs here if the server makes outbound HTTP calls)
 
@@ -157,18 +158,18 @@ in
         # syscall profile.  The @system-service set covers every syscall a
         # well-behaved UNIX daemon needs; anything outside it raises EPERM
         # before it reaches the kernel.
-        SystemCallFilter      = [ "@system-service" ];
+        SystemCallFilter = [ "@system-service" ];
         SystemCallErrorNumber = "EPERM";
         SystemCallArchitectures = "native";
 
         # ── Misc hardening ─────────────────────────────────────────────────
-        LockPersonality   = true;         # disallow personality() ABI tricks
-        MemoryDenyWriteExecute = true;    # no JIT / W^X (safe for musl+Rust)
-        RestrictNamespaces = true;        # can't create new namespaces (no pivot_root escape)
-        RestrictRealtime   = true;
-        RestrictSUIDSGID   = true;
-        RemoveIPC          = true;
-        UMask              = "0077";
+        LockPersonality = true; # disallow personality() ABI tricks
+        MemoryDenyWriteExecute = true; # no JIT / W^X (safe for musl+Rust)
+        RestrictNamespaces = true; # can't create new namespaces (no pivot_root escape)
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        RemoveIPC = true;
+        UMask = "0077";
       };
     };
   };
