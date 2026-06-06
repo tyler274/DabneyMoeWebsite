@@ -17,11 +17,11 @@
   # modules and threads the shared values (pkgs, toolchains, tauri deps) between
   # them, then maps the results onto flake outputs.
   outputs =
-    { self
-    , nixpkgs
+    { nixpkgs
     , flake-utils
     , rust-overlay
     , crane
+    , ...
     }:
     flake-utils.lib.eachDefaultSystem (
       system:

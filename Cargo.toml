@@ -6,7 +6,6 @@ members = ["crates/ui", "crates/web", "crates/tauri-ui", "crates/icon-gen", "src
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-authors = ["Tyler Port <tp@dabney.moe>"]
 repository = "https://github.com/tyler274"
 
 [workspace.dependencies]
