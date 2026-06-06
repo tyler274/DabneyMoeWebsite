@@ -57,6 +57,6 @@ for a real cert.
 ## HSTS
 
 The `Caddyfile` sets `Strict-Transport-Security` with a 60-day `max-age` to start
-(per the Let's Encrypt integration guidance — a too-early long max-age can lock
+(per the Let's Encrypt integration guidance; a too-early long max-age can lock
 users out if a cert problem appears). Once HTTPS is stable, bump it to
 `max-age=31536000; includeSubDomains; preload`.

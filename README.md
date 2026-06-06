@@ -31,7 +31,7 @@ src-tauri          Tauri v2 app (desktop + mobile), serves dist/
 
 ## Prerequisites
 
-Everything is provided by the Nix flake — you only need Nix with flakes enabled
+Everything is provided by the Nix flake; you only need Nix with flakes enabled
 (and, optionally, `direnv`).
 
 ```bash
@@ -76,10 +76,10 @@ LEPTOS_SITE_ADDR=0.0.0.0:3039 ./target/release/web`.
 # Desktop dev (launches the webview against the Trunk dev server)
 cargo tauri dev
 
-# Desktop build — compile only (no OS packaging)
+# Desktop build: compile only (no OS packaging)
 cargo tauri build --no-bundle
 
-# Desktop build — full installers (deb/rpm/AppImage on Linux). Requires the
+# Desktop build: full installers (deb/rpm/AppImage on Linux). Requires the
 # relevant OS packaging tools to be available.
 cargo tauri build
 ```
@@ -92,8 +92,8 @@ as Tauri's `beforeDevCommand` / `beforeBuildCommand`, emitting to `dist/`.
 The project is wired for mobile (lib crate-types, mobile entry point, and icon
 assets are already generated under `src-tauri/icons/android` and `.../ios`).
 
-Android tooling is provided declaratively by a dedicated flake dev shell —
-`nix develop .#android` — which adds the Android SDK/NDK (via `androidenv`), a
+Android tooling is provided declaratively by a dedicated flake dev shell,
+`nix develop .#android`, which adds the Android SDK/NDK (via `androidenv`), a
 JDK, the Android Rust targets, and the `ANDROID_HOME` / `NDK_HOME` / `JAVA_HOME`
 environment. No manual SDK install or license clicking required:
 
@@ -110,7 +110,7 @@ iOS still needs Xcode (macOS only): `cargo tauri ios init && cargo tauri ios dev
 ## Testing & CI
 
 ```bash
-# Run the full gate locally — exactly what CI runs:
+# Run the full gate locally (exactly what CI runs):
 nix run .#ci          # rustfmt --check, clippy (-D warnings), and all tests
 ```
 

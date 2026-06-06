@@ -5,7 +5,7 @@ use crate::data::{EXPERIENCE, SERVICES, SKILLS, SUMMARY, TAGLINE};
 /// On WASM builds, attempt to open `url` via the Tauri opener plugin, exposed
 /// on `window.__TAURI__` (requires `app.withGlobalTauri = true`). Returns `true`
 /// if the call was dispatched (so the caller can `prevent_default` on the
-/// originating DOM event), `false` otherwise (e.g. running in a plain browser —
+/// originating DOM event), `false` otherwise (e.g. running in a plain browser;
 /// let the standard `href` behaviour take over).
 #[cfg(not(feature = "ssr"))]
 fn try_tauri_open(url: &str) -> bool {

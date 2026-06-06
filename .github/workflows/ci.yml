@@ -111,7 +111,7 @@ jobs:
 
   # Build the production OCI image (Nix). Separated from deploy so the
   # image tar is built once, uploaded as an artifact, and the deploy job
-  # just pushes it — no `nix build` on the deploy runner and no exposure
+  # just pushes it; no `nix build` on the deploy runner and no exposure
   # to magic-nix-cache rate-limiting there.
   build-image:
     name: Build server OCI image

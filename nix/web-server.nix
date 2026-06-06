@@ -130,7 +130,7 @@ let
     contents = [ server pkgs.cacert pkgs.dockerTools.fakeNss ];
     config = {
       Cmd = [ "${server}/bin/web" ];
-      # Run as nobody:nobody — the process never has root privileges even when
+      # Run as nobody:nobody; the process never has root privileges even when
       # the container runtime doesn't enforce non-root on its own.
       User = "65534:65534";
       Env = [

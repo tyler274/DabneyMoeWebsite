@@ -131,7 +131,7 @@ in
         ProtectClock = true;
         ProtectHostname = true;
 
-        # Nothing to write at runtime — make that explicit.
+        # Nothing to write at runtime; make that explicit.
         ReadOnlyPaths = [ "/" ];
         ReadWritePaths = [ ]; # override here if the server ever needs a writable dir
         InaccessiblePaths = [ "/proc/sys" "/sys/fs" ];

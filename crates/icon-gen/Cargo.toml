@@ -6,5 +6,5 @@ license.workspace = true
 description = "Dev tool: generates the source app icon for `cargo tauri icon`."
 
 [dependencies]
-# PNG encoding only — keeps the dependency surface small.
+# PNG encoding only; keeps the dependency surface small.
 image = { version = "0.25", default-features = false, features = ["png"] }

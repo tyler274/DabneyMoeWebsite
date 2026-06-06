@@ -60,7 +60,7 @@ cd terraform/gcp                 # or aws / azure
 cp terraform.tfvars.example terraform.tfvars   # fill in project/region/etc.
 tofu init                        # `terraform` works identically
 
-# Phase 1 — create just the registry.
+# Phase 1: create just the registry.
 tofu apply -target=module.site.google_artifact_registry_repository.repo
 #   aws:   -target=module.site.aws_ecr_repository.repo
 #   azure: -target=module.site.azurerm_container_registry.acr
@@ -70,7 +70,7 @@ tofu apply -target=module.site.google_artifact_registry_repository.repo
 nix build .#serverImage
 skopeo --insecure-policy copy docker-archive:result docker://<registry_repository_url>/web:latest
 
-# Phase 2 — set `image` (in terraform.tfvars) and apply the rest.
+# Phase 2: set `image` (in terraform.tfvars) and apply the rest.
 tofu apply
 ```
 
@@ -108,7 +108,7 @@ the domain is verified:
 - **GCP + Cloudflare** (dabney.moe is hosted on Cloudflare): instead of Cloud
   DNS, set `enable_cloudflare_dns = true`, `cloudflare_api_token` (Zone:DNS:Edit),
   and `cloudflare_zone_id`. The root config mirrors the records the Cloud Run
-  mapping reports into Cloudflare as **DNS-only** (`proxied = false`) — Google has
+  mapping reports into Cloudflare as **DNS-only** (`proxied = false`). Google has
   to terminate TLS to issue its managed cert, and a proxied record wedges
   provisioning by intercepting the ACME challenge. Set `google_site_verification`
   (the token from Search Console) to also create the ownership TXT. Because the
@@ -176,12 +176,12 @@ On green `main`, `.github/workflows/ci.yml`'s `deploy` job runs
 `doppler run -- ...` (its only GitHub secret is `DOPPLER_TOKEN`), which injects
 `GCP_SA_KEY` / `GCP_PROJECT_ID` / `GCP_REGION`. It then builds the Nix image,
 pushes it (by commit SHA + `latest`), and rolls a new Cloud Run revision with
-`gcloud run deploy`. Terraform owns the infra; CI owns the image — the Cloud Run
+`gcloud run deploy`. Terraform owns the infra; CI owns the image, and the Cloud Run
 module sets `ignore_changes` on the container image so `tofu apply` never reverts
 the live revision.
 
 ## State
 
 Each root uses **local state** by default. Commented remote-backend stanzas
-(`gcs` / `s3` / `azurerm`) live in each `backend.tf` — uncomment and `tofu init`
+(`gcs` / `s3` / `azurerm`) live in each `backend.tf`; uncomment and `tofu init`
 once the backing bucket/account exists.
