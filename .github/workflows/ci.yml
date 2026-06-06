@@ -131,6 +131,13 @@ jobs:
 
             nix build .#serverImage
 
+            # The ubuntu-latest runner ships a v1 /etc/containers/registries.conf
+            # but the Nix-provided skopeo requires v2. Write a minimal v2 config
+            # to a temp file and override the path via the environment variable.
+            REGISTRIES_CONF="$RUNNER_TEMP/registries.conf"
+            printf 'unqualified-search-registries = ["docker.io"]\n' > "$REGISTRIES_CONF"
+            export CONTAINERS_REGISTRIES_CONF="$REGISTRIES_CONF"
+
             REPO="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/dabney"
             IMAGE="$REPO/web:$GITHUB_SHA"
             TOKEN="$(gcloud auth print-access-token)"
