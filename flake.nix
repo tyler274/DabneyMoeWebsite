@@ -51,7 +51,7 @@
 
         baseTools = import ./nix/base-tools.nix { inherit pkgs; };
 
-        android = import ./nix/android.nix { inherit pkgs pkgsAndroid; };
+        android = import ./nix/android.nix { inherit pkgsAndroid; };
 
         ci = import ./nix/ci.nix {
           inherit pkgs rustToolchain baseTools tauriDeps pkgConfigPath ldLibraryPath;
