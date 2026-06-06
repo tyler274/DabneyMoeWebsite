@@ -1,0 +1,24 @@
+# Trunk build for the Tauri CSR frontend.
+# Lives at the repo root so Trunk (and its hooks) run with the root as the
+# working directory. Invoke simply as `trunk build` / `trunk serve`.
+
+[build]
+# The CSR entry point for the Tauri shell.
+target = "crates/tauri-ui/index.html"
+# Emit into the repo-root `dist/`, which `src-tauri/tauri.conf.json` serves.
+dist = "dist"
+
+[serve]
+address = "127.0.0.1"
+port = 1420
+
+# Compile Tailwind to style/output.css before bundling. We invoke the
+# Nix-provided `tailwindcss` directly rather than Trunk's built-in integration:
+# Trunk would download its own dynamically-linked binary, which does not run on
+# NixOS. With Trunk.toml at the repo root, the hook's working directory is the
+# root, so these paths and the config's `content` globs resolve correctly. No
+# shell is used, keeping the hook OS-portable.
+[[hooks]]
+stage = "pre_build"
+command = "tailwindcss"
+command_arguments = ["-i", "style/input.css", "-o", "style/output.css", "--minify"]

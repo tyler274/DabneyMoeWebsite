@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeDevCommand": "trunk serve --config crates/tauri-ui/Trunk.toml",
-    "beforeBuildCommand": "trunk build --release --config crates/tauri-ui/Trunk.toml"
+    "beforeDevCommand": "trunk serve",
+    "beforeBuildCommand": "trunk build --release"
   },
   "app": {
     "windows": [

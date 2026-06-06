@@ -70,6 +70,11 @@
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath tauriDeps;
 
           shellHook = ''
+            # Trunk maps $NO_COLOR onto a boolean (clap) flag, so a value like
+            # "1" makes `trunk` (and thus `cargo tauri dev/build`) abort. Keep
+            # the no-color intent but use a value clap can parse.
+            if [ -n "''${NO_COLOR:-}" ]; then export NO_COLOR=true; fi
+
             echo "dabney.moe dev shell"
             echo "  $(rustc --version)"
             echo "  cargo-leptos $(cargo leptos --version 2>/dev/null | awk '{print $2}')"

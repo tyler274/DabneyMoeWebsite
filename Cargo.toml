@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/ui", "crates/web", "crates/tauri-ui", "src-tauri"]
+members = ["crates/ui", "crates/web", "crates/tauri-ui", "crates/icon-gen", "src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -21,7 +21,8 @@ axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["fs", "compression-gzip"] }
-wasm-bindgen = "=0.2.100"
+# Pinned to match the `wasm-bindgen-cli` provided by the Nix dev shell.
+wasm-bindgen = "=0.2.121"
 console_error_panic_hook = "0.1"
 
 serde = { version = "1", features = ["derive"] }
@@ -42,8 +43,8 @@ site-pkg-dir = "pkg"
 tailwind-input-file = "style/input.css"
 assets-dir = "public"
 
-site-addr = "127.0.0.1:3000"
-reload-port = 3001
+site-addr = "127.0.0.1:3039"
+reload-port = 3040
 browserquery = "defaults"
 env = "DEV"
 
