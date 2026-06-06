@@ -6,7 +6,7 @@ hosting. This directory provisions a serverless-container home for that image on
 any of the three major clouds, with one reusable module per cloud and a thin
 per-cloud root config so you can pick a target at apply time.
 
-```
+```bash
 terraform/
   modules/
     gcp-cloudrun/         Artifact Registry + Cloud Run v2 service (+ optional domain/DNS)

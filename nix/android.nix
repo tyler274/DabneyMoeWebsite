@@ -5,7 +5,7 @@
 # `pkgsAndroid` is a separate nixpkgs import with `allowUnfree` +
 # `android_sdk.accept_license`, so the default web/desktop shell stays free and
 # license-prompt-free.
-{ pkgs, pkgsAndroid }:
+{ pkgsAndroid }:
 let
   androidBuildToolsVersion = "34.0.0";
   # The version used for signing tools (apksigner, zipalign) and exposed on
