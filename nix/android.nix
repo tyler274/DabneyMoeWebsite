@@ -16,11 +16,12 @@ let
     # Keep platform 34 for the system image; add 36 because the Tauri-generated
     # project targets compileSdk/targetSdk 36 (AGP default as of Tauri 2.x).
     platformVersions = [ "34" "36" ];
-    # 34.0.0 is what we pin for aapt2 (via GRADLE_OPTS); 37.0.0 is what we
-    # expose on PATH for apksigner/zipalign and what we tell Gradle to use so
-    # it never tries to auto-download AGP's default 35.0.0 into the read-only
-    # Nix store.
-    buildToolsVersions = [ androidBuildToolsVersion androidSigningToolsVersion ];
+    # 34.0.0 → aapt2 override (GRADLE_OPTS); must match androidBuildToolsVersion.
+    # 35.0.0 → AGP 8.x default for R8/D8 minification; must be present in the
+    #           Nix store or Gradle will try (and fail) to auto-download it into
+    #           the read-only store.
+    # 37.0.0 → apksigner/zipalign on PATH; must match androidSigningToolsVersion.
+    buildToolsVersions = [ androidBuildToolsVersion "35.0.0" androidSigningToolsVersion ];
     includeNDK = true;
     ndkVersions = [ androidNdkVersion ];
     includeEmulator = true;
