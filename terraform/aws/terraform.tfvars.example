@@ -1,0 +1,9 @@
+region = "us-east-1"
+
+# Set after the ECR repo exists and the image has been pushed (phase 2):
+# image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/dabney-web:latest"
+
+# Optional custom domain:
+# custom_domain   = "dabney.moe"
+# manage_dns      = true
+# route53_zone_id = "Z0123456789ABCDEFGHIJ"

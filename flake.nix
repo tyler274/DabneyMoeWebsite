@@ -8,6 +8,9 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Used to vendor the Cargo dependency closure so the SSR server image can
+    # be built offline in the Nix sandbox.
+    crane.url = "github:ipetkov/crane";
   };
 
   outputs =
@@ -15,6 +18,7 @@
     , nixpkgs
     , flake-utils
     , rust-overlay
+    , crane
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
@@ -32,6 +36,14 @@
             android_sdk.accept_license = true;
           };
         };
+
+        # Terraform is unfree (BSL) in nixpkgs. Unfree tooling is permitted in
+        # the dev shell, so pull it from a dedicated allowUnfree import rather
+        # than flipping the whole default package set.
+        # terraform = (import nixpkgs {
+        #   inherit system overlays;
+        #   config.allowUnfree = true;
+        # }).terraform;
 
         # Toolchain pinned via rust-toolchain.toml (includes the
         # wasm32-unknown-unknown target needed for Leptos hydrate/CSR builds).
@@ -91,6 +103,8 @@
           # Build glue.
           pkg-config
           gcc
+          # General scripting (CI helpers, ad-hoc tooling).
+          python3
         ];
 
         # Declarative Android SDK: a single platform/build-tools/NDK plus an
@@ -160,10 +174,112 @@
             echo "==> CI checks passed"
           '';
         };
+
+        # --- Web server container image -----------------------------------
+        #
+        # The dabney.moe web frontend is a Leptos SSR app: an Axum binary
+        # (`web`) plus the hashed asset bundle under `target/site`. The deploy
+        # unit is therefore a container, which we build reproducibly with Nix
+        # and ship to any cloud's registry (see ./terraform).
+
+        craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
+
+        # Vendor the whole Cargo.lock closure into the store so `cargo leptos
+        # build` runs without network access inside the sandbox.
+        cargoVendorDir = craneLib.vendorCargoDeps { src = ./.; };
+
+        # Tools cargo-leptos shells out to during a release build.
+        leptosBuildTools = with pkgs; [
+          cargo-leptos
+          tailwindcss
+          dart-sass
+          wasm-bindgen-cli
+          binaryen
+          pkg-config
+        ];
+
+        # The release SSR build: `$out/bin/web` (server binary) plus
+        # `$out/share/site` (hashed assets + the wasm `pkg/` dir).
+        webServer = pkgs.stdenv.mkDerivation {
+          pname = "dabney-web";
+          version = "0.1.0";
+          src = ./.;
+
+          nativeBuildInputs = [ rustToolchain pkgs.removeReferencesTo ] ++ leptosBuildTools;
+
+          configurePhase = ''
+            runHook preConfigure
+            export HOME="$TMPDIR"
+            export CARGO_HOME="$TMPDIR/.cargo"
+            mkdir -p "$CARGO_HOME"
+            # crane's vendor dir ships a config.toml that redirects crates.io to
+            # the vendored sources in the store; reuse it verbatim.
+            cp ${cargoVendorDir}/config.toml "$CARGO_HOME/config.toml"
+            export CARGO_NET_OFFLINE=true
+            # Use the Nix-provided tailwind/sass binaries rather than letting
+            # cargo-leptos download its own (the sandbox has no network).
+            export LEPTOS_TAILWIND_VERSION="$(tailwindcss --help 2>/dev/null | head -n1 | awk '{print $NF}')"
+            runHook postConfigure
+          '';
+
+          buildPhase = ''
+            runHook preBuild
+            # Offline is enforced via CARGO_NET_OFFLINE; cargo-leptos doesn't
+            # accept cargo's --frozen passthrough.
+            cargo leptos build --release
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            runHook preInstall
+            install -Dm755 target/release/web "$out/bin/web"
+            mkdir -p "$out/share"
+            cp -r target/site "$out/share/site"
+            runHook postInstall
+          '';
+
+          # The release binary embeds source-path strings (panic locations)
+          # pointing at the vendored crates and the toolchain's std sources.
+          # They're never read at runtime, so scrub them to keep the runtime
+          # closure (and thus the image) from dragging in the whole toolchain.
+          postFixup = ''
+            find "$out" -type f \
+              -exec remove-references-to -t ${cargoVendorDir} -t ${rustToolchain} {} +
+          '';
+          disallowedReferences = [ cargoVendorDir rustToolchain ];
+
+          doCheck = false;
+        };
+
+        # OCI image: copies the server + assets in, sets the LEPTOS_* runtime
+        # env, and listens on 0.0.0.0:8080 (the port every cloud module wires
+        # its ingress to). Build with `nix build .#serverImage` -> result is a
+        # tarball you `skopeo copy docker-archive:result docker://<registry>`.
+        serverImage = pkgs.dockerTools.buildLayeredImage {
+          name = "dabney-web";
+          tag = "latest";
+          contents = [ webServer pkgs.cacert ];
+          config = {
+            Cmd = [ "${webServer}/bin/web" ];
+            Env = [
+              "LEPTOS_OUTPUT_NAME=dabney"
+              "LEPTOS_SITE_ROOT=${webServer}/share/site"
+              "LEPTOS_SITE_PKG_DIR=pkg"
+              "LEPTOS_SITE_ADDR=0.0.0.0:8080"
+              "LEPTOS_ENV=PROD"
+              "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+            ];
+            ExposedPorts = { "8080/tcp" = { }; };
+          };
+        };
       in
       {
         devShells.default = pkgs.mkShell {
-          packages = [ rustToolchain ] ++ baseTools ++ tauriDeps;
+          # `skopeo` pushes the SSR image to a cloud registry; `tofu`
+          # (OpenTofu, the MIT-licensed drop-in Terraform engine) drives the
+          # infra under ./terraform. OpenTofu keeps this shell free/unfree-
+          # prompt-free; the HCL is standard and `terraform` works identically.
+          packages = [ rustToolchain ] ++ baseTools ++ tauriDeps ++ [ pkgs.skopeo pkgs.opentofu ];
 
           PKG_CONFIG_PATH = pkgConfigPath;
           LD_LIBRARY_PATH = ldLibraryPath;
@@ -227,6 +343,10 @@
         };
 
         packages.ci = ci;
+        # The release SSR build (server binary + hashed assets).
+        packages.web = webServer;
+        # The deployable OCI image for the web server.
+        packages.serverImage = serverImage;
 
         apps.ci = {
           type = "app";

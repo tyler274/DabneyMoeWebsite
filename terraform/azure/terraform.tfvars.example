@@ -1,0 +1,10 @@
+location = "eastus"
+
+# Set after the ACR exists and the image has been pushed (phase 2):
+# image = "dabneyweb.azurecr.io/web:latest"
+
+# Optional custom domain (Azure validates the domain via the asuid TXT record
+# from the custom_domain_verification_id output before a cert can be bound):
+# custom_domain = "dabney.moe"
+# manage_dns    = true
+# dns_zone_name = "dabney.moe"

@@ -82,36 +82,96 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  # Deploy on green main. Hosting + store publishing are placeholders until
-  # the Google Cloud / Play Console accounts are provisioned.
+  # Deploy on green main. The website ships to Google Cloud Run via the Nix
+  # image + Terraform under ./terraform (default cloud = GCP; the AWS/Azure
+  # modules are ready but their jobs stay gated). Play Store publishing remains
+  # a placeholder pending the Play Console account.
+  #
+  # This job no-ops cleanly until the GCP secrets are set: add GCP_SA_KEY (a
+  # service-account JSON key) and GCP_PROJECT, and — so state persists across
+  # runs — uncomment the `gcs` backend in terraform/gcp/backend.tf.
   deploy:
-    name: Deploy (placeholder)
+    name: Deploy web (GCP Cloud Run)
     runs-on: ubuntu-latest
     needs: [check, build-web, build-desktop, build-android]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     environment: production
+    env:
+      IMAGE_TAG: ${{ github.sha }}
     steps:
-      - name: Download web artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: web-dist
-          path: web-dist
-      - name: Download Android APK artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: android-apk
-          path: android-apk
-        continue-on-error: true
-      - name: Deploy website
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+
+      - name: Check for GCP credentials
+        id: creds
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
         run: |
-          echo "TODO: deploy the SSR server + target/site to dabney.moe hosting."
-          echo "Pending Google Cloud account setup; wire credentials via repo secrets,"
-          echo "e.g. GCP_SA_KEY / GCP_PROJECT, then push the server image + assets here."
-          ls -R web-dist || true
+          if [ -n "$GCP_SA_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::GCP_SA_KEY not set; skipping web deploy. See terraform/README.md."
+          fi
+
+      - name: Authenticate to Google Cloud
+        if: steps.creds.outputs.configured == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud
+        if: steps.creds.outputs.configured == 'true'
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build SSR server image
+        if: steps.creds.outputs.configured == 'true'
+        run: nix build .#serverImage
+
+      - name: Terraform init
+        if: steps.creds.outputs.configured == 'true'
+        run: nix develop -c tofu -chdir=terraform/gcp init -input=false
+
+      # Phase 1: ensure the Artifact Registry repo exists before pushing.
+      - name: Terraform apply (registry)
+        if: steps.creds.outputs.configured == 'true'
+        env:
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+        run: |
+          nix develop -c tofu -chdir=terraform/gcp apply -input=false -auto-approve \
+            -var="project_id=$GCP_PROJECT" \
+            -target=module.site.google_project_service.services \
+            -target=module.site.google_artifact_registry_repository.repo
+
+      - name: Push image to Artifact Registry
+        if: steps.creds.outputs.configured == 'true'
+        run: |
+          REPO=$(nix develop -c tofu -chdir=terraform/gcp output -raw registry_repository_url)
+          IMAGE="$REPO/web:$IMAGE_TAG"
+          TOKEN=$(gcloud auth print-access-token)
+          nix develop -c skopeo --insecure-policy copy --dest-creds "oauth2accesstoken:$TOKEN" \
+            docker-archive:result "docker://$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      # Phase 2: roll the service out to the freshly-pushed image.
+      - name: Terraform apply (service)
+        if: steps.creds.outputs.configured == 'true'
+        env:
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+        run: |
+          nix develop -c tofu -chdir=terraform/gcp apply -input=false -auto-approve \
+            -var="project_id=$GCP_PROJECT" \
+            -var="image=$IMAGE"
+
+      # To deploy to AWS or Azure instead, mirror the steps above against
+      # terraform/aws or terraform/azure (the modules are ready): build
+      # .#serverImage, push to ECR/ACR with skopeo, and run the two-phase
+      # `tofu apply`. See terraform/README.md.
+
       - name: Publish app
         run: |
           echo "TODO: sign + publish the Android app to Google Play."
           echo "Pending Play Console account; add ANDROID_KEYSTORE_BASE64,"
           echo "ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD and a Play service account JSON,"
           echo "then run the AAB upload (e.g. r0adkll/upload-google-play) here."
-          ls -R android-apk || true

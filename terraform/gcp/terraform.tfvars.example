@@ -1,0 +1,10 @@
+project_id = "your-gcp-project-id"
+region     = "us-central1"
+
+# Set after the registry exists and the image has been pushed (phase 2):
+# image = "us-central1-docker.pkg.dev/your-gcp-project-id/dabney/web:latest"
+
+# Optional custom domain (requires domain verification in Google Search Console):
+# custom_domain = "dabney.moe"
+# manage_dns    = true
+# dns_root      = "dabney.moe."

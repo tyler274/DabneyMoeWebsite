@@ -122,8 +122,26 @@ exclusive Leptos features, each is tested with its own feature set (see the
 
 GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the
 gate plus web, desktop, and Android (APK) builds on every push/PR, then a
-main-only deploy job. Hosting and Play Store publishing are **placeholders**
-pending Google Cloud / Play Console account setup.
+main-only deploy job that ships the web server to **Google Cloud Run** via a
+Nix-built container image and Terraform/OpenTofu (see [`terraform/`](terraform/)).
+The deploy no-ops until the `GCP_SA_KEY` / `GCP_PROJECT` secrets are set. Play
+Store publishing is still a placeholder pending Play Console account setup.
+
+## Deployment (web)
+
+The site is a Leptos SSR server, so it deploys as a container. The image is
+built reproducibly with Nix and infra is described with Terraform-compatible HCL
+(driven by OpenTofu in the dev shell):
+
+```bash
+nix build .#serverImage          # OCI image tarball at ./result
+cd terraform/gcp                 # or terraform/aws, terraform/azure
+tofu init && tofu apply          # two-phase: registry, push image, then service
+```
+
+See [`terraform/README.md`](terraform/README.md) for the full multi-cloud
+workflow (GCP Cloud Run, AWS App Runner, Azure Container Apps) and custom-domain
+setup.
 
 A separate, heavier
 [Android emulator smoke test](.github/workflows/android-emulator.yml) boots a

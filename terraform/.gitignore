@@ -1,0 +1,15 @@
+# Local provider plugins / module cache
+**/.terraform/
+
+# State and plan artifacts
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+
+# Real variable values (commit only the .example files)
+*.tfvars
+!*.tfvars.example
+
+# Provider dependency lock (regenerated per machine/arch; uncomment to pin)
+.terraform.lock.hcl

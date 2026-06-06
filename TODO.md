@@ -21,7 +21,9 @@ and the résumé. Items are also tracked as GitHub issues.
 - [ ] Favicon set derived from `src-tauri/icons/source.png`
 - [ ] Privacy-friendly analytics (e.g. Plausible)
 - [x] CI: GitHub Actions running `cargo leptos build`, `cargo tauri build --no-bundle`, `clippy`, `fmt`, tests + Android APK build (`nix run .#ci` mirrors it locally)
-- [ ] Deployment: NixOS module/service for the Axum server + reverse proxy + TLS for dabney.moe (CI deploy job is a placeholder pending Google Cloud account)
+- [x] Deployment: Nix `dockerTools` image (`nix build .#serverImage`) + modular Terraform/OpenTofu under `terraform/` (Cloud Run / App Runner / Container Apps); CI deploys the web image to GCP Cloud Run on green `main` once `GCP_SA_KEY`/`GCP_PROJECT` secrets + the remote state backend are configured
+- [ ] Harden the `serverImage` build: test a static `x86_64-unknown-linux-musl` target with the `mold` linker and hardened Microsoft `mimalloc` (`-DMI_SECURE`) as the global allocator. Goal is a smaller, glibc-free image (drops the `glibc`/`gcc-lib` runtime refs) with exploit-mitigation hardening; verify SSR + hydration still work in the container
+- [ ] HTTPS via Let's Encrypt for self-hosted/non-serverless deploys (the managed targets — Cloud Run / App Runner / Container Apps — already terminate TLS with their own certs). Use an ACME client (e.g. Certbot or a reverse proxy like Caddy/Traefik/nginx-acme, or a NixOS `security.acme` module) to issue/auto-renew certs for `dabney.moe`; redirect HTTP→HTTPS, keep port 80 open for the `http-01` challenge, and don't hardcode the intermediate/ToS URL (follow the ACME `Link` headers)
 - [ ] Accessibility pass (focus states, contrast, aria labels, reduced motion)
 
 ## Tauri / app suite
