@@ -1,0 +1,70 @@
+[workspace]
+resolver = "2"
+members = ["crates/ui", "crates/web", "crates/tauri-ui", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Tyler Port <tp@dabney.moe>"]
+repository = "https://github.com/tyler274"
+
+[workspace.dependencies]
+ui = { path = "crates/ui" }
+
+leptos = { version = "0.8" }
+leptos_meta = { version = "0.8" }
+leptos_router = { version = "0.8" }
+leptos_axum = { version = "0.8" }
+
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "compression-gzip"] }
+wasm-bindgen = "=0.2.100"
+console_error_panic_hook = "0.1"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# cargo-leptos drives the full-stack web build (SSR server + WASM hydration).
+[[workspace.metadata.leptos]]
+name = "dabney"
+bin-package = "web"
+lib-package = "web"
+
+# Output bundle name (target/site/pkg/dabney.{js,wasm}).
+output-name = "dabney"
+site-root = "target/site"
+site-pkg-dir = "pkg"
+
+# Tailwind is compiled by cargo-leptos using tailwind.config.js at the root.
+tailwind-input-file = "style/input.css"
+assets-dir = "public"
+
+site-addr = "127.0.0.1:3000"
+reload-port = 3001
+browserquery = "defaults"
+env = "DEV"
+
+bin-features = ["ssr"]
+bin-default-features = false
+lib-features = ["hydrate"]
+lib-default-features = false
+
+# Keep wasm output small.
+lib-profile-release = "wasm-release"
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+codegen-units = 1
+lto = true
+panic = "abort"
+
+# Faster incremental dependency builds during development.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
