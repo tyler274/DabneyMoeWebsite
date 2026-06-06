@@ -132,10 +132,11 @@ jobs:
             nix build .#serverImage
 
             # The ubuntu-latest runner ships a v1 /etc/containers/registries.conf
-            # but the Nix-provided skopeo requires v2. Write a minimal v2 config
-            # to a temp file and override the path via the environment variable.
+            # but the Nix-provided skopeo requires v2. Write a minimal v2 TOML
+            # config to a temp file and point CONTAINERS_REGISTRIES_CONF at it.
+            # Note: no single-quotes inside this outer bash -c '...' string.
             REGISTRIES_CONF="$RUNNER_TEMP/registries.conf"
-            printf 'unqualified-search-registries = ["docker.io"]\n' > "$REGISTRIES_CONF"
+            printf "unqualified-search-registries = []\n" > "$REGISTRIES_CONF"
             export CONTAINERS_REGISTRIES_CONF="$REGISTRIES_CONF"
 
             REPO="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/dabney"
