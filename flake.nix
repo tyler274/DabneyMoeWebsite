@@ -62,6 +62,16 @@
           ];
         };
 
+        # The pinned toolchain plus the static-musl target used to build the
+        # hardened, glibc-free SSR server image. Keeps the wasm target so the
+        # hydrate bundle still compiles in the same derivation.
+        rustToolchainMusl = rustToolchain.override {
+          targets = [
+            "wasm32-unknown-unknown"
+            "x86_64-unknown-linux-musl"
+          ];
+        };
+
         # System libraries Tauri's webview needs on Linux desktops.
         tauriDeps = with pkgs; [
           webkitgtk_4_1
@@ -198,72 +208,109 @@
           pkg-config
         ];
 
+        # Musl C toolchain. `mimalloc` (a C library) is compiled by the `cc`
+        # crate against the target triple, so the static-musl build needs a
+        # musl-targeting compiler + archiver, not the host glibc gcc.
+        muslCC = pkgs.pkgsCross.musl64.stdenv.cc;
+        muslCCBin = "${muslCC}/bin/${muslCC.targetPrefix}cc";
+        muslAR = "${muslCC.bintools}/bin/${muslCC.targetPrefix}ar";
+
+        # Builder for the SSR release derivation. With `staticMusl = true` the
+        # server binary is compiled for `x86_64-unknown-linux-musl`, statically
+        # linked (`+crt-static`) with the `mold` linker, dropping the glibc/
+        # gcc-lib runtime refs. The wasm hydrate bundle always stays
+        # `wasm32-unknown-unknown` regardless (cargo-leptos's bin-target-triple
+        # only affects the server binary).
+        mkWebServer = { staticMusl ? false }:
+          let
+            toolchain = if staticMusl then rustToolchainMusl else rustToolchain;
+            binPath =
+              if staticMusl
+              then "target/x86_64-unknown-linux-musl/release/web"
+              else "target/release/web";
+          in
+          pkgs.stdenv.mkDerivation ({
+            pname = if staticMusl then "dabney-web-static" else "dabney-web";
+            version = "0.1.0";
+            src = ./.;
+
+            nativeBuildInputs = [ toolchain pkgs.removeReferencesTo ]
+              ++ leptosBuildTools
+              ++ pkgs.lib.optionals staticMusl [ pkgs.mold muslCC ];
+
+            configurePhase = ''
+              runHook preConfigure
+              export HOME="$TMPDIR"
+              export CARGO_HOME="$TMPDIR/.cargo"
+              mkdir -p "$CARGO_HOME"
+              # crane's vendor dir ships a config.toml that redirects crates.io to
+              # the vendored sources in the store; reuse it verbatim.
+              cp ${cargoVendorDir}/config.toml "$CARGO_HOME/config.toml"
+              export CARGO_NET_OFFLINE=true
+              # Use the Nix-provided tailwind/sass binaries rather than letting
+              # cargo-leptos download its own (the sandbox has no network).
+              export LEPTOS_TAILWIND_VERSION="$(tailwindcss --help 2>/dev/null | head -n1 | awk '{print $NF}')"
+              runHook postConfigure
+            '';
+
+            buildPhase = ''
+              runHook preBuild
+              # Offline is enforced via CARGO_NET_OFFLINE; cargo-leptos doesn't
+              # accept cargo's --frozen passthrough.
+              cargo leptos build --release
+              runHook postBuild
+            '';
+
+            installPhase = ''
+              runHook preInstall
+              install -Dm755 ${binPath} "$out/bin/web"
+              mkdir -p "$out/share"
+              cp -r target/site "$out/share/site"
+              runHook postInstall
+            '';
+
+            # The release binary embeds source-path strings (panic locations)
+            # pointing at the vendored crates and the toolchain's std sources.
+            # They're never read at runtime, so scrub them to keep the runtime
+            # closure (and thus the image) from dragging in the whole toolchain.
+            postFixup = ''
+              find "$out" -type f \
+                -exec remove-references-to -t ${cargoVendorDir} -t ${toolchain} {} +
+            '';
+            disallowedReferences = [ cargoVendorDir toolchain ];
+
+            doCheck = false;
+          } // pkgs.lib.optionalAttrs staticMusl {
+            # cargo-leptos builds the bin (only) for this triple; the wasm lib
+            # build is unaffected.
+            LEPTOS_BIN_TARGET_TRIPLE = "x86_64-unknown-linux-musl";
+            # `cc` (libmimalloc-sys) + rustc's link step both need the musl
+            # toolchain. mold is selected via the cc driver's -fuse-ld.
+            CC_x86_64_unknown_linux_musl = muslCCBin;
+            AR_x86_64_unknown_linux_musl = muslAR;
+            CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = muslCCBin;
+            CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS =
+              "-C target-feature=+crt-static -C link-arg=-fuse-ld=mold";
+          });
+
         # The release SSR build: `$out/bin/web` (server binary) plus
         # `$out/share/site` (hashed assets + the wasm `pkg/` dir).
-        webServer = pkgs.stdenv.mkDerivation {
-          pname = "dabney-web";
-          version = "0.1.0";
-          src = ./.;
+        webServerStatic = mkWebServer { staticMusl = true; }; # hardened default
+        webServer = mkWebServer { }; # glibc fallback
 
-          nativeBuildInputs = [ rustToolchain pkgs.removeReferencesTo ] ++ leptosBuildTools;
-
-          configurePhase = ''
-            runHook preConfigure
-            export HOME="$TMPDIR"
-            export CARGO_HOME="$TMPDIR/.cargo"
-            mkdir -p "$CARGO_HOME"
-            # crane's vendor dir ships a config.toml that redirects crates.io to
-            # the vendored sources in the store; reuse it verbatim.
-            cp ${cargoVendorDir}/config.toml "$CARGO_HOME/config.toml"
-            export CARGO_NET_OFFLINE=true
-            # Use the Nix-provided tailwind/sass binaries rather than letting
-            # cargo-leptos download its own (the sandbox has no network).
-            export LEPTOS_TAILWIND_VERSION="$(tailwindcss --help 2>/dev/null | head -n1 | awk '{print $NF}')"
-            runHook postConfigure
-          '';
-
-          buildPhase = ''
-            runHook preBuild
-            # Offline is enforced via CARGO_NET_OFFLINE; cargo-leptos doesn't
-            # accept cargo's --frozen passthrough.
-            cargo leptos build --release
-            runHook postBuild
-          '';
-
-          installPhase = ''
-            runHook preInstall
-            install -Dm755 target/release/web "$out/bin/web"
-            mkdir -p "$out/share"
-            cp -r target/site "$out/share/site"
-            runHook postInstall
-          '';
-
-          # The release binary embeds source-path strings (panic locations)
-          # pointing at the vendored crates and the toolchain's std sources.
-          # They're never read at runtime, so scrub them to keep the runtime
-          # closure (and thus the image) from dragging in the whole toolchain.
-          postFixup = ''
-            find "$out" -type f \
-              -exec remove-references-to -t ${cargoVendorDir} -t ${rustToolchain} {} +
-          '';
-          disallowedReferences = [ cargoVendorDir rustToolchain ];
-
-          doCheck = false;
-        };
-
-        # OCI image: copies the server + assets in, sets the LEPTOS_* runtime
-        # env, and listens on 0.0.0.0:8080 (the port every cloud module wires
-        # its ingress to). Build with `nix build .#serverImage` -> result is a
-        # tarball you `skopeo copy docker-archive:result docker://<registry>`.
-        serverImage = pkgs.dockerTools.buildLayeredImage {
+        # OCI image factory: copies the server + assets in, sets the LEPTOS_*
+        # runtime env, and listens on 0.0.0.0:8080 (the port every cloud module
+        # wires its ingress to). Build with `nix build .#serverImage` -> result
+        # is a tarball you `skopeo copy docker-archive:result docker://<reg>`.
+        mkServerImage = server: pkgs.dockerTools.buildLayeredImage {
           name = "dabney-web";
           tag = "latest";
-          contents = [ webServer pkgs.cacert ];
+          contents = [ server pkgs.cacert ];
           config = {
-            Cmd = [ "${webServer}/bin/web" ];
+            Cmd = [ "${server}/bin/web" ];
             Env = [
               "LEPTOS_OUTPUT_NAME=dabney"
-              "LEPTOS_SITE_ROOT=${webServer}/share/site"
+              "LEPTOS_SITE_ROOT=${server}/share/site"
               "LEPTOS_SITE_PKG_DIR=pkg"
               "LEPTOS_SITE_ADDR=0.0.0.0:8080"
               "LEPTOS_ENV=PROD"
@@ -272,6 +319,11 @@
             ExposedPorts = { "8080/tcp" = { }; };
           };
         };
+
+        # Default deploy image: the hardened static-musl build (mold + LTO +
+        # mimalloc -DMI_SECURE). The glibc image stays available as a fallback.
+        serverImage = mkServerImage webServerStatic;
+        serverImageGlibc = mkServerImage webServer;
       in
       {
         devShells.default = pkgs.mkShell {
@@ -279,7 +331,7 @@
           # (OpenTofu, the MIT-licensed drop-in Terraform engine) drives the
           # infra under ./terraform. OpenTofu keeps this shell free/unfree-
           # prompt-free; the HCL is standard and `terraform` works identically.
-          packages = [ rustToolchain ] ++ baseTools ++ tauriDeps ++ [ pkgs.skopeo pkgs.opentofu ];
+          packages = [ rustToolchain ] ++ baseTools ++ tauriDeps ++ [ pkgs.skopeo pkgs.opentofu pkgs.mold ];
 
           PKG_CONFIG_PATH = pkgConfigPath;
           LD_LIBRARY_PATH = ldLibraryPath;
@@ -343,10 +395,14 @@
         };
 
         packages.ci = ci;
-        # The release SSR build (server binary + hashed assets).
-        packages.web = webServer;
-        # The deployable OCI image for the web server.
+        # The release SSR build (server binary + hashed assets). Default is the
+        # hardened static-musl build; the glibc build is kept as a fallback.
+        packages.web = webServerStatic;
+        packages.webGlibc = webServer;
+        # The deployable OCI image for the web server. `serverImage` is the
+        # hardened static-musl default; `serverImageGlibc` is the fallback.
         packages.serverImage = serverImage;
+        packages.serverImageGlibc = serverImageGlibc;
 
         apps.ci = {
           type = "app";

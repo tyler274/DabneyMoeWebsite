@@ -1,0 +1,48 @@
+# Self-hosted dabney.moe with HTTPS.
+#
+# The managed clouds (Cloud Run / App Runner / Container Apps) terminate TLS
+# themselves; this compose file is for running the site on your own box/VPS,
+# where Caddy fronts the SSR server and obtains + auto-renews a Let's Encrypt
+# certificate over ACME.
+#
+#   1. Point dabney.moe's A (and AAAA) record at this host.
+#   2. Open inbound 80 + 443 (80 must stay open for the ACME http-01 challenge
+#      and the HTTP->HTTPS redirect).
+#   3. cp .env.example .env  &&  edit ACME_EMAIL / SITE_DOMAIN.
+#   4. Load the image:  nix build .#serverImage && docker load < result
+#   5. docker compose up -d
+#
+# Caddy handles HTTP->HTTPS redirect, cert issuance/renewal (at randomized
+# times), and follows the ACME Link headers (no hardcoded intermediate/ToS).
+
+services:
+  web:
+    image: ${WEB_IMAGE:-dabney-web:latest}
+    restart: unless-stopped
+    # No published ports: only Caddy talks to it, over the internal network.
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+      # HTTP/3 (QUIC) is UDP on 443.
+      - "443:443/udp"
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+      SITE_DOMAIN: ${SITE_DOMAIN:-dabney.moe}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Persist the issued certs + ACME account key so restarts/renewals
+      # don't re-request from Let's Encrypt (and hit rate limits).
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

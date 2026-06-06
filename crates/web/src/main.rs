@@ -3,6 +3,11 @@
 //! Built by cargo-leptos with the `ssr` feature. The non-ssr `main` exists only
 //! so the crate still compiles when cargo-leptos builds the hydrate `cdylib`.
 
+// Hardened (MI_SECURE) mimalloc as the process-wide allocator for the server.
+#[cfg(feature = "ssr")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[cfg(feature = "ssr")]
 #[tokio::main]
 async fn main() {

@@ -93,6 +93,11 @@ CI automates this for GCP on green `main` (see `.github/workflows/ci.yml`).
 
 ## Custom domain (dabney.moe) and TLS
 
+All three managed targets terminate TLS with their own platform-managed
+certificates, so nothing extra is needed for HTTPS here. (For a self-hosted /
+non-serverless host instead, see [`../selfhost`](../selfhost), which fronts the
+image with Caddy + Let's Encrypt.)
+
 Domain mapping and DNS are **optional and off by default** so a first apply works
 before nameservers are delegated. Each cloud issues a managed certificate once
 the domain is verified:

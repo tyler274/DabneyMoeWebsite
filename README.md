@@ -143,6 +143,22 @@ See [`terraform/README.md`](terraform/README.md) for the full multi-cloud
 workflow (GCP Cloud Run, AWS App Runner, Azure Container Apps) and custom-domain
 setup.
 
+`nix build .#serverImage` produces a **hardened, statically-linked
+`x86_64-unknown-linux-musl`** build: the `mold` linker plus fat LTO, and
+Microsoft `mimalloc` in secure mode (`-DMI_SECURE`: guard pages, encrypted free
+lists, randomized allocation) as the global allocator. The result is glibc-free
+(zero runtime store references, ~18.7 MB image). The original dynamically-linked
+glibc image is still available as `nix build .#serverImageGlibc` if you ever need
+it.
+
+### Self-hosting with HTTPS (Caddy + Let's Encrypt)
+
+The managed targets above terminate TLS themselves. To run the site on your own
+host/VPS with HTTPS, [`selfhost/`](selfhost/) provides a Docker Compose stack
+where a Caddy reverse proxy auto-issues and renews a Let's Encrypt certificate
+for `dabney.moe`, redirects HTTP→HTTPS, and keeps port 80 open for the ACME
+`http-01` challenge. See [`selfhost/README.md`](selfhost/README.md).
+
 A separate, heavier
 [Android emulator smoke test](.github/workflows/android-emulator.yml) boots a
 Nix-provided AVD and installs the APK; it runs nightly and on demand (not as a

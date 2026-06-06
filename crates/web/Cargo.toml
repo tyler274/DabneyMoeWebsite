@@ -20,6 +20,10 @@ tokio = { workspace = true, optional = true }
 leptos_axum = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
+# Hardened global allocator for the SSR server (`secure` => -DMI_SECURE:
+# guard pages, encrypted free lists, randomized allocation, double-free
+# detection). Only linked into the native server binary, never the wasm.
+mimalloc = { version = "0.1", features = ["secure"], optional = true }
 
 # Hydrate-only (WASM bundle).
 wasm-bindgen = { workspace = true, optional = true }
@@ -43,7 +47,8 @@ ssr = [
   "dep:leptos_axum",
   "dep:tower",
   "dep:tower-http",
+  "dep:mimalloc",
 ]
 
 [package.metadata.cargo-all-features]
-denylist = ["axum", "tokio", "leptos_axum", "tower", "tower-http", "wasm-bindgen", "console_error_panic_hook"]
+denylist = ["axum", "tokio", "leptos_axum", "tower", "tower-http", "wasm-bindgen", "console_error_panic_hook", "mimalloc"]

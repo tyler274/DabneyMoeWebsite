@@ -1,0 +1,23 @@
+# Global options. The ACME account email is read from the environment so it
+# isn't baked into the repo. Caddy uses Let's Encrypt by default and follows
+# the ACME Link headers, so the intermediate/ToS URLs are never hardcoded.
+{
+	email {$ACME_EMAIL}
+
+	# To test against Let's Encrypt's staging CA (avoids the production rate
+	# limit while you iterate), uncomment:
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+# Caddy auto-provisions + auto-renews a publicly-trusted cert for this domain
+# (http-01 / tls-alpn-01) and redirects plain HTTP to HTTPS automatically.
+{$SITE_DOMAIN:dabney.moe} {
+	encode zstd gzip
+
+	# HSTS: start at 60 days per the Let's Encrypt integration guidance; bump
+	# to `max-age=31536000; includeSubDomains; preload` once HTTPS is verified
+	# stable (a too-early long max-age can lock users out on cert problems).
+	header Strict-Transport-Security "max-age=5184000; includeSubDomains"
+
+	reverse_proxy web:8080
+}

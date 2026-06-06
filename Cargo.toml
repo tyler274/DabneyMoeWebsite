@@ -56,6 +56,13 @@ lib-default-features = false
 # Keep wasm output small.
 lib-profile-release = "wasm-release"
 
+# Link-time optimization for the native (SSR server) release build. The
+# `wasm-release` profile below overrides its own `lto`/`opt-level`, so the wasm
+# bundle is unaffected.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
 [profile.wasm-release]
 inherits = "release"
 opt-level = "z"
