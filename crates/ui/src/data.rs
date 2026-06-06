@@ -25,13 +25,13 @@ pub const TAGLINE: &str = "Independent software engineer & freelance contractor"
 
 pub const SUMMARY: &str = "Caltech-trained software engineer specializing in Rust, GPU \
 computing, and high-performance systems. I take projects from first commit to production \
-deployment — and I'm available for freelance and contract work.";
+deployment. I'm available for freelance and contract work.";
 
 pub const SERVICES: &[Service] = &[
     Service {
         title: "Rust & Systems Engineering",
         blurb: "Memory-safe, high-throughput systems software, services, and tooling built \
-                in Rust, C, and C++ — from low-level runtimes to production backends.",
+                in Rust, C, and C++, from low-level runtimes to production backends.",
         icon: "⚙",
     },
     Service {
@@ -43,7 +43,7 @@ pub const SERVICES: &[Service] = &[
     },
     Service {
         title: "Full-Stack & Product",
-        blurb: "End-to-end delivery in TypeScript, React, Node.js, and Rust/Leptos — \
+        blurb: "End-to-end delivery in TypeScript, React, Node.js, and Rust/Leptos, \
                 including the infrastructure, CI, and ops needed to ship and keep it running.",
         icon: "◆",
     },
