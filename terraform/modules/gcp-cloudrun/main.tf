@@ -3,6 +3,10 @@ locals {
     "run.googleapis.com",
     "artifactregistry.googleapis.com",
     "dns.googleapis.com",
+    # Required by gcloud when operating with a service account (e.g. CI).
+    # Without it gcloud emits a warning on every `auth activate-service-account`
+    # call and cannot validate project membership.
+    "cloudresourcemanager.googleapis.com",
   ]
 }
 

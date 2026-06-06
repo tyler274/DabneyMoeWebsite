@@ -68,32 +68,37 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@v22
       - uses: DeterminateSystems/magic-nix-cache-action@v14
 
-      # Cache the Gradle wrapper distribution (~/.gradle/wrapper/dists) so
-      # gradlew never has to download Gradle from the internet mid-build.
-      # The key is intentionally version-pinned; bump it when Tauri generates
-      # a newer Gradle wrapper version (visible in the gradlew download URL).
-      - name: Cache Gradle wrapper distribution
-        uses: actions/cache@v4
-        with:
-          path: ~/.gradle/wrapper/dists
-          key: gradle-wrapper-8.14.3
-          restore-keys: gradle-wrapper-
-
-      # Cache the Gradle dependency / build-tool JARs downloaded via Maven.
-      # Key on Cargo.toml (changes when Tauri/AGP deps change); any prior
-      # cache is still useful as a partial restore via restore-keys.
-      - name: Cache Gradle caches
-        uses: actions/cache@v4
-        with:
-          path: ~/.gradle/caches
-          key: gradle-caches-${{ hashFiles('src-tauri/Cargo.toml') }}
-          restore-keys: gradle-caches-
-
-      - name: cargo tauri android init && build --apk
+      # Generate the Android project first so gradle-wrapper.properties exists
+      # before the cache steps derive their keys from it.
+      - name: cargo tauri android init
         run: |
           nix develop .#android -c bash -c '
             set -euo pipefail
             cargo tauri android init --skip-targets-install
+          '
+
+      # Cache the Gradle wrapper distribution. Key is derived from the actual
+      # gradle-wrapper.properties produced by init, so it bumps automatically
+      # whenever Tauri generates a newer Gradle version.
+      - name: Cache Gradle wrapper distribution
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/wrapper/dists
+          key: gradle-wrapper-${{ hashFiles('src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-wrapper-
+
+      # Cache the Gradle dependency / build-tool JARs downloaded via Maven.
+      - name: Cache Gradle caches
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/caches
+          key: gradle-caches-${{ hashFiles('src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties', 'src-tauri/Cargo.toml') }}
+          restore-keys: gradle-caches-
+
+      - name: cargo tauri android build --apk
+        run: |
+          nix develop .#android -c bash -c '
+            set -euo pipefail
             cargo tauri android build --apk
           '
       - name: Upload Android APK artifact
@@ -104,27 +109,55 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # Build the production OCI image (Nix). Separated from deploy so the
+  # image tar is built once, uploaded as an artifact, and the deploy job
+  # just pushes it — no `nix build` on the deploy runner and no exposure
+  # to magic-nix-cache rate-limiting there.
+  build-image:
+    name: Build server OCI image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - name: nix build .#serverImage
+        run: |
+          nix build .#serverImage
+          # `result` is a symlink into the Nix store; -L dereferences it.
+          cp -L result server-image.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-image
+          path: server-image.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
   # Deploy on green main. Infra (Artifact Registry, the Cloud Run service,
   # Cloudflare DNS, the domain mapping) is provisioned out-of-band by Terraform
-  # under ./terraform; this job only builds the Nix image, pushes it, and rolls a
-  # new Cloud Run revision (`gcloud run deploy`). The Cloud Run module ignores
-  # image drift, so CI and Terraform don't fight over the running revision.
+  # under ./terraform; this job downloads the pre-built image artifact, pushes
+  # it, and rolls a new Cloud Run revision (`gcloud run deploy`). No `nix build`
+  # here, so magic-nix-cache rate-limiting cannot stall the deploy.
   #
   # Secrets come from Doppler: the only GitHub secret is DOPPLER_TOKEN (a
   # read-only service token, created by Terraform). `doppler run` injects
-  # GCP_SA_KEY, GCP_PROJECT_ID, and GCP_REGION at runtime. The job no-ops cleanly
-  # until DOPPLER_TOKEN is set.
+  # GCP_SA_KEY, GCP_PROJECT_ID, and GCP_REGION at runtime. The job no-ops
+  # cleanly until DOPPLER_TOKEN is set.
   deploy:
     name: Deploy web (GCP Cloud Run)
     runs-on: ubuntu-latest
-    # Add back in build-android when we have a way to sign the APK. 
-    needs: [check, build-web, build-desktop]
+    # Add back in build-android when we have a way to sign the APK.
+    needs: [check, build-web, build-desktop, build-image]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     environment: production
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@v22
       - uses: DeterminateSystems/magic-nix-cache-action@v14
+
+      - name: Download server image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: server-image
 
       - name: Check for Doppler token
         id: creds
@@ -138,10 +171,10 @@ jobs:
             echo "::notice::DOPPLER_TOKEN not set; skipping web deploy. See terraform/README.md."
           fi
 
-      # Build the image, push it (by commit SHA + latest), and roll a new
-      # Cloud Run revision. gcloud/skopeo/doppler all come from the Nix dev
-      # shell; Doppler injects the GCP creds + project/region.
-      - name: Build, push, and deploy revision
+      # Push the pre-built image (by commit SHA + latest) and roll a new Cloud
+      # Run revision. gcloud/skopeo/doppler come from the Nix dev shell;
+      # Doppler injects the GCP creds + project/region.
+      - name: Push image and deploy revision
         if: steps.creds.outputs.configured == 'true'
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
@@ -151,12 +184,10 @@ jobs:
             gcloud auth activate-service-account --key-file="$RUNNER_TEMP/gcp-sa.json"
             gcloud config set project "$GCP_PROJECT_ID"
 
-            nix build .#serverImage
-
             # The ubuntu-latest runner ships a v1 /etc/containers/registries.conf
             # but the Nix-provided skopeo requires v2. Write a minimal v2 TOML
             # config to a temp file and point CONTAINERS_REGISTRIES_CONF at it.
-            # Note: no single-quotes inside this outer bash -c '...' string.
+            # Note: no single-quotes inside this outer bash -c string.
             REGISTRIES_CONF="$RUNNER_TEMP/registries.conf"
             printf "unqualified-search-registries = []\n" > "$REGISTRIES_CONF"
             export CONTAINERS_REGISTRIES_CONF="$REGISTRIES_CONF"
@@ -164,8 +195,8 @@ jobs:
             REPO="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/dabney"
             IMAGE="$REPO/web:$GITHUB_SHA"
             TOKEN="$(gcloud auth print-access-token)"
-            skopeo --insecure-policy copy --dest-creds "oauth2accesstoken:$TOKEN" docker-archive:result "docker://$IMAGE"
-            skopeo --insecure-policy copy --dest-creds "oauth2accesstoken:$TOKEN" docker-archive:result "docker://$REPO/web:latest"
+            skopeo --insecure-policy copy --dest-creds "oauth2accesstoken:$TOKEN" docker-archive:server-image.tar.gz "docker://$IMAGE"
+            skopeo --insecure-policy copy --dest-creds "oauth2accesstoken:$TOKEN" docker-archive:server-image.tar.gz "docker://$REPO/web:latest"
 
             gcloud run deploy dabney-web --image "$IMAGE" --region "$GCP_REGION" --quiet
           '
