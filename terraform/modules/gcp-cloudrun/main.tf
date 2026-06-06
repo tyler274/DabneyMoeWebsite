@@ -38,6 +38,13 @@ resource "google_cloud_run_v2_service" "web" {
       max_instance_count = var.max_instances
     }
 
+    # Gen2 runs each instance inside gVisor — a user-space kernel that
+    # intercepts and validates every syscall before forwarding it to the host.
+    # This is the Cloud Run equivalent of AppArmor/SELinux: you can't load
+    # kernel policies on the managed host, but gVisor's syscall filter is
+    # always active and covers the same threat (process escape via kernel).
+    execution_environment = "EXECUTION_ENVIRONMENT_GEN2"
+
     containers {
       image = var.image
 

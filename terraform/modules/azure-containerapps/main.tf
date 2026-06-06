@@ -64,6 +64,10 @@ resource "azurerm_container_app" "web" {
       cpu    = var.cpu
       memory = var.memory
 
+      # Azure Container Apps does not expose a security-context API through the
+      # azurerm Terraform provider; container hardening must be applied at the
+      # image level (the OCI User = "65534:65534" set in nix/web-server.nix).
+
       dynamic "env" {
         for_each = var.env
         content {

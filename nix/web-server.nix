@@ -117,10 +117,22 @@ let
   # you `skopeo copy docker-archive:result docker://<reg>`.
   mkServerImage = server: pkgs.dockerTools.buildLayeredImage {
     name = "dabney-web";
-    tag = "latest";
-    contents = [ server pkgs.cacert ];
+    # Embed the Nix store hash of the server derivation in the tag so every
+    # distinct build gets a unique, content-addressed name.  This avoids the
+    # "renaming old image" conflict when loading a new build alongside an
+    # existing one.  The store path is /nix/store/<32-char-hash>-<name>;
+    # builtins.substring extracts those 32 chars, and unsafeDiscardStringContext
+    # strips the Nix string context so it is usable as a plain attribute value.
+    tag = builtins.unsafeDiscardStringContext
+      (builtins.substring 11 32 (builtins.toString server));
+    # fakeNss provides /etc/passwd + /etc/group with a "nobody" entry at
+    # UID/GID 65534, which the runtime needs to resolve the User field below.
+    contents = [ server pkgs.cacert pkgs.dockerTools.fakeNss ];
     config = {
       Cmd = [ "${server}/bin/web" ];
+      # Run as nobody:nobody — the process never has root privileges even when
+      # the container runtime doesn't enforce non-root on its own.
+      User = "65534:65534";
       Env = [
         "LEPTOS_OUTPUT_NAME=dabney"
         "LEPTOS_SITE_ROOT=${server}/share/site"
