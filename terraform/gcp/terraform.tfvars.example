@@ -6,5 +6,25 @@ region     = "us-central1"
 
 # Optional custom domain (requires domain verification in Google Search Console):
 # custom_domain = "dabney.moe"
-# manage_dns    = true
-# dns_root      = "dabney.moe."
+
+# DNS via Cloudflare (dabney.moe is hosted there). Set after the domain mapping
+# exists so the apex A/AAAA records it reports can be mirrored into Cloudflare.
+# enable_cloudflare_dns    = true
+# cloudflare_zone_id       = "your-cloudflare-zone-id"
+# google_site_verification = "token-from-search-console"     # value after google-site-verification=
+
+# Secrets (cloudflare_api_token, doppler_token) should NOT live in this file.
+# Pass them as environment variables instead, e.g.:
+#   export TF_VAR_doppler_token=dp.pt.xxxx
+#   export TF_VAR_cloudflare_api_token=cf-token-with-Zone:DNS:Edit
+# Or, once they live in Doppler, inject the whole set automatically:
+#   doppler run --name-transformer tf-var -- tofu apply
+
+# Doppler (secrets management). Terraform creates this project + writes the
+# deploy secrets into its prd config. Defaults are usually fine:
+# doppler_project = "dabney-moe-website"
+# doppler_config  = "prd"
+
+# Cloud DNS path (unused when using Cloudflare):
+# manage_dns = true
+# dns_root   = "dabney.moe."

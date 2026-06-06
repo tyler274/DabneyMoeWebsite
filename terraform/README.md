@@ -105,12 +105,54 @@ the domain is verified:
 - **GCP**: set `custom_domain` (verify ownership in Google Search Console first).
   Set `manage_dns = true` + `dns_root = "dabney.moe."` to also create the Cloud
   DNS zone and the records the mapping reports.
+- **GCP + Cloudflare** (dabney.moe is hosted on Cloudflare): instead of Cloud
+  DNS, set `enable_cloudflare_dns = true`, `cloudflare_api_token` (Zone:DNS:Edit),
+  and `cloudflare_zone_id`. The root config mirrors the records the Cloud Run
+  mapping reports into Cloudflare as **DNS-only** (`proxied = false`) — Google has
+  to terminate TLS to issue its managed cert, and a proxied record wedges
+  provisioning by intercepting the ACME challenge. Set `google_site_verification`
+  (the token from Search Console) to also create the ownership TXT. Because the
+  apex A/AAAA records are only known after the mapping exists, apply in order:
+  create the service + mapping (+ verification TXT) first, then a second `tofu
+  apply` creates the Cloudflare A/AAAA records. Once the certificate is active you
+  may flip records to proxied with SSL/TLS mode **Full (strict)**.
 - **AWS**: set `custom_domain`; the association emits ACM validation records.
   Set `manage_dns = true` + `route53_zone_id` to write them (and the CNAME)
   automatically; otherwise add them at your registrar (see `dns_records` output).
 - **Azure**: publish the `custom_domain_verification_id` output as an
   `asuid.<domain>` TXT record, then supply a managed/uploaded
   `certificate_id` to bind the domain. `manage_dns = true` creates the DNS zone.
+
+## Secrets (Doppler)
+
+The GCP root integrates [Doppler](https://docs.doppler.com/docs/terraform) as the
+source of truth for deploy/runtime secrets. Set `doppler_token` (a personal token
+for full management, or a service token) and Terraform will:
+
+- create the Doppler project (`doppler_project`, default `dabney-moe-website`), and
+- write the deploy secrets into its `prd` config (`doppler_secret`):
+  `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ZONE_ID`, `GCP_PROJECT_ID`, `GCP_REGION`,
+  and `GOOGLE_SITE_VERIFICATION` (empty values are skipped).
+
+The bootstrap values are injected once via environment variables (never commit
+them):
+
+```bash
+export TF_VAR_doppler_token=dp.pt.xxxx
+export TF_VAR_cloudflare_api_token=cf-token-with-Zone:DNS:Edit
+tofu -chdir=terraform/gcp apply ...
+```
+
+Once the secrets live in Doppler, later runs can pull the whole set back in as
+`TF_VAR_*` instead of exporting them by hand (the `doppler` CLI is in the dev
+shell):
+
+```bash
+doppler run --name-transformer tf-var -- tofu -chdir=terraform/gcp apply ...
+```
+
+The Terraform `doppler` provider stores secret values in state, so secure your
+state (see below). Leaving `doppler_token` empty disables all Doppler resources.
 
 ## State
 

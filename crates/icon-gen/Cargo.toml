@@ -3,7 +3,6 @@ name = "icon-gen"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-authors.workspace = true
 description = "Dev tool: generates the source app icon for `cargo tauri icon`."
 
 [dependencies]

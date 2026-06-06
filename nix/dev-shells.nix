@@ -16,8 +16,14 @@
     # MIT-licensed drop-in Terraform engine) drives the infra under ./terraform.
     # OpenTofu keeps this shell free/unfree-prompt-free; the HCL is standard and
     # `terraform` works identically. `mold` is here for local static builds.
+    # `google-cloud-sdk` (`gcloud`) authenticates the GCP Terraform provider
+    # (`gcloud auth application-default login`) and mints the Artifact Registry
+    # access token `skopeo` pushes with (`gcloud auth print-access-token`).
+    # `doppler` is the secrets-management CLI: it backs the Terraform `doppler`
+    # provider and can inject the deploy secrets as `TF_VAR_*`
+    # (`doppler run --name-transformer tf-var -- tofu apply`).
     packages = [ rustToolchain ] ++ baseTools ++ tauriDeps
-      ++ [ pkgs.skopeo pkgs.opentofu pkgs.mold ];
+      ++ [ pkgs.skopeo pkgs.opentofu pkgs.mold pkgs.google-cloud-sdk pkgs.doppler ];
 
     PKG_CONFIG_PATH = pkgConfigPath;
     LD_LIBRARY_PATH = ldLibraryPath;
@@ -34,6 +40,8 @@
       echo "  trunk $(trunk --version 2>/dev/null | awk '{print $2}')"
       echo "  tauri $(cargo tauri --version 2>/dev/null | awk '{print $NF}')"
       echo "  bun $(bun --version 2>/dev/null)"
+      echo "  gcloud $(gcloud --version 2>/dev/null | awk 'NR==1{print $NF}')"
+      echo "  doppler $(doppler --version 2>/dev/null)"
       echo ""
       echo "  web (SSR):   cargo leptos watch"
       echo "  app (Tauri): cargo tauri dev"
@@ -67,6 +75,12 @@
 
     shellHook = ''
       if [ -n "''${NO_COLOR:-}" ]; then export NO_COLOR=true; fi
+
+      # Expose apksigner, zipalign, aapt2, etc. from the signing build-tools.
+      export PATH="${android.androidSdkRoot}/build-tools/${android.androidSigningToolsVersion}:$PATH"
+      # Ensure avdmanager and the emulator agree on where AVDs live.
+      export ANDROID_AVD_HOME="''${ANDROID_AVD_HOME:-$HOME/.android/avd}"
+      mkdir -p "$ANDROID_AVD_HOME"
 
       echo "dabney.moe Android dev shell"
       echo "  $(rustc --version)"

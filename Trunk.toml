@@ -9,7 +9,7 @@ target = "crates/tauri-ui/index.html"
 dist = "dist"
 
 [serve]
-address = "127.0.0.1"
+addresses = ["127.0.0.1"]
 port = 1420
 
 # Compile Tailwind to style/output.css before bundling. We invoke the

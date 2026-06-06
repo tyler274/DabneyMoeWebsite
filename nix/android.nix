@@ -8,10 +8,19 @@
 { pkgs, pkgsAndroid }:
 let
   androidBuildToolsVersion = "34.0.0";
+  # The version used for signing tools (apksigner, zipalign) and exposed on
+  # PATH. Must be present in buildToolsVersions below.
+  androidSigningToolsVersion = "37.0.0";
   androidNdkVersion = "26.1.10909125";
   androidComposition = pkgsAndroid.androidenv.composeAndroidPackages {
-    platformVersions = [ "34" ];
-    buildToolsVersions = [ androidBuildToolsVersion ];
+    # Keep platform 34 for the system image; add 36 because the Tauri-generated
+    # project targets compileSdk/targetSdk 36 (AGP default as of Tauri 2.x).
+    platformVersions = [ "34" "36" ];
+    # 34.0.0 is what we pin for aapt2 (via GRADLE_OPTS); 37.0.0 is what we
+    # expose on PATH for apksigner/zipalign and what we tell Gradle to use so
+    # it never tries to auto-download AGP's default 35.0.0 into the read-only
+    # Nix store.
+    buildToolsVersions = [ androidBuildToolsVersion androidSigningToolsVersion ];
     includeNDK = true;
     ndkVersions = [ androidNdkVersion ];
     includeEmulator = true;
@@ -26,6 +35,7 @@ in
 {
   inherit
     androidBuildToolsVersion
+    androidSigningToolsVersion
     androidNdkVersion
     androidSdk
     androidSdkRoot

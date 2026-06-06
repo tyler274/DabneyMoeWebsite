@@ -11,5 +11,9 @@
   },
   "devDependencies": {
     "tailwindcss": "^3.4.17"
+  },
+  "dependencies": {
+    "baseline-browser-mapping": "^2.10.34",
+    "caniuse-lite": "^1.0.30001797"
   }
 }

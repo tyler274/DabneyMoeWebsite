@@ -2,9 +2,67 @@ use leptos::prelude::*;
 
 use crate::data::{EXPERIENCE, SERVICES, SKILLS, SUMMARY, TAGLINE};
 
+/// On WASM builds, attempt to open `url` via the Tauri opener plugin, exposed
+/// on `window.__TAURI__` (requires `app.withGlobalTauri = true`). Returns `true`
+/// if the call was dispatched (so the caller can `prevent_default` on the
+/// originating DOM event), `false` otherwise (e.g. running in a plain browser —
+/// let the standard `href` behaviour take over).
+#[cfg(not(feature = "ssr"))]
+fn try_tauri_open(url: &str) -> bool {
+    use js_sys::{Function, Object, Reflect};
+    use wasm_bindgen::{JsCast, JsValue};
+
+    let win = match web_sys::window() {
+        Some(w) => w,
+        None => return false,
+    };
+    let tauri = Reflect::get(win.as_ref(), &JsValue::from_str("__TAURI__"))
+        .unwrap_or(JsValue::UNDEFINED);
+    if tauri.is_undefined() || tauri.is_null() {
+        return false;
+    }
+
+    // Preferred path: the opener plugin's guest JS, `opener.openUrl(url)`.
+    let opener = Reflect::get(&tauri, &JsValue::from_str("opener")).unwrap_or(JsValue::UNDEFINED);
+    if !opener.is_undefined() && !opener.is_null() {
+        let open_url =
+            Reflect::get(&opener, &JsValue::from_str("openUrl")).unwrap_or(JsValue::UNDEFINED);
+        if let Some(f) = open_url.dyn_ref::<Function>() {
+            if f.call1(&opener, &JsValue::from_str(url)).is_ok() {
+                return true;
+            }
+        }
+    }
+
+    // Fallback: the core IPC bridge, invoking the plugin command directly.
+    let core = Reflect::get(&tauri, &JsValue::from_str("core")).unwrap_or(JsValue::UNDEFINED);
+    if core.is_undefined() || core.is_null() {
+        return false;
+    }
+    let invoke = Reflect::get(&core, &JsValue::from_str("invoke")).unwrap_or(JsValue::UNDEFINED);
+    let invoke = match invoke.dyn_ref::<Function>() {
+        Some(f) => f,
+        None => return false,
+    };
+    let args = Object::new();
+    let _ = Reflect::set(&args, &JsValue::from_str("path"), &JsValue::from_str(url));
+    invoke
+        .call2(
+            &core,
+            &JsValue::from_str("plugin:opener|open_url"),
+            args.as_ref(),
+        )
+        .is_ok()
+}
+
 pub const EMAIL: &str = "tp@dabney.moe";
 pub const GITHUB: &str = "https://github.com/tyler274";
 pub const LINKEDIN: &str = "https://linkedin.com/in/tyler-port-9a795455";
+
+/// Public, externally-resolvable resume URL. Used when handing the download
+/// off to the system browser from the Tauri app, since bundled assets live at
+/// the internal `tauri.localhost` origin that an external browser can't reach.
+pub const RESUME_PUBLIC_URL: &str = "https://dabney.moe/resume.pdf";
 
 #[component]
 pub fn NavBar() -> impl IntoView {
@@ -59,6 +117,18 @@ pub fn Hero() -> impl IntoView {
                         href="/resume.pdf"
                         target="_blank"
                         rel="noopener"
+                        on:click=move |_ev| {
+                            // On Android WebViews, `target="_blank"` is silently
+                            // swallowed. If Tauri's opener plugin is present, hand
+                            // the URL off to the system browser. Bundled assets
+                            // live at the internal `tauri.localhost` origin which
+                            // an external browser can't resolve, so open the
+                            // public URL instead.
+                            #[cfg(not(feature = "ssr"))]
+                            if try_tauri_open(RESUME_PUBLIC_URL) {
+                                _ev.prevent_default();
+                            }
+                        }
                         class="rounded-full border border-white/15 px-6 py-3 font-semibold text-white transition hover:border-white/40 hover:bg-white/5"
                     >
                         "Download résumé"
