@@ -54,8 +54,16 @@ fn main() {
             }
             // Rounded corners.
             if (fx < lo + radius || fx > hi - radius) && (fy < lo + radius || fy > hi - radius) {
-                let corx = if fx < lo + radius { lo + radius } else { hi - radius };
-                let cory = if fy < lo + radius { lo + radius } else { hi - radius };
+                let corx = if fx < lo + radius {
+                    lo + radius
+                } else {
+                    hi - radius
+                };
+                let cory = if fy < lo + radius {
+                    lo + radius
+                } else {
+                    hi - radius
+                };
                 if (fx - corx).hypot(fy - cory) > radius {
                     continue;
                 }
@@ -69,7 +77,9 @@ fn main() {
             ];
 
             let d = dist_to_segment(fx, fy, chev[0].0, chev[0].1, chev[0].2, chev[0].3)
-                .min(dist_to_segment(fx, fy, chev[1].0, chev[1].1, chev[1].2, chev[1].3))
+                .min(dist_to_segment(
+                    fx, fy, chev[1].0, chev[1].1, chev[1].2, chev[1].3,
+                ))
                 .min(dist_to_segment(fx, fy, bar.0, bar.1, bar.2, bar.3));
             if d <= thickness / 2.0 {
                 px = glyph;

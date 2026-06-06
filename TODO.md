@@ -20,12 +20,12 @@ and the résumé. Items are also tracked as GitHub issues.
 - [ ] JSON-LD structured data (`schema.org/Person`)
 - [ ] Favicon set derived from `src-tauri/icons/source.png`
 - [ ] Privacy-friendly analytics (e.g. Plausible)
-- [ ] CI: GitHub Actions running `cargo leptos build`, `cargo tauri build --no-bundle`, `clippy`, `fmt`
-- [ ] Deployment: NixOS module/service for the Axum server + reverse proxy + TLS for dabney.moe
+- [x] CI: GitHub Actions running `cargo leptos build`, `cargo tauri build --no-bundle`, `clippy`, `fmt`, tests + Android APK build (`nix run .#ci` mirrors it locally)
+- [ ] Deployment: NixOS module/service for the Axum server + reverse proxy + TLS for dabney.moe (CI deploy job is a placeholder pending Google Cloud account)
 - [ ] Accessibility pass (focus states, contrast, aria labels, reduced motion)
 
 ## Tauri / app suite
-- [ ] Run `cargo tauri android init` / `ios init` once SDKs are available (config + icons already wired)
+- [x] Android SDK/NDK available declaratively via `nix develop .#android`; APK builds in CI + nightly emulator smoke test (run `cargo tauri ios init` once Xcode is available)
 - [ ] Native open-in-browser / share actions via the Tauri opener plugin
 - [ ] Explicit offline résumé view in the app
 - [ ] App auto-update + full bundle targets (deb/rpm/AppImage need extra packaging tools)

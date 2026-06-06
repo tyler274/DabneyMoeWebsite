@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Format, lint, and test gate. Runs the exact same script as `nix run .#ci`
+  # locally, so green-here means green-there.
+  check:
+    name: Format / Clippy / Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - name: Run CI gate (fmt + clippy + tests)
+        run: nix run .#ci
+
+  # Production web build (Axum SSR server binary + hashed site assets).
+  build-web:
+    name: Build web (Leptos SSR)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - name: cargo leptos build --release
+        run: nix develop -c cargo leptos build --release
+      - name: Upload web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: |
+            target/site
+            target/release/web
+          if-no-files-found: error
+          retention-days: 7
+
+  # Desktop app: compile only (no OS packaging / bundling).
+  build-desktop:
+    name: Build desktop app (Tauri)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - name: cargo tauri build --no-bundle
+        run: nix develop -c cargo tauri build --no-bundle
+
+  # Android app: cross-compile to an (unsigned) APK. `src-tauri/gen` is
+  # git-ignored, so the Gradle/Android project is regenerated each run.
+  build-android:
+    name: Build Android app (APK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - name: cargo tauri android init && build --apk
+        run: |
+          nix develop .#android -c bash -c '
+            set -euo pipefail
+            cargo tauri android init --skip-targets-install
+            cargo tauri android build --apk
+          '
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: warn
+          retention-days: 7
+
+  # Deploy on green main. Hosting + store publishing are placeholders until
+  # the Google Cloud / Play Console accounts are provisioned.
+  deploy:
+    name: Deploy (placeholder)
+    runs-on: ubuntu-latest
+    needs: [check, build-web, build-desktop, build-android]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    environment: production
+    steps:
+      - name: Download web artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web-dist
+      - name: Download Android APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: android-apk
+        continue-on-error: true
+      - name: Deploy website
+        run: |
+          echo "TODO: deploy the SSR server + target/site to dabney.moe hosting."
+          echo "Pending Google Cloud account setup; wire credentials via repo secrets,"
+          echo "e.g. GCP_SA_KEY / GCP_PROJECT, then push the server image + assets here."
+          ls -R web-dist || true
+      - name: Publish app
+        run: |
+          echo "TODO: sign + publish the Android app to Google Play."
+          echo "Pending Play Console account; add ANDROID_KEYSTORE_BASE64,"
+          echo "ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD and a Play service account JSON,"
+          echo "then run the AAB upload (e.g. r0adkll/upload-google-play) here."
+          ls -R android-apk || true

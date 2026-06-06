@@ -1,0 +1,27 @@
+{
+  "name": "dabney.moe (Nix)",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  // Keep the container alive (the base nix image's default command would exit).
+  "overrideCommand": true,
+  // Pre-build the flake dev shell so the first editor/terminal load is fast.
+  "onCreateCommand": "nix develop --command true",
+  // Trust the in-repo .envrc so direnv auto-loads the flake on terminal open.
+  "postAttachCommand": "direnv allow . || true",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "bradlc.vscode-tailwindcss",
+        "mkhl.direnv",
+        "jnoortheen.nix-ide"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "rust-analyzer.check.command": "clippy"
+      }
+    }
+  }
+}

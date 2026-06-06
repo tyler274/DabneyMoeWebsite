@@ -1,5 +1,7 @@
 # dabney.moe
 
+[![CI](https://github.com/tyler274/DabneyMoeWebsite/actions/workflows/ci.yml/badge.svg)](https://github.com/tyler274/DabneyMoeWebsite/actions/workflows/ci.yml)
+
 Tyler Port's résumé and freelance software-engineering site, plus a multiplatform
 app suite. The web frontend is a **Leptos** SSR app (Axum + WASM hydration); the
 same UI is reused inside a **Tauri v2** shell (desktop + mobile) as a client-side
@@ -44,6 +46,15 @@ The shell provides: the Rust toolchain (+ wasm target), `cargo-leptos`, `trunk`,
 `cargo-tauri`, `bun`, `tailwindcss`, and the Linux desktop libraries Tauri's
 webview needs.
 
+### Dev Container (no Nix required)
+
+Contributors on Windows/macOS/Linux who have Docker + VS Code or Cursor but
+*not* Nix can use the dev container in [`.devcontainer/`](.devcontainer/): it
+builds on the `nixos/nix` image, enables flakes, and wires up `direnv` so the
+editor and its terminal automatically enter this project's `nix develop` shell
+(rust-analyzer, `cargo-leptos`, `trunk`, etc. all just work). Open the folder
+and choose "Reopen in Container".
+
 ## Web (the dabney.moe homepage)
 
 ```bash
@@ -79,16 +90,46 @@ as Tauri's `beforeDevCommand` / `beforeBuildCommand`, emitting to `dist/`.
 ### Mobile (Android / iOS)
 
 The project is wired for mobile (lib crate-types, mobile entry point, and icon
-assets are already generated under `src-tauri/icons/android` and `.../ios`). To
-enable a platform once its SDK is installed:
+assets are already generated under `src-tauri/icons/android` and `.../ios`).
+
+Android tooling is provided declaratively by a dedicated flake dev shell —
+`nix develop .#android` — which adds the Android SDK/NDK (via `androidenv`), a
+JDK, the Android Rust targets, and the `ANDROID_HOME` / `NDK_HOME` / `JAVA_HOME`
+environment. No manual SDK install or license clicking required:
 
 ```bash
-cargo tauri android init   # requires Android SDK + NDK
-cargo tauri ios init       # requires Xcode (macOS only)
+nix develop .#android
 
+cargo tauri android init   # regenerates src-tauri/gen/android (git-ignored)
+cargo tauri android build --apk
 cargo tauri android dev
-cargo tauri ios dev
 ```
+
+iOS still needs Xcode (macOS only): `cargo tauri ios init && cargo tauri ios dev`.
+
+## Testing & CI
+
+```bash
+# Run the full gate locally — exactly what CI runs:
+nix run .#ci          # rustfmt --check, clippy (-D warnings), and all tests
+```
+
+Tests live next to the code: data-table invariants and SSR render assertions in
+`crates/ui`, a router smoke test in `crates/web`, and a Tauri-context parse test
+in `src-tauri`. Because the `ui`/`web`/`tauri-ui` crates select mutually
+exclusive Leptos features, each is tested with its own feature set (see the
+`ci` runner in [`flake.nix`](flake.nix)).
+
+GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the
+gate plus web, desktop, and Android (APK) builds on every push/PR, then a
+main-only deploy job. Hosting and Play Store publishing are **placeholders**
+pending Google Cloud / Play Console account setup.
+
+A separate, heavier
+[Android emulator smoke test](.github/workflows/android-emulator.yml) boots a
+Nix-provided AVD and installs the APK; it runs nightly and on demand (not as a
+per-push gate). It relies on `/dev/kvm`, which GitHub-hosted Linux runners
+expose.
 
 ## Styling
 

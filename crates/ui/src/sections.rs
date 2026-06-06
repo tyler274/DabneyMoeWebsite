@@ -224,6 +224,78 @@ pub fn Footer() -> impl IntoView {
     }
 }
 
+#[cfg(all(test, feature = "ssr"))]
+mod render_tests {
+    // `super::*` re-exports the section components, the contact constants,
+    // the data tables, and the leptos prelude already imported above.
+    use super::*;
+
+    /// Render a component to an HTML string inside a fresh reactive owner,
+    /// matching how the SSR server materializes the same components. The
+    /// common HTML entities are decoded back so assertions can compare
+    /// against the original (unescaped) source text.
+    fn render(view: impl RenderHtml + 'static) -> String {
+        let owner = Owner::new();
+        let html = owner.with(|| view.to_html());
+        drop(owner);
+        // Decode `&amp;` last so already-decoded ampersands aren't re-expanded.
+        html.replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#x27;", "'")
+            .replace("&#39;", "'")
+            .replace("&amp;", "&")
+    }
+
+    #[test]
+    fn hero_renders_tagline_and_summary() {
+        let html = render(view! { <Hero /> });
+        assert!(html.contains("Tyler Alamo Port"), "hero missing name");
+        assert!(html.contains(TAGLINE), "hero missing tagline");
+        assert!(html.contains(SUMMARY), "hero missing summary");
+    }
+
+    #[test]
+    fn services_render_every_entry() {
+        let html = render(view! { <Services /> });
+        for s in SERVICES {
+            assert!(
+                html.contains(s.title),
+                "services missing title: {}",
+                s.title
+            );
+        }
+    }
+
+    #[test]
+    fn experience_renders_every_role() {
+        let html = render(view! { <Experience /> });
+        for r in EXPERIENCE {
+            assert!(
+                html.contains(r.company),
+                "experience missing company: {}",
+                r.company
+            );
+        }
+    }
+
+    #[test]
+    fn skills_render_every_group() {
+        let html = render(view! { <Skills /> });
+        for g in SKILLS {
+            assert!(html.contains(g.label), "skills missing group: {}", g.label);
+        }
+    }
+
+    #[test]
+    fn contact_renders_links() {
+        let html = render(view! { <Contact /> });
+        assert!(html.contains(EMAIL), "contact missing email");
+        assert!(html.contains(GITHUB), "contact missing github link");
+        assert!(html.contains(LINKEDIN), "contact missing linkedin link");
+    }
+}
+
 /// Shared section wrapper: consistent spacing, eyebrow label, and heading.
 #[component]
 fn Section(

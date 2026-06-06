@@ -1,0 +1,80 @@
+name: Android Emulator Smoke Test
+
+# Heavy + occasionally flaky (boots a full Android VM), so it is kept OUT of
+# the per-push deploy gate. Runs nightly and on demand instead.
+on:
+  schedule:
+    # 07:00 UTC nightly.
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: android-emulator-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  emulator:
+    name: Boot AVD + install APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # GitHub-hosted Linux runners expose /dev/kvm; relax its permissions so
+      # the Nix-provided emulator can use hardware acceleration.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+
+      # Build an x86_64 APK (matches the emulator system image ABI) and boot a
+      # headless AVD from the declarative Nix system image, then install the
+      # app as a smoke test that it packages and loads on a real Android VM.
+      - name: Build x86_64 APK, boot emulator, install
+        run: |
+          # The $(...) / $VARS below intentionally expand inside the inner
+          # `bash -c`, not in this outer shell.
+          # shellcheck disable=SC2016
+          nix develop .#android -c bash -c '
+            set -euxo pipefail
+
+            cargo tauri android init --skip-targets-install
+            cargo tauri android build --apk --target x86_64
+
+            APK=$(find src-tauri/gen/android -name "*.apk" | head -n1)
+            echo "Built APK: $APK"
+            test -n "$APK"
+
+            # Create an AVD from the Nix-provided system image.
+            echo "no" | avdmanager create avd \
+              --force \
+              --name ci \
+              --package "system-images;android-34;google_apis;x86_64" \
+              --device "pixel_6"
+
+            # Boot headless.
+            "$ANDROID_HOME/emulator/emulator" -avd ci \
+              -no-window -no-audio -no-boot-anim -no-snapshot \
+              -gpu swiftshader_indirect -accel on &
+            EMU_PID=$!
+
+            # Wait for the device and a completed boot (10 min cap).
+            adb wait-for-device
+            timeout 600 bash -c \
+              "until [ \"\$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d \"\\r\")\" = \"1\" ]; do sleep 5; done"
+            adb shell input keyevent 82 || true
+
+            echo "Emulator booted; installing APK"
+            adb install -r "$APK"
+            adb shell pm list packages | grep -i dabney
+
+            adb emu kill || kill "$EMU_PID" || true
+          '

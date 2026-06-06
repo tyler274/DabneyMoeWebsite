@@ -143,23 +143,136 @@ pub const SKILLS: &[SkillGroup] = &[
     SkillGroup {
         label: "Languages",
         items: &[
-            "Rust", "Python", "C / C++", "CUDA / SYCL / OpenCL / HIP", "SQL", "C#",
-            "Java / Kotlin", "TypeScript / JavaScript", "Haskell", "OCaml", "VHDL",
+            "Rust",
+            "Python",
+            "C / C++",
+            "CUDA / SYCL / OpenCL / HIP",
+            "SQL",
+            "C#",
+            "Java / Kotlin",
+            "TypeScript / JavaScript",
+            "Haskell",
+            "OCaml",
+            "VHDL",
         ],
     },
     SkillGroup {
         label: "Platforms & Tech",
         items: &[
-            "Linux (Gentoo, Arch, RHEL, Debian)", "HPC environments", "FPGAs (Intel, AMD)",
-            "Docker", "Git", "Windows", "macOS", "BSD",
+            "Linux (Gentoo, Arch, RHEL, Debian)",
+            "HPC environments",
+            "FPGAs (Intel, AMD)",
+            "Docker",
+            "Git",
+            "Windows",
+            "macOS",
+            "BSD",
         ],
     },
     SkillGroup {
         label: "Specialties",
         items: &[
-            "GPU computing & parallelization", "Systems engineering & administration",
-            "DevOps & infrastructure", "High-performance computing", "AI/ML (PyTorch)",
-            "Low-level programming", "Relational database design", "Computer graphics",
+            "GPU computing & parallelization",
+            "Systems engineering & administration",
+            "DevOps & infrastructure",
+            "High-performance computing",
+            "AI/ML (PyTorch)",
+            "Low-level programming",
+            "Relational database design",
+            "Computer graphics",
         ],
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn taglines_are_present() {
+        assert!(!TAGLINE.trim().is_empty(), "TAGLINE must not be empty");
+        assert!(!SUMMARY.trim().is_empty(), "SUMMARY must not be empty");
+    }
+
+    #[test]
+    fn services_are_well_formed() {
+        assert!(!SERVICES.is_empty(), "expected at least one service");
+        for s in SERVICES {
+            assert!(
+                !s.title.trim().is_empty(),
+                "service title must not be empty"
+            );
+            assert!(
+                !s.blurb.trim().is_empty(),
+                "service blurb must not be empty: {}",
+                s.title
+            );
+            assert!(
+                !s.icon.trim().is_empty(),
+                "service icon must not be empty: {}",
+                s.title
+            );
+        }
+    }
+
+    #[test]
+    fn experience_is_well_formed() {
+        assert!(!EXPERIENCE.is_empty(), "expected at least one role");
+        for r in EXPERIENCE {
+            assert!(
+                !r.company.trim().is_empty(),
+                "role company must not be empty"
+            );
+            assert!(
+                !r.location.trim().is_empty(),
+                "role location must not be empty: {}",
+                r.company
+            );
+            assert!(
+                !r.title.trim().is_empty(),
+                "role title must not be empty: {}",
+                r.company
+            );
+            assert!(
+                !r.period.trim().is_empty(),
+                "role period must not be empty: {}",
+                r.company
+            );
+            assert!(
+                !r.points.is_empty(),
+                "role must have at least one bullet point: {}",
+                r.company
+            );
+            for p in r.points {
+                assert!(
+                    !p.trim().is_empty(),
+                    "role bullet must not be empty: {}",
+                    r.company
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn skills_are_well_formed() {
+        assert!(!SKILLS.is_empty(), "expected at least one skill group");
+        for g in SKILLS {
+            assert!(
+                !g.label.trim().is_empty(),
+                "skill group label must not be empty"
+            );
+            assert!(
+                !g.items.is_empty(),
+                "skill group must have items: {}",
+                g.label
+            );
+            for item in g.items {
+                assert!(
+                    !item.trim().is_empty(),
+                    "skill item must not be empty: {}",
+                    g.label
+                );
+            }
+        }
+    }
+}
