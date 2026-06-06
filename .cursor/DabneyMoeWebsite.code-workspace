@@ -1,10 +1,10 @@
 {
 	"folders": [
 		{
-			"path": "/home/luluco/code/DabneyMoeWebsite"
+			"path": ".."
 		},
 		{
-			"path": "/home/luluco/code/Resume"
+			"path": "../../Resume"
 		}
 	],
 	"settings": {}
