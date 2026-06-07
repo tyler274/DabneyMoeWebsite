@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # GitHub-hosted Linux runners expose /dev/kvm; relax its permissions so
       # the Nix-provided emulator can use hardware acceleration.
@@ -35,10 +35,15 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - uses: DeterminateSystems/nix-installer-action@v22
+      # In act the Nix daemon is spawned as a background process (no systemd).
+      # Wait for the socket before any nix command to avoid a startup race.
+      - name: Wait for Nix daemon (act only)
+        if: ${{ env.ACT != '' }}
+        run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
 
       - name: Cache Cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry

@@ -23,11 +23,16 @@ jobs:
     name: Warm Cargo registry cache
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
+      # In act the Nix daemon is spawned as a background process (no systemd).
+      # Wait for the socket before any nix command to avoid a startup race.
+      - name: Wait for Nix daemon (act only)
+        if: ${{ env.ACT != '' }}
+        run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
       - name: Cache Cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -60,11 +65,16 @@ jobs:
     needs: [warm-cargo]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
+      # In act the Nix daemon is spawned as a background process (no systemd).
+      # Wait for the socket before any nix command to avoid a startup race.
+      - name: Wait for Nix daemon (act only)
+        if: ${{ env.ACT != '' }}
+        run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
       - name: Cache Cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -80,11 +90,16 @@ jobs:
     needs: [warm-cargo]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
+      # In act the Nix daemon is spawned as a background process (no systemd).
+      # Wait for the socket before any nix command to avoid a startup race.
+      - name: Wait for Nix daemon (act only)
+        if: ${{ env.ACT != '' }}
+        run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
       - name: Cache Cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -94,7 +109,7 @@ jobs:
       - name: cargo leptos build --release
         run: nix develop -c cargo leptos build --release
       - name: Upload web artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: web-dist
           path: |
@@ -109,11 +124,16 @@ jobs:
     needs: [warm-cargo]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
+      # In act the Nix daemon is spawned as a background process (no systemd).
+      # Wait for the socket before any nix command to avoid a startup race.
+      - name: Wait for Nix daemon (act only)
+        if: ${{ env.ACT != '' }}
+        run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
       - name: Cache Cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -130,14 +150,19 @@ jobs:
     needs: [warm-cargo]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
+      # In act the Nix daemon is spawned as a background process (no systemd).
+      # Wait for the socket before any nix command to avoid a startup race.
+      - name: Wait for Nix daemon (act only)
+        if: ${{ env.ACT != '' }}
+        run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
 
       # Restore the registry warmed by `warm-cargo` before any Cargo command
       # (including `trunk build` inside `cargo tauri android build`).
       - name: Cache Cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -158,7 +183,7 @@ jobs:
       # gradle-wrapper.properties produced by init, so it bumps automatically
       # whenever Tauri generates a newer Gradle version.
       - name: Cache Gradle wrapper distribution
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.gradle/wrapper/dists
           key: gradle-wrapper-${{ hashFiles('src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties') }}
@@ -166,7 +191,7 @@ jobs:
 
       # Cache the Gradle dependency / build-tool JARs downloaded via Maven.
       - name: Cache Gradle caches
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.gradle/caches
           key: gradle-caches-${{ hashFiles('src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties', 'src-tauri/Cargo.toml') }}
@@ -179,7 +204,7 @@ jobs:
             cargo tauri android build --apk
           '
       - name: Upload Android APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-apk
           path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
@@ -195,14 +220,19 @@ jobs:
     needs: [warm-cargo]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
+      # In act the Nix daemon is spawned as a background process (no systemd).
+      # Wait for the socket before any nix command to avoid a startup race.
+      - name: Wait for Nix daemon (act only)
+        if: ${{ env.ACT != '' }}
+        run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
       # crane vendors the Cargo closure offline into the Nix store, but
       # restoring the warm registry lets any incidental `cargo` invocations
       # (e.g. metadata queries) skip hitting crates.io entirely.
       - name: Cache Cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -239,12 +269,17 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
+      # In act the Nix daemon is spawned as a background process (no systemd).
+      # Wait for the socket before any nix command to avoid a startup race.
+      - name: Wait for Nix daemon (act only)
+        if: ${{ env.ACT != '' }}
+        run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
 
       - name: Download server image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: server-image
 
