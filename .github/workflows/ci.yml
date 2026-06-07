@@ -90,11 +90,13 @@ jobs:
            && apt-get install -y nodejs \
            && rm -rf /var/lib/apt/lists/*
           RUN echo 'root ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
-          RUN curl -sL https://nixos.org/nix/install | bash -s -- --no-daemon \
-           && mkdir -p /etc/nix \
-           && printf 'experimental-features = nix-command flakes\naccept-flake-config = true\n' \
-              >> /etc/nix/nix.conf
-          ENV PATH=/root/.nix-profile/bin:$PATH
+          RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
+           | sh -s -- install linux \
+               --init none \
+               --no-confirm \
+               --extra-conf "sandbox = false" \
+               --extra-conf "experimental-features = nix-command flakes"
+          ENV PATH=/nix/var/nix/profiles/default/bin:$PATH
           ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
           DOCKERFILE
 

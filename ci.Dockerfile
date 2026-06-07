@@ -1,8 +1,8 @@
 # CI base image for dabney.moe.
 #
-# Nix is pre-installed (single-user; runs as root in CI containers) so every
-# container job can call nix commands directly — no nix-installer-action, no
-# daemon-socket race, no permission errors.
+# Nix is pre-installed (Determinate installer, root-only via `--init none`) so
+# every container job can call nix commands directly — no nix-installer-action,
+# no daemon-socket race, no permission errors.
 #
 # The Cargo vendor dir is also baked in so every `cargo` invocation runs
 # fully offline against the pre-vendored closure, eliminating crates.io traffic.
@@ -26,17 +26,22 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # Allow root (the default GitHub Actions container user) to sudo without a
-# password. Needed by some Nix operations even in single-user mode.
+# password. Needed by some actions/tooling that shell out via sudo.
 RUN echo 'root ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
-# Nix — single-user install (no daemon required when running as root in a
-# container). Flakes and nix-command are enabled via /etc/nix/nix.conf.
-RUN curl -sL https://nixos.org/nix/install | bash -s -- --no-daemon \
- && mkdir -p /etc/nix \
- && printf 'experimental-features = nix-command flakes\naccept-flake-config = true\n' \
-    >> /etc/nix/nix.conf
+# Nix — Determinate installer with `--init none`, the documented way to install
+# Nix in a container with no init/systemd. This makes Nix root-only (our CI
+# jobs run as root) and works at build time without a managed daemon socket.
+# `sandbox = false` is recommended for nested-container builds; flakes are
+# enabled explicitly so `nix run .#ci` / `nix develop` / `nix build` work.
+RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
+ | sh -s -- install linux \
+     --init none \
+     --no-confirm \
+     --extra-conf "sandbox = false" \
+     --extra-conf "experimental-features = nix-command flakes"
 
-ENV PATH=/root/.nix-profile/bin:$PATH
+ENV PATH=/nix/var/nix/profiles/default/bin:$PATH
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # The vendor dir and rewritten config.toml are staged by ci-image.yml / the
