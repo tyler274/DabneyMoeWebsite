@@ -99,9 +99,13 @@ jobs:
       # downstream job runs `cargo` commands fully offline.
       - uses: DeterminateSystems/nix-installer-action@v22
         if: steps.check.outputs.skip != 'true' && env.ACT == ''
-      - name: Wait for Nix daemon
+      # Probe readiness with Nix's own command instead of a hardcoded socket
+      # path: Determinate Nix doesn't create /nix/var/nix/daemon-socket/socket,
+      # so polling that file times out. `nix store info` returns 0 once the
+      # store (daemon or local) is reachable.
+      - name: Wait for Nix to be ready
         if: steps.check.outputs.skip != 'true' && env.ACT == ''
-        run: timeout 60 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
+        run: timeout 120 bash -c 'until nix store info 2>/dev/null; do sleep 1; done'
 
       - name: Build Cargo vendor dir
         if: steps.check.outputs.skip != 'true' && env.ACT == ''
@@ -253,8 +257,7 @@ jobs:
 
   # Build the production OCI image (Nix). Separated from deploy so the
   # image tar is built once, uploaded as an artifact, and the deploy job
-  # just pushes it; no `nix build` on the deploy runner and no exposure
-  # to magic-nix-cache rate-limiting there.
+  # just pushes it; no `nix build` on the deploy runner.
   build-image:
     name: Build server OCI image
     needs: [build-ci-image]
@@ -283,7 +286,7 @@ jobs:
   # Cloudflare DNS, the domain mapping) is provisioned out-of-band by Terraform
   # under ./terraform; this job downloads the pre-built image artifact, pushes
   # it, and rolls a new Cloud Run revision (`gcloud run deploy`). No `nix build`
-  # here, so magic-nix-cache rate-limiting cannot stall the deploy.
+  # here, so a slow rebuild cannot stall the deploy.
   #
   # Secrets come from Doppler: the only GitHub secret is DOPPLER_TOKEN (a
   # read-only service token, created by Terraform). `doppler run` injects
@@ -299,8 +302,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
-      - name: Wait for Nix daemon
-        run: timeout 60 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
+      - name: Wait for Nix to be ready
+        run: timeout 120 bash -c 'until nix store info 2>/dev/null; do sleep 1; done'
 
       - name: Download server image artifact
         uses: actions/download-artifact@v8

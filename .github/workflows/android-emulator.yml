@@ -41,12 +41,12 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - uses: DeterminateSystems/nix-installer-action@v22
-      # In act the Nix daemon is spawned as a background process (no systemd).
-      # Wait for the socket before any nix command to avoid a startup race.
-      - name: Wait for Nix daemon (act only)
-        if: ${{ env.ACT != '' }}
-        run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
-      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      # Probe readiness with Nix's own command instead of a hardcoded socket
+      # path (Determinate Nix doesn't create /nix/var/nix/daemon-socket/socket,
+      # so polling that file times out). Works for daemon and local stores and
+      # retries to cover act's background-daemon startup.
+      - name: Wait for Nix to be ready
+        run: timeout 120 bash -c 'until nix store info 2>/dev/null; do sleep 1; done'
 
       - name: Cache Cargo registry
         uses: actions/cache@v5

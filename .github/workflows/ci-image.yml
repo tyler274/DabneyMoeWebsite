@@ -38,8 +38,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
-      - name: Wait for Nix daemon
-        run: timeout 60 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
+      # Readiness probe via Nix's own `store info` rather than a hardcoded
+      # daemon-socket path. Determinate Nix doesn't expose the legacy socket at
+      # /nix/var/nix/daemon-socket/socket, so polling that file times out (exit
+      # 124). `nix store info` works for both a daemon store (hosted runners)
+      # and a local single-user store, and retries cover the act case where the
+      # daemon comes up in the background after the installer step returns.
+      - name: Wait for Nix to be ready
+        run: timeout 120 bash -c 'until nix store info 2>/dev/null; do sleep 1; done'
 
       # Build the crane vendor dir from the flake. crane's `cargo vendor`
       # includes all platform-conditional deps (android, wasm32, etc.) in one
