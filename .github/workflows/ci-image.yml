@@ -38,10 +38,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
-      - name: Wait for Nix daemon (act only)
-        if: ${{ env.ACT != '' }}
-        run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
-      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - name: Wait for Nix daemon
+        run: timeout 60 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
 
       # Build the crane vendor dir from the flake. crane's `cargo vendor`
       # includes all platform-conditional deps (android, wasm32, etc.) in one
