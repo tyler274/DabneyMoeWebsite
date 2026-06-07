@@ -12,6 +12,12 @@ concurrency:
   group: android-emulator-${{ github.ref }}
   cancel-in-progress: true
 
+# Declared so the linter accepts env.ACT as a valid context access.
+# nektos/act sets this to a non-empty value when running locally; GitHub's
+# own runners leave it unset (empty string).
+env:
+  ACT: ""
+
 permissions:
   contents: read
   # Required by DeterminateSystems/nix-installer-action for FlakeHub OIDC auth.

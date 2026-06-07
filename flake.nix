@@ -62,6 +62,11 @@
           src = ./.;
         };
 
+        ciImage = import ./nix/ci-image.nix {
+          inherit pkgs crane rustToolchain;
+          src = ./.;
+        };
+
         shells = import ./nix/dev-shells.nix {
           inherit pkgs rustToolchain rustToolchainAndroid baseTools tauriDeps
             pkgConfigPath ldLibraryPath android;
@@ -80,6 +85,9 @@
         # hardened static-musl default; `serverImageGlibc` is the fallback.
         packages.serverImage = web.serverImage;
         packages.serverImageGlibc = web.serverImageGlibc;
+        # The crane-vendored Cargo.lock closure for all platforms. Consumed by
+        # ci-image.yml to bake offline cargo into the GHCR CI base image.
+        packages.cargoVendorDir = ciImage.cargoVendorDir;
 
         apps.ci = {
           type = "app";

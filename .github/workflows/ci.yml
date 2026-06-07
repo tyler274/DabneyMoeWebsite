@@ -15,55 +15,35 @@ permissions:
   contents: read
   # Required by DeterminateSystems/nix-installer-action for FlakeHub OIDC auth.
   id-token: write
+  # Required to pull the CI base image from GHCR.
+  packages: read
+
+# The CI base image (built by ci-image.yml) has the entire Cargo.lock closure
+# pre-vendored at /ci-cargo-vendor with CARGO_HOME=/ci-cargo-home pointing to
+# it. Every job that uses this container runs `cargo` commands fully offline —
+# no crates.io fetching, no retry loops, no HTTP/2 flakiness.
+#
+# Nix is NOT pre-installed in the image; each job still runs nix-installer-action
+# (which works fine inside Docker: it spawns the daemon in foreground when
+# systemd is absent). The image just eliminates the cargo fetch overhead.
+
+# ACT is set by nektos/act when running workflows locally; declaring it here
+# with an empty default silences the linter and keeps the value overridable.
+env:
+  ACT: ''
 
 jobs:
-  # Restore + prefetch the Cargo.lock closure once, then save it so every
-  # downstream job starts from a warm ~/.cargo/{registry,git} on its runner.
-  warm-cargo:
-    name: Warm Cargo registry cache
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: DeterminateSystems/nix-installer-action@v22
-      # In act the Nix daemon is spawned as a background process (no systemd).
-      # Wait for the socket before any nix command to avoid a startup race.
-      - name: Wait for Nix daemon (act only)
-        if: ${{ env.ACT != '' }}
-        run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
-      - uses: DeterminateSystems/magic-nix-cache-action@v14
-      - name: Cache Cargo registry
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-
-      - name: Prefetch Cargo dependencies
-        run: |
-          nix develop .#android -c bash -c '
-            set -euo pipefail
-            for attempt in 1 2 3 4 5; do
-              if cargo fetch --locked \
-                && cargo fetch --locked --target wasm32-unknown-unknown \
-                && cargo fetch --locked --target aarch64-linux-android \
-                && cargo fetch --locked --target armv7-linux-androideabi \
-                && cargo fetch --locked --target i686-linux-android \
-                && cargo fetch --locked --target x86_64-linux-android; then
-                exit 0
-              fi
-              echo "cargo fetch attempt $attempt failed; retrying in 15s..."
-              sleep 15
-            done
-            exit 1
-          '
-
   # Format, lint, and test gate. Runs the exact same script as `nix run .#ci`
   # locally, so green-here means green-there.
   check:
     name: Format / Clippy / Tests
-    needs: [warm-cargo]
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --privileged
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
@@ -73,39 +53,26 @@ jobs:
         if: ${{ env.ACT != '' }}
         run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
-      - name: Cache Cargo registry
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-
       - name: Run CI gate (fmt + clippy + tests)
         run: nix run .#ci
 
   # Production web build (Axum SSR server binary + hashed site assets).
   build-web:
     name: Build web (Leptos SSR)
-    needs: [warm-cargo]
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --privileged
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
-      # In act the Nix daemon is spawned as a background process (no systemd).
-      # Wait for the socket before any nix command to avoid a startup race.
       - name: Wait for Nix daemon (act only)
         if: ${{ env.ACT != '' }}
         run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
-      - name: Cache Cargo registry
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-
       - name: cargo leptos build --release
         run: nix develop -c cargo leptos build --release
       - name: Upload web artifact
@@ -121,25 +88,20 @@ jobs:
   # Desktop app: compile only (no OS packaging / bundling).
   build-desktop:
     name: Build desktop app (Tauri)
-    needs: [warm-cargo]
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --privileged
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
-      # In act the Nix daemon is spawned as a background process (no systemd).
-      # Wait for the socket before any nix command to avoid a startup race.
       - name: Wait for Nix daemon (act only)
         if: ${{ env.ACT != '' }}
         run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
-      - name: Cache Cargo registry
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-
       - name: cargo tauri build --no-bundle
         run: nix develop -c cargo tauri build --no-bundle
 
@@ -147,8 +109,13 @@ jobs:
   # git-ignored, so the Gradle/Android project is regenerated each run.
   build-android:
     name: Build Android app (APK)
-    needs: [warm-cargo]
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --privileged
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
@@ -158,17 +125,6 @@ jobs:
         if: ${{ env.ACT != '' }}
         run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
-
-      # Restore the registry warmed by `warm-cargo` before any Cargo command
-      # (including `trunk build` inside `cargo tauri android build`).
-      - name: Cache Cargo registry
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-
 
       # Generate the Android project first so gradle-wrapper.properties exists
       # before the Gradle cache steps derive their keys from it.
@@ -217,8 +173,13 @@ jobs:
   # to magic-nix-cache rate-limiting there.
   build-image:
     name: Build server OCI image
-    needs: [warm-cargo]
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --privileged
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
@@ -228,23 +189,12 @@ jobs:
         if: ${{ env.ACT != '' }}
         run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
-      # crane vendors the Cargo closure offline into the Nix store, but
-      # restoring the warm registry lets any incidental `cargo` invocations
-      # (e.g. metadata queries) skip hitting crates.io entirely.
-      - name: Cache Cargo registry
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-
       - name: nix build .#serverImage
         run: |
           nix build .#serverImage
           # `result` is a symlink into the Nix store; -L dereferences it.
           cp -L result server-image.tar.gz
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: server-image
           path: server-image.tar.gz
