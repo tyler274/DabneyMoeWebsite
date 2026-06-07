@@ -14,6 +14,8 @@ concurrency:
 
 permissions:
   contents: read
+  # Required by DeterminateSystems/nix-installer-action for FlakeHub OIDC auth.
+  id-token: write
 
 jobs:
   emulator:

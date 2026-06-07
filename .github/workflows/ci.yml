@@ -13,6 +13,8 @@ concurrency:
 
 permissions:
   contents: read
+  # Required by DeterminateSystems/nix-installer-action for FlakeHub OIDC auth.
+  id-token: write
 
 jobs:
   # Restore + prefetch the Cargo.lock closure once, then save it so every
