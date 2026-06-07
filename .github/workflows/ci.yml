@@ -98,6 +98,7 @@ jobs:
                --extra-conf "experimental-features = nix-command flakes"
           ENV PATH=/nix/var/nix/profiles/default/bin:$PATH
           ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+          RUN git config --system --add safe.directory '*'
           DOCKERFILE
 
       # === GitHub Actions path ===============================================
@@ -161,6 +162,10 @@ jobs:
       options: --privileged
     steps:
       - uses: actions/checkout@v6
+      # Container runs as root; the checkout is owned by the host UID, so
+      # libgit2 (Nix flake eval) rejects it. Trust it in the system gitconfig.
+      - name: Trust workspace for Git
+        run: git config --system --add safe.directory '*'
       - name: Run CI gate (fmt + clippy + tests)
         run: nix run .#ci
 
@@ -177,6 +182,8 @@ jobs:
       options: --privileged
     steps:
       - uses: actions/checkout@v6
+      - name: Trust workspace for Git
+        run: git config --system --add safe.directory '*'
       - name: cargo leptos build --release
         run: nix develop -c cargo leptos build --release
       - name: Upload web artifact
@@ -202,6 +209,8 @@ jobs:
       options: --privileged
     steps:
       - uses: actions/checkout@v6
+      - name: Trust workspace for Git
+        run: git config --system --add safe.directory '*'
       - name: cargo tauri build --no-bundle
         run: nix develop -c cargo tauri build --no-bundle
 
@@ -219,6 +228,8 @@ jobs:
       options: --privileged
     steps:
       - uses: actions/checkout@v6
+      - name: Trust workspace for Git
+        run: git config --system --add safe.directory '*'
 
       # Generate the Android project first so gradle-wrapper.properties exists
       # before the Gradle cache steps derive their keys from it.
@@ -276,6 +287,8 @@ jobs:
       options: --privileged
     steps:
       - uses: actions/checkout@v6
+      - name: Trust workspace for Git
+        run: git config --system --add safe.directory '*'
       - name: nix build .#serverImage
         run: |
           nix build .#serverImage

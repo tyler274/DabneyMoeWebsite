@@ -44,6 +44,12 @@ RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/
 ENV PATH=/nix/var/nix/profiles/default/bin:$PATH
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
+# The container runs as root, but `actions/checkout` writes the workspace owned
+# by the host runner's UID. Nix evaluates the flake via libgit2, which refuses
+# a repo "not owned by current user" (GIT_EOWNER). Trust all paths in the
+# system gitconfig (read regardless of $HOME) so flake evaluation works.
+RUN git config --system --add safe.directory '*'
+
 # The vendor dir and rewritten config.toml are staged by ci-image.yml / the
 # bootstrap job before `docker build` runs (materialised from `nix build`).
 COPY cargo-vendor /ci-cargo-vendor
