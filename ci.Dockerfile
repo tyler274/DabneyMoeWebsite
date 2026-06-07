@@ -24,6 +24,8 @@ RUN apt-get update \
       git \
       sudo \
       xz-utils \
+ && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+ && apt-get install -y nodejs \
  && rm -rf /var/lib/apt/lists/*
 
 # Allow root (the default GitHub Actions container user) to sudo without a

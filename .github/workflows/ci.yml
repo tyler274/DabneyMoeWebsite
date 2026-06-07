@@ -15,8 +15,9 @@ permissions:
   contents: read
   # Required by DeterminateSystems/nix-installer-action for FlakeHub OIDC auth.
   id-token: write
-  # Required to pull the CI base image from GHCR.
-  packages: read
+  # read: pull the CI base image from GHCR.
+  # write: push the bootstrapped image on first run / under act.
+  packages: write
 
 # The CI base image (built by ci-image.yml) has the entire Cargo.lock closure
 # pre-vendored at /ci-cargo-vendor with CARGO_HOME=/ci-cargo-home pointing to
@@ -33,10 +34,112 @@ env:
   ACT: ''
 
 jobs:
+  # Bootstrap the CI base image when it doesn't already exist.
+  #
+  # On GitHub Actions the job checks whether the Cargo.lock-pinned image tag is
+  # already present in GHCR; if it is the whole job is a no-op (fast path).  If
+  # it isn't (first push, or after a Cargo.lock bump) it installs Nix, vendors
+  # the Cargo closure, and builds+pushes the image exactly as ci-image.yml does.
+  #
+  # Under act (local testing) the job always builds the image because GHCR is
+  # not writable and `docker manifest inspect` can't authenticate.  The image is
+  # loaded into the local Docker daemon via `--load`; `.actrc` sets `--pull=false`
+  # so the container jobs below find it there instead of trying to pull from GHCR.
+  build-ci-image:
+    name: Bootstrap CI base image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Fast-path: if the hash-tagged image is already in GHCR (or in the local
+      # Docker daemon for act) skip the expensive Nix + Docker build entirely.
+      - name: Check if image already exists
+        id: check
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci
+        run: |
+          TAG_HASH="${IMAGE}:${{ hashFiles('**/Cargo.lock') }}"
+          # Prefer the local Docker daemon (instant; no network; works under act).
+          if docker image inspect "${IMAGE}:latest" > /dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          # Fall back to GHCR manifest check (GitHub Actions after first push).
+          elif docker manifest inspect "$TAG_HASH" > /dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # === Local act path =====================================================
+      # Build a lightweight image directly from the Docker daemon on the host.
+      # No Nix vendoring; downstream jobs will `cargo fetch` as needed, which is
+      # fine for local testing.  Building from a heredoc avoids Docker-in-Docker
+      # complexity that makes the Buildx action unreliable inside act containers.
+      - name: Build minimal CI image (act)
+        if: steps.check.outputs.skip != 'true' && env.ACT != ''
+        run: |
+          docker build \
+            -t ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest \
+            -t "ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:${{ hashFiles('**/Cargo.lock') }}" \
+            -f - . <<'DOCKERFILE'
+          FROM ubuntu:22.04
+          ARG DEBIAN_FRONTEND=noninteractive
+          RUN apt-get update \
+           && apt-get install -y --no-install-recommends \
+                bash ca-certificates curl git sudo xz-utils \
+           && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+           && apt-get install -y nodejs \
+           && rm -rf /var/lib/apt/lists/*
+          RUN echo 'root ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+          ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+          DOCKERFILE
+
+      # === GitHub Actions path ===============================================
+      # Build the full image with the pre-vendored Cargo closure so every
+      # downstream job runs `cargo` commands fully offline.
+      - uses: DeterminateSystems/nix-installer-action@v22
+        if: steps.check.outputs.skip != 'true' && env.ACT == ''
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+        if: steps.check.outputs.skip != 'true' && env.ACT == ''
+
+      - name: Build Cargo vendor dir
+        if: steps.check.outputs.skip != 'true' && env.ACT == ''
+        run: |
+          nix build .#cargoVendorDir --out-link cargo-vendor-result
+          cp -rL cargo-vendor-result cargo-vendor
+          STORE_PATH=$(readlink -f cargo-vendor-result)
+          sed "s|${STORE_PATH}|/ci-cargo-vendor|g" \
+            cargo-vendor-result/config.toml > cargo-home-config.toml
+
+      - name: Log in to GHCR
+        if: steps.check.outputs.skip != 'true' && env.ACT == ''
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.skip != 'true' && env.ACT == ''
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push CI image
+        if: steps.check.outputs.skip != 'true' && env.ACT == ''
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ci.Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+            ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:${{ hashFiles('**/Cargo.lock') }}
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+          cache-to: type=inline
+
   # Format, lint, and test gate. Runs the exact same script as `nix run .#ci`
   # locally, so green-here means green-there.
   check:
     name: Format / Clippy / Tests
+    needs: [build-ci-image]
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
@@ -53,12 +156,14 @@ jobs:
         if: ${{ env.ACT != '' }}
         run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
+        if: ${{ env.ACT == '' }}
       - name: Run CI gate (fmt + clippy + tests)
         run: nix run .#ci
 
   # Production web build (Axum SSR server binary + hashed site assets).
   build-web:
     name: Build web (Leptos SSR)
+    needs: [build-ci-image]
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
@@ -73,6 +178,7 @@ jobs:
         if: ${{ env.ACT != '' }}
         run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
+        if: ${{ env.ACT == '' }}
       - name: cargo leptos build --release
         run: nix develop -c cargo leptos build --release
       - name: Upload web artifact
@@ -88,6 +194,7 @@ jobs:
   # Desktop app: compile only (no OS packaging / bundling).
   build-desktop:
     name: Build desktop app (Tauri)
+    needs: [build-ci-image]
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
@@ -102,6 +209,7 @@ jobs:
         if: ${{ env.ACT != '' }}
         run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
+        if: ${{ env.ACT == '' }}
       - name: cargo tauri build --no-bundle
         run: nix develop -c cargo tauri build --no-bundle
 
@@ -109,6 +217,7 @@ jobs:
   # git-ignored, so the Gradle/Android project is regenerated each run.
   build-android:
     name: Build Android app (APK)
+    needs: [build-ci-image]
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
@@ -125,6 +234,7 @@ jobs:
         if: ${{ env.ACT != '' }}
         run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
+        if: ${{ env.ACT == '' }}
 
       # Generate the Android project first so gradle-wrapper.properties exists
       # before the Gradle cache steps derive their keys from it.
@@ -173,6 +283,7 @@ jobs:
   # to magic-nix-cache rate-limiting there.
   build-image:
     name: Build server OCI image
+    needs: [build-ci-image]
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
@@ -189,6 +300,7 @@ jobs:
         if: ${{ env.ACT != '' }}
         run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
+        if: ${{ env.ACT == '' }}
       - name: nix build .#serverImage
         run: |
           nix build .#serverImage
@@ -227,6 +339,7 @@ jobs:
         if: ${{ env.ACT != '' }}
         run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
+        if: ${{ env.ACT == '' }}
 
       - name: Download server image artifact
         uses: actions/download-artifact@v8

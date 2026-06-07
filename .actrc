@@ -1,0 +1,4 @@
+# Don't re-pull images that are already in the local Docker daemon.
+# This lets the build-ci-image job load dabneymoe-ci:latest into the local
+# daemon and have all subsequent container jobs use it without hitting GHCR.
+--pull=false
