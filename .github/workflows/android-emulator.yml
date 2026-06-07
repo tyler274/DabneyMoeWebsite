@@ -12,11 +12,9 @@ concurrency:
   group: android-emulator-${{ github.ref }}
   cancel-in-progress: true
 
-# Declared so the linter accepts env.ACT as a valid context access.
-# nektos/act sets this to a non-empty value when running locally; GitHub's
-# own runners leave it unset (empty string).
-env:
-  ACT: ""
+# Do not declare `env: ACT: ''` — the Determinate nix-installer detects the
+# mere presence of $ACT and would skip the systemd daemon on real runners,
+# leaving no daemon socket. act sets ACT=true itself when running locally.
 
 permissions:
   contents: read

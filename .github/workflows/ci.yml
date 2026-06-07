@@ -25,10 +25,14 @@ permissions:
 #   • call `nix` commands directly  — no nix-installer-action overhead
 #   • run `cargo` fully offline     — no crates.io fetching, no HTTP/2 flakiness
 
-# ACT is set by nektos/act when running workflows locally; declaring it here
-# with an empty default silences the linter and keeps the value overridable.
-env:
-  ACT: ''
+# NOTE: do NOT declare `env: ACT: ''` here. nektos/act injects ACT=true into
+# the environment when running locally, and the `env.ACT` checks below read
+# that. The Determinate nix-installer detects the *presence* of $ACT (not its
+# value), so exporting an empty ACT on GitHub's own runners makes the installer
+# think it's under act and skip the systemd Nix daemon — which then never
+# starts (no daemon-socket), hanging every later `nix` command. Leaving ACT
+# undefined means: real runners → installer uses systemd; act → ACT=true set by
+# act itself. Undefined `env.ACT` still compares equal to '' in expressions.
 
 jobs:
   # Bootstrap the CI base image when it doesn't already exist.
