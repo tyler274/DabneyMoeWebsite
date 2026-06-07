@@ -98,6 +98,9 @@ jobs:
       # downstream job runs `cargo` commands fully offline.
       - uses: DeterminateSystems/nix-installer-action@v22
         if: steps.check.outputs.skip != 'true' && env.ACT == ''
+      - name: Wait for Nix daemon
+        if: steps.check.outputs.skip != 'true' && env.ACT == ''
+        run: timeout 60 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
 
       - name: Build Cargo vendor dir
         if: steps.check.outputs.skip != 'true' && env.ACT == ''
@@ -148,11 +151,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
-      # In act the Nix daemon is spawned as a background process (no systemd).
-      # Wait for the socket before any nix command to avoid a startup race.
-      - name: Wait for Nix daemon (act only)
-        if: ${{ env.ACT != '' }}
-        run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
+      - name: Wait for Nix daemon
+        run: timeout 60 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
         if: ${{ env.ACT == '' }}
       - name: Run CI gate (fmt + clippy + tests)
@@ -172,9 +172,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
-      - name: Wait for Nix daemon (act only)
-        if: ${{ env.ACT != '' }}
-        run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
+      - name: Wait for Nix daemon
+        run: timeout 60 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
         if: ${{ env.ACT == '' }}
       - name: cargo leptos build --release
@@ -203,9 +202,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
-      - name: Wait for Nix daemon (act only)
-        if: ${{ env.ACT != '' }}
-        run: timeout 30 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
+      - name: Wait for Nix daemon
+        run: timeout 60 bash -c 'until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 1; done'
       - uses: DeterminateSystems/magic-nix-cache-action@v14
         if: ${{ env.ACT == '' }}
       - name: cargo tauri build --no-bundle
