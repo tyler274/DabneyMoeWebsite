@@ -23,5 +23,7 @@ with pkgs; [
   python3
   # Nix formatter (matches the flake `formatter`); also gated in CI.
   nixpkgs-fmt
+  # Local GitHub Actions runner (validate workflows without pushing).
+  act
   # clippy
 ]

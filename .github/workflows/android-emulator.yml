@@ -35,6 +35,33 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@v22
       - uses: DeterminateSystems/magic-nix-cache-action@v14
 
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-
+
+      # Populate the registry before init/build. Separate step so the cache
+      # restore above completes and the warmed tree is saved even if the
+      # emulator step fails later.
+      - name: Prefetch Cargo dependencies
+        run: |
+          nix develop .#android -c bash -c '
+            set -euo pipefail
+            for attempt in 1 2 3 4 5; do
+              cargo fetch --locked \
+                && cargo fetch --locked --target wasm32-unknown-unknown \
+                && cargo fetch --locked --target x86_64-linux-android \
+                && exit 0
+              echo "cargo fetch attempt $attempt failed; retrying in 15s..."
+              sleep 15
+            done
+            exit 1
+          '
+
       # Build an x86_64 APK (matches the emulator system image ABI) and boot a
       # headless AVD from the declarative Nix system image, then install the
       # app as a smoke test that it packages and loads on a real Android VM.

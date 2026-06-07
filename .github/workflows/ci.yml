@@ -15,26 +15,80 @@ permissions:
   contents: read
 
 jobs:
-  # Format, lint, and test gate. Runs the exact same script as `nix run .#ci`
-  # locally, so green-here means green-there.
-  check:
-    name: Format / Clippy / Tests
+  # Restore + prefetch the Cargo.lock closure once, then save it so every
+  # downstream job starts from a warm ~/.cargo/{registry,git} on its runner.
+  warm-cargo:
+    name: Warm Cargo registry cache
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@v22
       - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-
+      - name: Prefetch Cargo dependencies
+        run: |
+          nix develop .#android -c bash -c '
+            set -euo pipefail
+            for attempt in 1 2 3 4 5; do
+              if cargo fetch --locked \
+                && cargo fetch --locked --target wasm32-unknown-unknown \
+                && cargo fetch --locked --target aarch64-linux-android \
+                && cargo fetch --locked --target armv7-linux-androideabi \
+                && cargo fetch --locked --target i686-linux-android \
+                && cargo fetch --locked --target x86_64-linux-android; then
+                exit 0
+              fi
+              echo "cargo fetch attempt $attempt failed; retrying in 15s..."
+              sleep 15
+            done
+            exit 1
+          '
+
+  # Format, lint, and test gate. Runs the exact same script as `nix run .#ci`
+  # locally, so green-here means green-there.
+  check:
+    name: Format / Clippy / Tests
+    needs: [warm-cargo]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-
       - name: Run CI gate (fmt + clippy + tests)
         run: nix run .#ci
 
   # Production web build (Axum SSR server binary + hashed site assets).
   build-web:
     name: Build web (Leptos SSR)
+    needs: [warm-cargo]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@v22
       - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-
       - name: cargo leptos build --release
         run: nix develop -c cargo leptos build --release
       - name: Upload web artifact
@@ -50,11 +104,20 @@ jobs:
   # Desktop app: compile only (no OS packaging / bundling).
   build-desktop:
     name: Build desktop app (Tauri)
+    needs: [warm-cargo]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@v22
       - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-
       - name: cargo tauri build --no-bundle
         run: nix develop -c cargo tauri build --no-bundle
 
@@ -62,14 +125,26 @@ jobs:
   # git-ignored, so the Gradle/Android project is regenerated each run.
   build-android:
     name: Build Android app (APK)
+    needs: [warm-cargo]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@v22
       - uses: DeterminateSystems/magic-nix-cache-action@v14
 
+      # Restore the registry warmed by `warm-cargo` before any Cargo command
+      # (including `trunk build` inside `cargo tauri android build`).
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-
+
       # Generate the Android project first so gradle-wrapper.properties exists
-      # before the cache steps derive their keys from it.
+      # before the Gradle cache steps derive their keys from it.
       - name: cargo tauri android init
         run: |
           nix develop .#android -c bash -c '
@@ -115,11 +190,23 @@ jobs:
   # to magic-nix-cache rate-limiting there.
   build-image:
     name: Build server OCI image
+    needs: [warm-cargo]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@v22
       - uses: DeterminateSystems/magic-nix-cache-action@v14
+      # crane vendors the Cargo closure offline into the Nix store, but
+      # restoring the warm registry lets any incidental `cargo` invocations
+      # (e.g. metadata queries) skip hitting crates.io entirely.
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-
       - name: nix build .#serverImage
         run: |
           nix build .#serverImage

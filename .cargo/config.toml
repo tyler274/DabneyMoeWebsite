@@ -1,0 +1,9 @@
+# curl's HTTP/2 multiplexing flakes against crates.io in some CI environments
+# ([16] Error in the HTTP2 framing layer). Disabling it forces sequential
+# HTTP/1.1 downloads, which are slower but far more reliable.
+#[http]
+#multiplexing = false
+
+# Retry transient registry / crate download failures (network blips, 5xx).
+[net]
+retry = 5
