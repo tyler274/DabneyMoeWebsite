@@ -98,8 +98,6 @@ jobs:
       # downstream job runs `cargo` commands fully offline.
       - uses: DeterminateSystems/nix-installer-action@v22
         if: steps.check.outputs.skip != 'true' && env.ACT == ''
-      - uses: DeterminateSystems/magic-nix-cache-action@v14
-        if: steps.check.outputs.skip != 'true' && env.ACT == ''
 
       - name: Build Cargo vendor dir
         if: steps.check.outputs.skip != 'true' && env.ACT == ''
