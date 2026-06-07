@@ -3,7 +3,7 @@ name = "dabney-app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Tyler Port — resume & freelance software engineering, as a multiplatform Tauri app."
+description = "Tyler Port - resume & freelance software engineering, as a multiplatform Tauri app."
 
 # `staticlib`/`cdylib` are required for the mobile (iOS/Android) entry points.
 [lib]

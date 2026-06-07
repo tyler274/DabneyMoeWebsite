@@ -1,5 +1,5 @@
 {
-  description = "dabney.moe — Tyler Port's resume & freelance site (Leptos SSR) plus a Tauri multiplatform app suite";
+  description = "dabney.moe -Tyler Port's resume & freelance site (Leptos SSR) plus a Tauri multiplatform app suite";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

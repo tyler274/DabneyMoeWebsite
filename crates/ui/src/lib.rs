@@ -42,7 +42,7 @@ pub fn App() -> impl IntoView {
 
     view! {
         <Stylesheet id="leptos" href="/pkg/dabney.css" />
-        <Title text="Tyler Port — Freelance Software Engineer" />
+        <Title text="Tyler Port - Freelance Software Engineer" />
         <Meta
             name="description"
             content="Tyler Port is a Caltech-trained freelance software engineer specializing in Rust, GPU computing, and high-performance systems. Available for contract work."
@@ -52,7 +52,7 @@ pub fn App() -> impl IntoView {
 
         // Open Graph / social previews.
         <Meta property="og:type" content="website" />
-        <Meta property="og:title" content="Tyler Port — Freelance Software Engineer" />
+        <Meta property="og:title" content="Tyler Port - Freelance Software Engineer" />
         <Meta
             property="og:description"
             content="Rust, GPU computing, and high-performance systems. Available for freelance and contract work."
@@ -60,7 +60,7 @@ pub fn App() -> impl IntoView {
         <Meta property="og:url" content="https://dabney.moe/" />
         <Meta property="og:site_name" content="dabney.moe" />
         <Meta name="twitter:card" content="summary_large_image" />
-        <Meta name="twitter:title" content="Tyler Port — Freelance Software Engineer" />
+        <Meta name="twitter:title" content="Tyler Port - Freelance Software Engineer" />
         <Meta
             name="twitter:description"
             content="Rust, GPU computing, and high-performance systems. Available for freelance and contract work."

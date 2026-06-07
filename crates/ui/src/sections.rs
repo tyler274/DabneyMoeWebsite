@@ -251,7 +251,7 @@ pub fn Contact() -> impl IntoView {
             <div class="rounded-2xl border border-white/10 bg-gradient-to-br from-cyan-500/10 to-transparent p-8 sm:p-10">
                 <p class="max-w-2xl text-lg leading-relaxed text-slate-300">
                     "Have a project that needs systems expertise, GPU performance, or a "
-                    "full-stack build? I take on freelance and contract work — let's talk."
+                    "full-stack build? I take on freelance and contract work - let's talk."
                 </p>
                 <div class="mt-8 flex flex-wrap gap-4">
                     <a

@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Tyler Port — Freelance Software Engineer",
+        "title": "Tyler Port - Freelance Software Engineer",
         "width": 1100,
         "height": 820,
         "minWidth": 380,
@@ -28,8 +28,8 @@
     "active": true,
     "targets": "all",
     "category": "Business",
-    "shortDescription": "Tyler Port — freelance software engineer.",
-    "longDescription": "Tyler Port's resume and freelance software engineering portfolio — Rust, GPU computing, and high-performance systems.",
+    "shortDescription": "Tyler Port - freelance software engineer.",
+    "longDescription": "Tyler Port's resume and freelance software engineering portfolio - Rust, GPU computing, and high-performance systems.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
