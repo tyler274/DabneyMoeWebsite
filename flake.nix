@@ -17,11 +17,12 @@
   # modules and threads the shared values (pkgs, toolchains, tauri deps) between
   # them, then maps the results onto flake outputs.
   outputs =
-    { nixpkgs
-    , flake-utils
-    , rust-overlay
-    , crane
-    , ...
+    {
+      nixpkgs,
+      flake-utils,
+      rust-overlay,
+      crane,
+      ...
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
@@ -54,13 +55,25 @@
         android = import ./nix/android.nix { inherit pkgsAndroid; };
 
         ci = import ./nix/ci.nix {
-          inherit pkgs rustToolchain baseTools tauriDeps pkgConfigPath ldLibraryPath;
+          inherit
+            pkgs
+            rustToolchain
+            baseTools
+            tauriDeps
+            pkgConfigPath
+            ldLibraryPath
+            ;
         };
 
         formatCheck = import ./nix/format-check.nix { inherit pkgs rustToolchain; };
 
         web = import ./nix/web-server.nix {
-          inherit pkgs crane rustToolchain rustToolchainMusl;
+          inherit
+            pkgs
+            crane
+            rustToolchain
+            rustToolchainMusl
+            ;
           src = ./.;
         };
 
@@ -70,8 +83,16 @@
         };
 
         shells = import ./nix/dev-shells.nix {
-          inherit pkgs rustToolchain rustToolchainAndroid baseTools tauriDeps
-            pkgConfigPath ldLibraryPath android;
+          inherit
+            pkgs
+            rustToolchain
+            rustToolchainAndroid
+            baseTools
+            tauriDeps
+            pkgConfigPath
+            ldLibraryPath
+            android
+            ;
         };
       in
       {
