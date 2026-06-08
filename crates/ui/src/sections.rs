@@ -176,11 +176,11 @@ pub fn About() -> impl IntoView {
                         </span>
                     </div>
                 </div>
-                <div class="order-1 lg:order-2">
+                <div class="order-1 mx-auto w-full max-w-sm lg:order-2 lg:max-w-md">
                     <img
                         src=ABOUT_PHOTO
                         alt="Tyler Port enjoying a traditional Japanese meal"
-                        class="aspect-[4/3] w-full rounded-2xl border border-white/10 object-cover shadow-xl"
+                        class="h-auto w-full rounded-2xl border border-white/10 shadow-xl"
                         loading="lazy"
                     />
                 </div>
