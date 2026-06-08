@@ -48,6 +48,7 @@ pub fn App() -> impl IntoView {
             content="Tyler Port is a Caltech-trained freelance software engineer specializing in Rust, GPU computing, and high-performance systems. Available for contract work."
         />
         <Meta name="author" content="Tyler Alamo Port" />
+        <Link rel="icon" href="/favicon.png" type_="image/png" />
         <Link rel="canonical" href="https://dabney.moe/" />
 
         // Open Graph / social previews.

@@ -369,9 +369,12 @@ pub fn Contact() -> impl IntoView {
 pub fn Footer() -> impl IntoView {
     view! {
         <footer class="border-t border-white/5 px-6 py-10">
-            <div class="mx-auto flex max-w-5xl flex-col items-center justify-between gap-2 text-sm text-slate-500 sm:flex-row">
-                <span>"© 2026 Tyler Port · dabney.moe"</span>
-                <span>"Built with Rust, Leptos & Tauri"</span>
+            <div class="mx-auto flex max-w-5xl flex-col items-center gap-2 text-center text-sm text-slate-500">
+                <div class="flex flex-col items-center gap-2 sm:flex-row sm:justify-between sm:gap-4 w-full">
+                    <span>"© 2026 Tyler Port · dabney.moe"</span>
+                    <span>"Built with Rust, Leptos & Tauri"</span>
+                </div>
+                <span class="text-xs text-slate-600">"Icon © HoYoverse. All Rights Reserved."</span>
             </div>
         </footer>
     }
