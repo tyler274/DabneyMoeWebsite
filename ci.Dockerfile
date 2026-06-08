@@ -1,7 +1,7 @@
 # CI base image for dabney.moe.
 #
 # Nix is pre-installed (Determinate installer, root-only via `--init none`) so
-# every container job can call nix commands directly — no nix-installer-action,
+# every container job can call nix commands directly - no nix-installer-action,
 # no daemon-socket race, no permission errors.
 #
 # The Cargo vendor dir is also baked in so every `cargo` invocation runs
@@ -29,7 +29,7 @@ RUN apt-get update \
 # password. Needed by some actions/tooling that shell out via sudo.
 RUN echo 'root ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
-# Nix — Determinate installer with `--init none`, the documented way to install
+# Nix - Determinate installer with `--init none`, the documented way to install
 # Nix in a container with no init/systemd. This makes Nix root-only (our CI
 # jobs run as root) and works at build time without a managed daemon socket.
 # `sandbox = false` is recommended for nested-container builds; flakes are

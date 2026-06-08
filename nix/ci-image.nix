@@ -10,7 +10,7 @@
 # `ci-image.yml` workflow, which rewrites the embedded Nix store path to a
 # stable Docker path (/ci-cargo-vendor), builds an ubuntu:22.04-based CI image,
 # and pushes it to GHCR. Jobs in ci.yml then use that image as their container
-# so that every `cargo` invocation runs offline from day one — no `cargo fetch`
+# so that every `cargo` invocation runs offline from day one - no `cargo fetch`
 # loop, no crates.io latency.
 { pkgs, crane, rustToolchain, src }:
 let

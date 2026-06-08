@@ -3,7 +3,7 @@ name: Build and push CI base image
 # Rebuild the GHCR CI image whenever the Cargo closure or the image definition
 # itself changes, and weekly to pick up updated system packages (caniuse-lite,
 # CA certs, etc.). All other CI jobs use this image as their container so that
-# `cargo` runs fully offline — no crates.io fetching on hot paths.
+# `cargo` runs fully offline - no crates.io fetching on hot paths.
 on:
   push:
     branches: [main]
@@ -17,7 +17,7 @@ on:
     - cron: "0 5 * * 0"
   workflow_dispatch:
 
-# Do not declare `env: ACT: ''` — the Determinate nix-installer detects the
+# Do not declare `env: ACT: ''` - the Determinate nix-installer detects the
 # mere presence of $ACT and would skip the systemd daemon on real runners,
 # leaving no daemon socket. act sets ACT=true itself when running locally.
 
