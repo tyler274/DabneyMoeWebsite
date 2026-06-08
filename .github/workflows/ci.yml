@@ -211,7 +211,12 @@ jobs:
         run: git config --system --add safe.directory '*'
       - name: cargo leptos build --release
         run: nix develop -c cargo leptos build --release
+      # act's built-in artifact server doesn't speak the upload-artifact@v7
+      # protocol (rejects the `mime_type` field), so skip uploads under act.
+      # The build itself is what we validate locally; artifacts are only needed
+      # by the GitHub-hosted deploy job.
       - name: Upload web artifact
+        if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v7
         with:
           name: web-dist
@@ -290,6 +295,7 @@ jobs:
             cargo tauri android build --apk
           '
       - name: Upload Android APK artifact
+        if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v7
         with:
           name: android-apk
@@ -343,7 +349,8 @@ jobs:
           nix build .#serverImage
           # `result` is a symlink into the Nix store; -L dereferences it.
           cp -L result server-image.tar.gz
-      - uses: actions/upload-artifact@v7
+      - if: ${{ !env.ACT }}
+        uses: actions/upload-artifact@v7
         with:
           name: server-image
           path: server-image.tar.gz
