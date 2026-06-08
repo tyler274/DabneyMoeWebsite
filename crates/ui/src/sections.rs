@@ -1,8 +1,7 @@
 use leptos::prelude::*;
 
 use crate::data::{
-    ABOUT, ABOUT_PHOTO, EXPERTISE, EXPERIENCE, PROFILE_PHOTO, SERVICES, SKILLS, SUMMARY,
-    TAGLINE,
+    ABOUT, ABOUT_PHOTO, EXPERIENCE, EXPERTISE, PROFILE_PHOTO, SERVICES, SKILLS, SUMMARY, TAGLINE,
 };
 
 /// On WASM builds, attempt to open `url` via the Tauri opener plugin, exposed

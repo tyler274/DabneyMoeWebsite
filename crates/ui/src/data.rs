@@ -289,7 +289,10 @@ mod tests {
 
     #[test]
     fn expertise_is_well_formed() {
-        assert!(!EXPERTISE.is_empty(), "expected at least one expertise area");
+        assert!(
+            !EXPERTISE.is_empty(),
+            "expected at least one expertise area"
+        );
         for e in EXPERTISE {
             assert!(
                 !e.title.trim().is_empty(),
