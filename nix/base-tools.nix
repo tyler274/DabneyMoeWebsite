@@ -1,7 +1,8 @@
 # Everything in the dev shells except the Rust toolchain itself (so the default
 # and Android shells can each supply their own toolchain).
 { pkgs }:
-with pkgs; [
+with pkgs;
+[
   # Leptos full-stack build orchestrator (ssr + hydrate).
   cargo-leptos
   # CSR bundler used for the Tauri frontend.

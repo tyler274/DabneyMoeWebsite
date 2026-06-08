@@ -14,7 +14,12 @@
 # On managed container platforms (Cloud Run GEN2, etc.) this module is NOT
 # needed; the runtime's own sandbox (gVisor / Kata Containers) provides the
 # equivalent protections at a lower level.
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.services.dabney-web;
 in
@@ -100,9 +105,7 @@ in
 
       environment = {
         LEPTOS_OUTPUT_NAME = "dabney";
-        LEPTOS_SITE_ROOT =
-          if cfg.siteRoot != "" then cfg.siteRoot
-          else "${cfg.package}/share/site";
+        LEPTOS_SITE_ROOT = if cfg.siteRoot != "" then cfg.siteRoot else "${cfg.package}/share/site";
         LEPTOS_SITE_PKG_DIR = "pkg";
         LEPTOS_SITE_ADDR = cfg.listenAddr;
         LEPTOS_ENV = "PROD";
@@ -134,7 +137,10 @@ in
         # Nothing to write at runtime; make that explicit.
         ReadOnlyPaths = [ "/" ];
         ReadWritePaths = [ ]; # override here if the server ever needs a writable dir
-        InaccessiblePaths = [ "/proc/sys" "/sys/fs" ];
+        InaccessiblePaths = [
+          "/proc/sys"
+          "/sys/fs"
+        ];
 
         # ── Capability bounding set ────────────────────────────────────────
         # A static-musl HTTP server listening on port > 1024 needs zero Linux
@@ -148,7 +154,10 @@ in
         # Give the process its own network namespace view (no access to host
         # internal interfaces) and PID namespace (can't signal other processes).
         PrivateNetwork = false; # must be false to accept external TCP
-        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ]; # no UNIX, netlink, raw sockets
+        RestrictAddressFamilies = [
+          "AF_INET"
+          "AF_INET6"
+        ]; # no UNIX, netlink, raw sockets
         IPAddressDeny = "any"; # deny all outbound by default …
         # … re-open only what the SSR server legitimately needs:
         # (add upstream API CIDRs here if the server makes outbound HTTP calls)

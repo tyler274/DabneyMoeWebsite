@@ -1,14 +1,15 @@
 # Developer shells: the default web/desktop shell and the Android cross-compile
 # / emulator shell. Each supplies its own Rust toolchain but shares the base
 # tooling and Tauri dependency closure.
-{ pkgs
-, rustToolchain
-, rustToolchainAndroid
-, baseTools
-, tauriDeps
-, pkgConfigPath
-, ldLibraryPath
-, android
+{
+  pkgs,
+  rustToolchain,
+  rustToolchainAndroid,
+  baseTools,
+  tauriDeps,
+  pkgConfigPath,
+  ldLibraryPath,
+  android,
 }:
 {
   default = pkgs.mkShell {
@@ -22,8 +23,18 @@
     # `doppler` is the secrets-management CLI: it backs the Terraform `doppler`
     # provider and can inject the deploy secrets as `TF_VAR_*`
     # (`doppler run --name-transformer tf-var -- tofu apply`).
-    packages = [ rustToolchain ] ++ baseTools ++ tauriDeps
-      ++ [ pkgs.skopeo pkgs.opentofu pkgs.mold pkgs.google-cloud-sdk pkgs.doppler ];
+    packages = [
+      rustToolchain
+    ]
+    ++ baseTools
+    ++ tauriDeps
+    ++ [
+      pkgs.skopeo
+      pkgs.opentofu
+      pkgs.mold
+      pkgs.google-cloud-sdk
+      pkgs.doppler
+    ];
 
     PKG_CONFIG_PATH = pkgConfigPath;
     LD_LIBRARY_PATH = ldLibraryPath;
@@ -55,11 +66,15 @@
   # NDK, a JDK, the Android Rust targets, and the env vars Tauri, Gradle, and
   # the NDK toolchain expect.
   android = pkgs.mkShell {
-    packages =
-      [ rustToolchainAndroid ]
-      ++ baseTools
-      ++ tauriDeps
-      ++ [ pkgs.jdk17 android.androidSdk ];
+    packages = [
+      rustToolchainAndroid
+    ]
+    ++ baseTools
+    ++ tauriDeps
+    ++ [
+      pkgs.jdk17
+      android.androidSdk
+    ];
 
     PKG_CONFIG_PATH = pkgConfigPath;
     LD_LIBRARY_PATH = ldLibraryPath;
