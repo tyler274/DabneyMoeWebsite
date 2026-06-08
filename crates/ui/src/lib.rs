@@ -6,7 +6,8 @@
 //! - `csr`     : pure client-side rendering for the Tauri (Trunk) build.
 
 pub mod data;
-pub mod ira_sell;
+pub mod portfolio;
+pub mod portfolio_chart;
 pub mod sections;
 pub mod tools;
 
@@ -15,7 +16,7 @@ use leptos_meta::{provide_meta_context, Link, Meta, MetaTags, Stylesheet, Title}
 use leptos_router::components::{Route, Router, Routes};
 use leptos_router::StaticSegment;
 
-use tools::IraSellPage;
+use tools::InvestmentAccountPage;
 
 use sections::{About, Contact, Experience, Expertise, Footer, Hero, NavBar, Services, Skills};
 
@@ -78,8 +79,12 @@ pub fn App() -> impl IntoView {
                 <Routes fallback=|| view! { <HomePage /> }>
                     <Route path=StaticSegment("") view=HomePage />
                     <Route
+                        path=(StaticSegment("tools"), StaticSegment("investment-account"))
+                        view=InvestmentAccountPage
+                    />
+                    <Route
                         path=(StaticSegment("tools"), StaticSegment("investment-account-sell"))
-                        view=IraSellPage
+                        view=InvestmentAccountPage
                     />
                 </Routes>
             </main>
