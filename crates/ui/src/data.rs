@@ -45,7 +45,8 @@ GPU programming at Caltech, or building the next thing from scratch.";
 pub const EXPERTISE: &[Expertise] = &[
     Expertise {
         title: "NVIDIA CUDA & GPU Programming",
-        blurb: "From lecturing for CS179 at Caltech to CUDA C++ at JPL and Zeiss, I design and ship \
+        blurb:
+            "From lecturing for CS179 at Caltech to CUDA C++ at JPL and Zeiss, I design and ship \
                 parallel algorithms on GPUs-scientific simulation, ML inference, and \
                 real-time image pipelines.",
         image: "/photos/cuda-logo.jpg",
