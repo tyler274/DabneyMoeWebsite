@@ -1,6 +1,9 @@
 use leptos::prelude::*;
 
-use crate::data::{EXPERIENCE, SERVICES, SKILLS, SUMMARY, TAGLINE};
+use crate::data::{
+    ABOUT, ABOUT_PHOTO, EXPERTISE, EXPERIENCE, PROFILE_PHOTO, SERVICES, SKILLS, SUMMARY,
+    TAGLINE,
+};
 
 /// On WASM builds, attempt to open `url` via the Tauri opener plugin, exposed
 /// on `window.__TAURI__` (requires `app.withGlobalTauri = true`). Returns `true`
@@ -74,6 +77,8 @@ pub fn NavBar() -> impl IntoView {
                     <span class="text-cyan-400">"."</span>
                 </a>
                 <div class="hidden items-center gap-8 text-sm text-slate-300 md:flex">
+                    <a href="#about" class="transition hover:text-white">"About"</a>
+                    <a href="#expertise" class="transition hover:text-white">"Expertise"</a>
                     <a href="#services" class="transition hover:text-white">"Services"</a>
                     <a href="#experience" class="transition hover:text-white">"Experience"</a>
                     <a href="#skills" class="transition hover:text-white">"Skills"</a>
@@ -97,45 +102,124 @@ pub fn Hero() -> impl IntoView {
             class="relative overflow-hidden border-b border-white/5 px-6 py-24 sm:py-32"
         >
             <div class="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60%_50%_at_50%_0%,rgba(34,211,238,0.18),transparent)]"></div>
-            <div class="mx-auto max-w-5xl">
-                <p class="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium uppercase tracking-widest text-cyan-300">
-                    "Available for freelance & contract work"
-                </p>
-                <h1 class="max-w-3xl text-4xl font-bold leading-tight tracking-tight text-white sm:text-6xl">
-                    "Tyler Alamo Port"
-                </h1>
-                <p class="mt-4 text-xl font-medium text-cyan-300">{TAGLINE}</p>
-                <p class="mt-6 max-w-2xl text-lg leading-relaxed text-slate-300">{SUMMARY}</p>
-                <div class="mt-10 flex flex-wrap gap-4">
-                    <a
-                        href="#contact"
-                        class="rounded-full bg-cyan-500 px-6 py-3 font-semibold text-slate-950 transition hover:bg-cyan-400"
-                    >
-                        "Start a project"
-                    </a>
-                    <a
-                        href="/resume.pdf"
-                        target="_blank"
-                        rel="noopener"
-                        on:click=move |_ev| {
-                            // On Android WebViews, `target="_blank"` is silently
-                            // swallowed. If Tauri's opener plugin is present, hand
-                            // the URL off to the system browser. Bundled assets
-                            // live at the internal `tauri.localhost` origin which
-                            // an external browser can't resolve, so open the
-                            // public URL instead.
-                            #[cfg(not(feature = "ssr"))]
-                            if try_tauri_open(RESUME_PUBLIC_URL) {
-                                _ev.prevent_default();
+            <div class="mx-auto grid max-w-5xl items-center gap-12 lg:grid-cols-[1fr_auto] lg:gap-16">
+                <div>
+                    <p class="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium uppercase tracking-widest text-cyan-300">
+                        "Available for freelance & contract work"
+                    </p>
+                    <h1 class="max-w-3xl text-4xl font-bold leading-tight tracking-tight text-white sm:text-6xl">
+                        "Tyler Alamo Port"
+                    </h1>
+                    <p class="mt-4 text-xl font-medium text-cyan-300">{TAGLINE}</p>
+                    <p class="mt-6 max-w-2xl text-lg leading-relaxed text-slate-300">{SUMMARY}</p>
+                    <div class="mt-10 flex flex-wrap gap-4">
+                        <a
+                            href="#contact"
+                            class="rounded-full bg-cyan-500 px-6 py-3 font-semibold text-slate-950 transition hover:bg-cyan-400"
+                        >
+                            "Start a project"
+                        </a>
+                        <a
+                            href="/resume.pdf"
+                            target="_blank"
+                            rel="noopener"
+                            on:click=move |_ev| {
+                                // On Android WebViews, `target="_blank"` is silently
+                                // swallowed. If Tauri's opener plugin is present, hand
+                                // the URL off to the system browser. Bundled assets
+                                // live at the internal `tauri.localhost` origin which
+                                // an external browser can't resolve, so open the
+                                // public URL instead.
+                                #[cfg(not(feature = "ssr"))]
+                                if try_tauri_open(RESUME_PUBLIC_URL) {
+                                    _ev.prevent_default();
+                                }
                             }
-                        }
-                        class="rounded-full border border-white/15 px-6 py-3 font-semibold text-white transition hover:border-white/40 hover:bg-white/5"
-                    >
-                        "Download résumé"
-                    </a>
+                            class="rounded-full border border-white/15 px-6 py-3 font-semibold text-white transition hover:border-white/40 hover:bg-white/5"
+                        >
+                            "Download résumé"
+                        </a>
+                    </div>
+                </div>
+                <div class="relative mx-auto w-full max-w-sm lg:max-w-none lg:w-80 xl:w-96">
+                    <div class="absolute -inset-4 rounded-3xl bg-gradient-to-br from-cyan-400/20 to-transparent blur-2xl"></div>
+                    <img
+                        src=PROFILE_PHOTO
+                        alt="Tyler Port standing on sand dunes"
+                        class="relative aspect-[3/4] w-full rounded-2xl border border-white/10 object-cover shadow-2xl shadow-cyan-500/10"
+                        loading="eager"
+                    />
                 </div>
             </div>
         </section>
+    }
+}
+
+#[component]
+pub fn About() -> impl IntoView {
+    view! {
+        <Section id="about" eyebrow="Who I am" title="About">
+            <div class="grid items-center gap-10 lg:grid-cols-2 lg:gap-16">
+                <div class="order-2 lg:order-1">
+                    <p class="text-lg leading-relaxed text-slate-300">{ABOUT}</p>
+                    <div class="mt-8 flex flex-wrap gap-3">
+                        <span class="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-300">
+                            "Caltech CS '22"
+                        </span>
+                        <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-slate-300">
+                            "GPU & HPC"
+                        </span>
+                        <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-slate-300">
+                            "Rust & Systems"
+                        </span>
+                        <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-slate-300">
+                            "Photography"
+                        </span>
+                    </div>
+                </div>
+                <div class="order-1 lg:order-2">
+                    <img
+                        src=ABOUT_PHOTO
+                        alt="Tyler Port enjoying a traditional Japanese meal"
+                        class="aspect-[4/3] w-full rounded-2xl border border-white/10 object-cover shadow-xl"
+                        loading="lazy"
+                    />
+                </div>
+            </div>
+        </Section>
+    }
+}
+
+#[component]
+pub fn Expertise() -> impl IntoView {
+    view! {
+        <Section id="expertise" eyebrow="Where I shine" title="What I work with best">
+            <div class="grid gap-8 sm:grid-cols-2">
+                {EXPERTISE
+                    .iter()
+                    .map(|e| {
+                        view! {
+                            <div class="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] transition hover:border-cyan-400/40 hover:bg-white/[0.04]">
+                                <div class="flex h-44 items-center justify-center border-b border-white/5 bg-white/[0.03] p-6">
+                                    <img
+                                        src=e.image
+                                        alt=e.image_alt
+                                        class="max-h-full max-w-full object-contain"
+                                        loading="lazy"
+                                    />
+                                </div>
+                                <div class="p-6">
+                                    <h3 class="text-lg font-semibold text-white">{e.title}</h3>
+                                    <p class="mt-2 text-sm leading-relaxed text-slate-400">
+                                        {e.blurb}
+                                    </p>
+                                </div>
+                            </div>
+                        }
+                    })
+                    .collect_view()}
+            </div>
+        </Section>
     }
 }
 
@@ -315,6 +399,44 @@ mod render_tests {
             .replace("&#x27;", "'")
             .replace("&#39;", "'")
             .replace("&amp;", "&")
+    }
+
+    #[test]
+    fn about_renders_copy_and_photo() {
+        let html = render(view! { <About /> });
+        assert!(html.contains(ABOUT), "about missing copy");
+        assert!(
+            html.contains(ABOUT_PHOTO),
+            "about missing photo: {}",
+            ABOUT_PHOTO
+        );
+    }
+
+    #[test]
+    fn expertise_renders_every_area() {
+        let html = render(view! { <Expertise /> });
+        for e in EXPERTISE {
+            assert!(
+                html.contains(e.title),
+                "expertise missing title: {}",
+                e.title
+            );
+            assert!(
+                html.contains(e.image),
+                "expertise missing image: {}",
+                e.title
+            );
+        }
+    }
+
+    #[test]
+    fn hero_renders_profile_photo() {
+        let html = render(view! { <Hero /> });
+        assert!(
+            html.contains(PROFILE_PHOTO),
+            "hero missing profile photo: {}",
+            PROFILE_PHOTO
+        );
     }
 
     #[test]

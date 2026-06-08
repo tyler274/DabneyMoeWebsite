@@ -13,7 +13,7 @@ use leptos_meta::{provide_meta_context, Link, Meta, MetaTags, Stylesheet, Title}
 use leptos_router::components::{Route, Router, Routes};
 use leptos_router::StaticSegment;
 
-use sections::{Contact, Experience, Footer, Hero, NavBar, Services, Skills};
+use sections::{About, Contact, Experience, Expertise, Footer, Hero, NavBar, Services, Skills};
 
 /// Server-rendered HTML document shell. Used only by the SSR build; the Tauri
 /// CSR build supplies its own `index.html`.
@@ -59,7 +59,9 @@ pub fn App() -> impl IntoView {
         />
         <Meta property="og:url" content="https://dabney.moe/" />
         <Meta property="og:site_name" content="dabney.moe" />
+        <Meta property="og:image" content="https://dabney.moe/photos/tyler-dunes.jpg" />
         <Meta name="twitter:card" content="summary_large_image" />
+        <Meta name="twitter:image" content="https://dabney.moe/photos/tyler-dunes.jpg" />
         <Meta name="twitter:title" content="Tyler Port - Freelance Software Engineer" />
         <Meta
             name="twitter:description"
@@ -81,6 +83,8 @@ fn HomePage() -> impl IntoView {
     view! {
         <NavBar />
         <Hero />
+        <About />
+        <Expertise />
         <Services />
         <Experience />
         <Skills />

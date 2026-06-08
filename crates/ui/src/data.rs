@@ -21,11 +21,45 @@ pub struct SkillGroup {
     pub items: &'static [&'static str],
 }
 
+pub struct Expertise {
+    pub title: &'static str,
+    pub blurb: &'static str,
+    pub image: &'static str,
+    pub image_alt: &'static str,
+}
+
+pub const PROFILE_PHOTO: &str = "/photos/tyler-dunes.jpg";
+pub const ABOUT_PHOTO: &str = "/photos/tyler-travel.png";
+
 pub const TAGLINE: &str = "Independent software engineer & freelance contractor";
 
 pub const SUMMARY: &str = "Caltech-trained software engineer specializing in Rust, GPU \
 computing, and high-performance systems. I take projects from first commit to production \
 deployment. I'm available for freelance and contract work.";
+
+pub const ABOUT: &str = "When I'm not shipping systems code, you'll find me behind a camera \
+or exploring somewhere new. I bring the same curiosity I have for travel and culture to \
+every engineering problem-whether that's parallelizing orbital mechanics at JPL, teaching \
+GPU programming at Caltech, or building the next thing from scratch.";
+
+pub const EXPERTISE: &[Expertise] = &[
+    Expertise {
+        title: "NVIDIA CUDA & GPU Programming",
+        blurb: "From CS179 at Caltech to CUDA C++ at JPL and Zeiss, I design and ship \
+                parallel algorithms on GPUs—scientific simulation, ML inference, and \
+                real-time image pipelines.",
+        image: "/photos/cuda-logo.jpg",
+        image_alt: "NVIDIA CUDA logo",
+    },
+    Expertise {
+        title: "FPGAs & Hardware Acceleration",
+        blurb: "At Carl Zeiss I deployed PyTorch models on AMD/Xilinx FPGAs for real-time \
+                image signal processing. Comfortable from board bring-up through SYCL, \
+                VHDL, and the full HPC stack.",
+        image: "/photos/fpga-ultra96.png",
+        image_alt: "Avnet Ultra96 FPGA development board",
+    },
+];
 
 pub const SERVICES: &[Service] = &[
     Service {
@@ -251,6 +285,37 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn expertise_is_well_formed() {
+        assert!(!EXPERTISE.is_empty(), "expected at least one expertise area");
+        for e in EXPERTISE {
+            assert!(
+                !e.title.trim().is_empty(),
+                "expertise title must not be empty"
+            );
+            assert!(
+                !e.blurb.trim().is_empty(),
+                "expertise blurb must not be empty: {}",
+                e.title
+            );
+            assert!(
+                !e.image.trim().is_empty(),
+                "expertise image must not be empty: {}",
+                e.title
+            );
+            assert!(
+                !e.image_alt.trim().is_empty(),
+                "expertise image alt must not be empty: {}",
+                e.title
+            );
+        }
+    }
+
+    #[test]
+    fn about_copy_is_present() {
+        assert!(!ABOUT.trim().is_empty(), "ABOUT must not be empty");
     }
 
     #[test]

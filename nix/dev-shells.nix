@@ -40,6 +40,7 @@
       echo "  trunk $(trunk --version 2>/dev/null | awk '{print $2}')"
       echo "  tauri $(cargo tauri --version 2>/dev/null | awk '{print $NF}')"
       echo "  bun $(bun --version 2>/dev/null)"
+      echo "  python $(python3 --version 2>/dev/null | awk '{print $2}')"
       echo "  gcloud $(gcloud --version 2>/dev/null | awk 'NR==1{print $NF}')"
       echo "  doppler $(doppler --version 2>/dev/null)"
       echo ""
