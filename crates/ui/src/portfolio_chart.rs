@@ -106,14 +106,9 @@ fn FundWeightChart(impact: PortfolioImpact) -> impl IntoView {
                             let y = 30.0 + index as f64 * row_height;
                             let before_w = fund.weight_before / 100.0 * bar_max_width;
                             let after_w = fund.weight_after / 100.0 * bar_max_width;
-                            let label = if fund.symbol.len() > 8 {
-                                fund.symbol.clone()
-                            } else {
-                                fund.symbol.clone()
-                            };
                             view! {
                                 <g>
-                                    <text x="0" y=y + 10.0 fill=SLATE_LIGHT font-size="11">{label}</text>
+                                    <text x="0" y=y + 10.0 fill=SLATE_LIGHT font-size="11">{fund.symbol.clone()}</text>
                                     <rect
                                         x="70"
                                         y=y
