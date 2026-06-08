@@ -1,13 +1,13 @@
 # Single source of truth for the CI gate: format, lint, and test each crate with
 # the right (mutually exclusive) Leptos feature set. Run it locally with
 # `nix run .#ci`; GitHub Actions runs the very same script.
-{
-  pkgs,
-  rustToolchain,
-  baseTools,
-  tauriDeps,
-  pkgConfigPath,
-  ldLibraryPath,
+{ pkgs
+, rustToolchain
+, baseTools
+, tauriDeps
+, pkgConfigPath
+, ldLibraryPath
+,
 }:
 pkgs.writeShellApplication {
   name = "ci";
