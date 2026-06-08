@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Block pushes when Rust, Nix, or GitHub Actions YAML are not formatted.
+# Install with: ./scripts/install-githooks.sh
+# Bypass once:  git push --no-verify
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+
+if ! command -v nix >/dev/null 2>&1; then
+  echo "pre-push: nix not found; run format checks manually with: nix run .#format-check" >&2
+  exit 1
+fi
+
+exec nix run .#format-check

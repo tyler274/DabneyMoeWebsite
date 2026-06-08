@@ -1,5 +1,4 @@
 name: Android Emulator Smoke Test
-
 # Heavy + occasionally flaky (boots a full Android VM), so it is kept OUT of
 # the per-push deploy gate. Runs nightly and on demand instead.
 on:
@@ -7,20 +6,16 @@ on:
     # 07:00 UTC nightly.
     - cron: "0 7 * * *"
   workflow_dispatch:
-
 concurrency:
   group: android-emulator-${{ github.ref }}
   cancel-in-progress: true
-
 # Do not declare `env: ACT: ''` - the Determinate nix-installer detects the
 # mere presence of $ACT and would skip the systemd daemon on real runners,
 # leaving no daemon socket. act sets ACT=true itself when running locally.
-
 permissions:
   contents: read
   # Required by DeterminateSystems/nix-installer-action for FlakeHub OIDC auth.
   id-token: write
-
 jobs:
   emulator:
     name: Boot AVD + install APK
@@ -28,7 +23,6 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
-
       # GitHub-hosted Linux runners expose /dev/kvm; relax its permissions so
       # the Nix-provided emulator can use hardware acceleration.
       - name: Enable KVM
@@ -37,7 +31,6 @@ jobs:
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-
       - uses: DeterminateSystems/nix-installer-action@v22
       # Probe readiness with Nix's own command instead of a hardcoded socket
       # path (Determinate Nix doesn't create /nix/var/nix/daemon-socket/socket,
@@ -45,7 +38,6 @@ jobs:
       # retries to cover act's background-daemon startup.
       - name: Wait for Nix to be ready
         run: timeout 120 bash -c 'until nix store info 2>/dev/null; do sleep 1; done'
-
       - name: Cache Cargo registry
         uses: actions/cache@v5
         with:
@@ -54,7 +46,6 @@ jobs:
             ~/.cargo/git
           key: cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-
-
       # Populate the registry before init/build. Separate step so the cache
       # restore above completes and the warmed tree is saved even if the
       # emulator step fails later.
@@ -72,7 +63,6 @@ jobs:
             done
             exit 1
           '
-
       # Build an x86_64 APK (matches the emulator system image ABI) and boot a
       # headless AVD from the declarative Nix system image, then install the
       # app as a smoke test that it packages and loads on a real Android VM.

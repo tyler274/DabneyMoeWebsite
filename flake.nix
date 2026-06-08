@@ -57,6 +57,8 @@
           inherit pkgs rustToolchain baseTools tauriDeps pkgConfigPath ldLibraryPath;
         };
 
+        formatCheck = import ./nix/format-check.nix { inherit pkgs rustToolchain; };
+
         web = import ./nix/web-server.nix {
           inherit pkgs crane rustToolchain rustToolchainMusl;
           src = ./.;
@@ -77,6 +79,7 @@
         devShells.android = shells.android;
 
         packages.ci = ci;
+        packages.format-check = formatCheck;
         # The release SSR build (server binary + hashed assets). Default is the
         # hardened static-musl build; the glibc build is kept as a fallback.
         packages.web = web.webServerStatic;
@@ -92,6 +95,11 @@
         apps.ci = {
           type = "app";
           program = "${ci}/bin/ci";
+        };
+
+        apps.format-check = {
+          type = "app";
+          program = "${formatCheck}/bin/format-check";
         };
 
         formatter = pkgs.nixpkgs-fmt;

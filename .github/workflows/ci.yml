@@ -1,16 +1,13 @@
 name: CI
-
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
-
 # Cancel superseded runs on the same ref to save CI minutes.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 permissions:
   contents: read
   # Required by DeterminateSystems/nix-installer-action for FlakeHub OIDC auth.
@@ -18,7 +15,6 @@ permissions:
   # read: pull the CI base image from GHCR.
   # write: push the bootstrapped image on first run / under act.
   packages: write
-
 # The CI base image (built by ci-image.yml / the bootstrap job in this file)
 # ships Nix (single-user), Node 24, and the entire Cargo.lock closure
 # pre-vendored at /ci-cargo-vendor.  Every container job can therefore:
@@ -33,7 +29,6 @@ permissions:
 # starts (no daemon-socket), hanging every later `nix` command. Leaving ACT
 # undefined means: real runners → installer uses systemd; act → ACT=true set by
 # act itself. Undefined `env.ACT` still compares equal to '' in expressions.
-
 jobs:
   # Bootstrap the CI base image when it doesn't already exist.
   #
@@ -50,7 +45,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
       # Fast-path: skip only when a local image actually runs `nix`. A stale tag
       # (partial pull, old bootstrap) can exist without a working Nix install.
       - name: Check if image already exists
@@ -72,7 +66,6 @@ jobs:
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
-
       # === Local act path =====================================================
       # Build an image with Nix pre-installed directly from the Docker daemon.
       # No Cargo vendoring (downstream jobs fetch as needed for local testing).
@@ -103,7 +96,6 @@ jobs:
           ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
           RUN git config --system --add safe.directory '*'
           DOCKERFILE
-
       # === GitHub Actions path ===============================================
       # Build the full image with the pre-vendored Cargo closure so every
       # downstream job runs `cargo` commands fully offline.
@@ -116,7 +108,6 @@ jobs:
       - name: Wait for Nix to be ready
         if: steps.check.outputs.skip != 'true' && env.ACT == ''
         run: timeout 120 bash -c 'until nix store info 2>/dev/null; do sleep 1; done'
-
       - name: Build Cargo vendor dir
         if: steps.check.outputs.skip != 'true' && env.ACT == ''
         run: |
@@ -125,7 +116,6 @@ jobs:
           STORE_PATH=$(readlink -f cargo-vendor-result)
           sed "s|${STORE_PATH}|/ci-cargo-vendor|g" \
             cargo-vendor-result/config.toml > cargo-home-config.toml
-
       - name: Log in to GHCR
         if: steps.check.outputs.skip != 'true' && env.ACT == ''
         uses: docker/login-action@v3
@@ -133,11 +123,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Set up Docker Buildx
         if: steps.check.outputs.skip != 'true' && env.ACT == ''
         uses: docker/setup-buildx-action@v3
-
       - name: Build and push CI image
         if: steps.check.outputs.skip != 'true' && env.ACT == ''
         uses: docker/build-push-action@v6
@@ -150,7 +138,6 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:${{ hashFiles('**/Cargo.lock') }}
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
           cache-to: type=inline
-
   # Quick format check: rustfmt + nixpkgs-fmt. Fast gate that catches style
   # issues before we spend time on linting or building.
   # The CI image ships Nix but not the dev-shell tools; invoke them via
@@ -176,7 +163,6 @@ jobs:
         run: nix develop -c nixpkgs-fmt --check flake.nix nix/
       - name: Check rustfmt
         run: nix develop -c cargo fmt --all --check
-
   # Clippy lint gate. Runs after format passes.
   clippy:
     name: Clippy
@@ -205,7 +191,6 @@ jobs:
         run: nix develop -c cargo clippy -p dabney-app -- -D warnings
       - name: "clippy: icon-gen"
         run: nix develop -c cargo clippy -p icon-gen -- -D warnings
-
   # Production web build (Axum SSR server binary + hashed site assets).
   build-web:
     name: Build web (Leptos SSR)
@@ -235,7 +220,6 @@ jobs:
             target/release/web
           if-no-files-found: error
           retention-days: 7
-
   # Desktop app: compile only (no OS packaging / bundling).
   build-desktop:
     name: Build desktop app (Tauri)
@@ -256,7 +240,6 @@ jobs:
         run: git config --system --add safe.directory '*'
       - name: cargo tauri build --no-bundle
         run: nix develop -c cargo tauri build --no-bundle
-
   # Android app: cross-compile to an (unsigned) APK. `src-tauri/gen` is
   # git-ignored, so the Gradle/Android project is regenerated each run.
   build-android:
@@ -276,7 +259,6 @@ jobs:
       - uses: actions/checkout@v6
       - name: Trust workspace for Git
         run: git config --system --add safe.directory '*'
-
       # Generate the Android project first so gradle-wrapper.properties exists
       # before the Gradle cache steps derive their keys from it.
       - name: cargo tauri android init
@@ -285,7 +267,6 @@ jobs:
             set -euo pipefail
             cargo tauri android init --skip-targets-install
           '
-
       # Cache the Gradle wrapper distribution. Key is derived from the actual
       # gradle-wrapper.properties produced by init, so it bumps automatically
       # whenever Tauri generates a newer Gradle version.
@@ -295,7 +276,6 @@ jobs:
           path: ~/.gradle/wrapper/dists
           key: gradle-wrapper-${{ hashFiles('src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-wrapper-
-
       # Cache the Gradle dependency / build-tool JARs downloaded via Maven.
       - name: Cache Gradle caches
         uses: actions/cache@v5
@@ -303,7 +283,6 @@ jobs:
           path: ~/.gradle/caches
           key: gradle-caches-${{ hashFiles('src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties', 'src-tauri/Cargo.toml') }}
           restore-keys: gradle-caches-
-
       - name: cargo tauri android build --apk
         run: |
           nix develop .#android -c bash -c '
@@ -317,7 +296,6 @@ jobs:
           path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: warn
           retention-days: 7
-
   # Test suite. Runs after web build finishes (uses the built artifacts).
   test:
     name: Test suite
@@ -342,7 +320,6 @@ jobs:
         run: nix develop -c cargo test -p web --features ssr
       - name: "test: dabney-app (tauri context)"
         run: nix develop -c cargo test -p dabney-app
-
   # Build the production OCI image (Nix). Only runs if web builds AND tests pass.
   build-image:
     name: Build server OCI image
@@ -372,7 +349,6 @@ jobs:
           path: server-image.tar.gz
           if-no-files-found: error
           retention-days: 1
-
   # Deploy on green main. Infra (Artifact Registry, the Cloud Run service,
   # Cloudflare DNS, the domain mapping) is provisioned out-of-band by Terraform
   # under ./terraform; this job downloads the pre-built image artifact, pushes
@@ -395,12 +371,10 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@v22
       - name: Wait for Nix to be ready
         run: timeout 120 bash -c 'until nix store info 2>/dev/null; do sleep 1; done'
-
       - name: Download server image artifact
         uses: actions/download-artifact@v8
         with:
           name: server-image
-
       - name: Check for Doppler token
         id: creds
         env:
@@ -412,7 +386,6 @@ jobs:
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "::notice::DOPPLER_TOKEN not set; skipping web deploy. See terraform/README.md."
           fi
-
       # Push the pre-built image (by commit SHA + latest) and roll a new Cloud
       # Run revision. gcloud/skopeo/doppler come from the Nix dev shell;
       # Doppler injects the GCP creds + project/region.
@@ -442,7 +415,6 @@ jobs:
 
             gcloud run deploy dabney-web --image "$IMAGE" --region "$GCP_REGION" --quiet
           '
-
       - name: Publish app
         run: |
           echo "TODO: sign + publish the Android app to Google Play."
