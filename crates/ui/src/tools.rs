@@ -73,33 +73,25 @@ pub fn ToolsMenu() -> impl IntoView {
 pub fn InvestmentAccountPage() -> impl IntoView {
     use crate::sections::NavBar;
 
-    // Type-erase each child into `AnyView` for the same reason as `HomePage`:
-    // the combined view tuple of NavBar + the calculator section + Footer is
-    // deep enough (after ToolsMenu closures and the many Show branches inside
-    // InvestmentAccountCalculator) to overflow rustc's type-layout recursion
-    // limit in the release SSR binary.
-    vec![
-        view! { <NavBar /> }.into_any(),
-        view! {
-            <section class="border-b border-white/5 px-6 py-20">
-                <div class="mx-auto max-w-4xl">
-                    <p class="mb-2 text-sm font-semibold uppercase tracking-widest text-cyan-400">
-                        "Tools"
-                    </p>
-                    <h1 class="mb-3 text-3xl font-bold tracking-tight text-white sm:text-4xl">
-                        "Investment Account Calculator"
-                    </h1>
-                    <p class="mb-10 max-w-2xl text-lg leading-relaxed text-slate-300">
-                        "Upload a Raymond James portfolio CSV. Choose sell, buy, or quarterly rebalance—"
-                        "everything runs in your browser and your file never leaves this device."
-                    </p>
-                    <InvestmentAccountCalculator />
-                </div>
-            </section>
-        }
-        .into_any(),
-        view! { <Footer /> }.into_any(),
-    ]
+    view! {
+        <NavBar />
+        <section class="border-b border-white/5 px-6 py-20">
+            <div class="mx-auto max-w-4xl">
+                <p class="mb-2 text-sm font-semibold uppercase tracking-widest text-cyan-400">
+                    "Tools"
+                </p>
+                <h1 class="mb-3 text-3xl font-bold tracking-tight text-white sm:text-4xl">
+                    "Investment Account Calculator"
+                </h1>
+                <p class="mb-10 max-w-2xl text-lg leading-relaxed text-slate-300">
+                    "Upload a Raymond James portfolio CSV. Choose sell, buy, or quarterly rebalance—"
+                    "everything runs in your browser and your file never leaves this device."
+                </p>
+                <InvestmentAccountCalculator />
+            </div>
+        </section>
+        <Footer />
+    }
 }
 
 /// Backward-compatible alias for the sell-only page export.

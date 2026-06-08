@@ -1,4 +1,5 @@
 //! Axum SSR server for dabney.moe.
+#![recursion_limit = "1024"]
 //!
 //! Built by cargo-leptos with the `ssr` feature. The non-ssr `main` exists only
 //! so the crate still compiles when cargo-leptos builds the hydrate `cdylib`.
