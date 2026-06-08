@@ -1,4 +1,5 @@
 //! WASM hydration entry point for the web build.
+#![recursion_limit = "256"]
 //!
 //! cargo-leptos compiles this crate as a `cdylib` with the `hydrate` feature
 //! and ships the resulting `dabney.wasm` to the browser, where it hydrates the

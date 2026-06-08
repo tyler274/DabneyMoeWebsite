@@ -1,4 +1,5 @@
 //! Shared Leptos UI for dabney.moe.
+#![recursion_limit = "256"]
 //!
 //! The same components render in three configurations selected by feature:
 //! - `ssr`     : server-side rendering on the Axum web server.
@@ -94,15 +95,20 @@ pub fn App() -> impl IntoView {
 
 #[component]
 fn HomePage() -> impl IntoView {
-    view! {
-        <NavBar />
-        <Hero />
-        <About />
-        <Expertise />
-        <Services />
-        <Experience />
-        <Skills />
-        <Contact />
-        <Footer />
-    }
+    // Type-erase each section into `AnyView` so the page is a flat, homogeneous
+    // collection instead of one deeply nested view tuple. Without this, the
+    // combined type (every section plus the `NavBar` -> `ToolsMenu` subtree)
+    // overflows rustc's type-layout recursion limit when the SSR router
+    // resolves the route in a single monomorphization.
+    vec![
+        view! { <NavBar /> }.into_any(),
+        view! { <Hero /> }.into_any(),
+        view! { <About /> }.into_any(),
+        view! { <Expertise /> }.into_any(),
+        view! { <Services /> }.into_any(),
+        view! { <Experience /> }.into_any(),
+        view! { <Skills /> }.into_any(),
+        view! { <Contact /> }.into_any(),
+        view! { <Footer /> }.into_any(),
+    ]
 }

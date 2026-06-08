@@ -39,15 +39,8 @@ fn rejects_empty_fund_holdings() {
     assert!(holdings.is_empty());
     assert!((cash - 1000.0).abs() < f64::EPSILON);
 
-    let err = build_sell_report(
-        holdings,
-        cash,
-        AccountType::Taxable,
-        500.0,
-        None,
-        None,
-    )
-    .unwrap_err();
+    let err =
+        build_sell_report(holdings, cash, AccountType::Taxable, 500.0, None, None).unwrap_err();
     assert!(err.contains("No fund holdings found"));
 }
 

@@ -26,7 +26,11 @@ fn PortfolioValueChart(impact: PortfolioImpact) -> impl IntoView {
         .max(impact.total_after)
         .max(impact.cash_before)
         .max(impact.cash_after);
-    let scale = if max_value > 0.0 { 200.0 / max_value } else { 0.0 };
+    let scale = if max_value > 0.0 {
+        200.0 / max_value
+    } else {
+        0.0
+    };
 
     let before_h = impact.total_before * scale;
     let after_h = impact.total_after * scale;

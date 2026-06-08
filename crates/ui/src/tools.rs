@@ -4,8 +4,8 @@ use leptos::prelude::*;
 use leptos_router::components::A;
 
 use crate::portfolio::{
-    analyze_buy, analyze_portfolio, analyze_rebalance, parse_deposit, parse_withholding_pct,
-    parse_withdrawal, AccountType, BuyReport, PortfolioImpact, RebalanceReport, SellReport,
+    analyze_buy, analyze_portfolio, analyze_rebalance, parse_deposit, parse_withdrawal,
+    parse_withholding_pct, AccountType, BuyReport, PortfolioImpact, RebalanceReport, SellReport,
     TaxWithholding, TradeSide,
 };
 use crate::portfolio_chart::PortfolioImpactCharts;
@@ -159,8 +159,7 @@ pub fn InvestmentAccountCalculator() -> impl IntoView {
                     };
                     if rates.total_pct() >= 100.0 {
                         error.set(Some(
-                            "Combined federal and state withholding must be less than 100%."
-                                .into(),
+                            "Combined federal and state withholding must be less than 100%.".into(),
                         ));
                         return;
                     }
@@ -169,13 +168,7 @@ pub fn InvestmentAccountCalculator() -> impl IntoView {
                     (None, None)
                 };
 
-                match analyze_portfolio(
-                    &text,
-                    acct,
-                    value,
-                    net_withdrawal,
-                    withholding,
-                ) {
+                match analyze_portfolio(&text, acct, value, net_withdrawal, withholding) {
                     Ok(result) => sell_report.set(Some(result)),
                     Err(message) => error.set(Some(message)),
                 }
