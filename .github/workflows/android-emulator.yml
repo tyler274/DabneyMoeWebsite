@@ -12,7 +12,7 @@ concurrency:
   group: android-emulator-${{ github.ref }}
   cancel-in-progress: true
 
-# Do not declare `env: ACT: ''` — the Determinate nix-installer detects the
+# Do not declare `env: ACT: ''` - the Determinate nix-installer detects the
 # mere presence of $ACT and would skip the systemd daemon on real runners,
 # leaving no daemon socket. act sets ACT=true itself when running locally.
 

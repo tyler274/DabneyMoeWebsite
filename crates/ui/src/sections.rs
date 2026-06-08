@@ -3,6 +3,7 @@ use leptos::prelude::*;
 use crate::data::{
     ABOUT, ABOUT_PHOTO, EXPERIENCE, EXPERTISE, PROFILE_PHOTO, SERVICES, SKILLS, SUMMARY, TAGLINE,
 };
+use crate::tools::ToolsMenu;
 
 /// On WASM builds, attempt to open `url` via the Tauri opener plugin, exposed
 /// on `window.__TAURI__` (requires `app.withGlobalTauri = true`). Returns `true`
@@ -71,18 +72,19 @@ pub fn NavBar() -> impl IntoView {
     view! {
         <header class="sticky top-0 z-50 border-b border-white/5 bg-slate-950/70 backdrop-blur">
             <nav class="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-                <a href="#top" class="text-lg font-semibold tracking-tight text-white">
+                <a href="/#top" class="text-lg font-semibold tracking-tight text-white">
                     "Tyler Port"
                     <span class="text-cyan-400">"."</span>
                 </a>
                 <div class="hidden items-center gap-8 text-sm text-slate-300 md:flex">
-                    <a href="#about" class="transition hover:text-white">"About"</a>
-                    <a href="#expertise" class="transition hover:text-white">"Expertise"</a>
-                    <a href="#services" class="transition hover:text-white">"Services"</a>
-                    <a href="#experience" class="transition hover:text-white">"Experience"</a>
-                    <a href="#skills" class="transition hover:text-white">"Skills"</a>
+                    <a href="/#about" class="transition hover:text-white">"About"</a>
+                    <a href="/#expertise" class="transition hover:text-white">"Expertise"</a>
+                    <a href="/#services" class="transition hover:text-white">"Services"</a>
+                    <a href="/#experience" class="transition hover:text-white">"Experience"</a>
+                    <a href="/#skills" class="transition hover:text-white">"Skills"</a>
+                    <ToolsMenu />
                     <a
-                        href="#contact"
+                        href="/#contact"
                         class="rounded-full bg-cyan-500 px-4 py-1.5 font-medium text-slate-950 transition hover:bg-cyan-400"
                     >
                         "Hire me"
