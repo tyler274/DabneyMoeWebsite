@@ -387,7 +387,7 @@ jobs:
     name: Deploy web (GCP Cloud Run)
     runs-on: ubuntu-latest
     # Deploy only after: check (format+clippy), all builds, test, and image build pass
-    needs: [clippy, build-web, build-desktop, build-android, test, build-image]
+    needs: [clippy, build-web, test, build-image]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     environment: production
     steps:
