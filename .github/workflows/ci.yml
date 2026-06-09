@@ -349,6 +349,14 @@ jobs:
           nix build .#serverImage
           # `result` is a symlink into the Nix store; -L dereferences it.
           cp -L result server-image.tar.gz
+      # Under act the upload-artifact action is skipped (protocol mismatch), but
+      # with `.actrc --bind` the tarball above is written straight to the host
+      # workspace for local `docker load` smoke tests.
+      - name: Verify server image export (act)
+        if: env.ACT != ''
+        run: |
+          ls -lh server-image.tar.gz
+          test -s server-image.tar.gz
       - if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v7
         with:

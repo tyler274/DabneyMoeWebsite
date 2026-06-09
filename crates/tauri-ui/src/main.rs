@@ -2,6 +2,7 @@
 //!
 //! Trunk bundles this binary into static assets that Tauri serves from `dist/`.
 //! It mounts the very same `ui::App` used by the SSR web build.
+#![recursion_limit = "1024"]
 
 fn main() {
     console_error_panic_hook::set_once();

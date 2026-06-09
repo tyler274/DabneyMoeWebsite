@@ -2,3 +2,7 @@
 # This lets the build-ci-image job load dabneymoe-ci:latest into the local
 # daemon and have all subsequent container jobs use it without hitting GHCR.
 --pull=false
+# Bind-mount the repo instead of copying it into each job container so files
+# written inside nested `container:` jobs (e.g. server-image.tar.gz) land on
+# the host workspace for local smoke tests.
+--bind

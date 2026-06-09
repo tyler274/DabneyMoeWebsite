@@ -72,6 +72,16 @@ panic = "abort"
 # Faster incremental dependency builds during development.
 [profile.dev]
 opt-level = 1
+# `opt-level > 0` enables thin-local LTO unless explicitly disabled. With
+# cargo-leptos rebuilding SSR + WASM targets, incremental reuse can leave stale
+# internalized symbols and break the native link (undefined hidden hashbrown /
+# ub_checks symbols under rust-lld on 1.96+).
+lto = "off"
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# Shared between SSR and hydrate feature sets; disable incremental to avoid
+# cross-build artifact reuse in target/debug/deps.
+[profile.dev.package.ui]
+incremental = false
