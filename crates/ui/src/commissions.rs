@@ -4,7 +4,7 @@ use leptos::prelude::*;
 use leptos_router::components::A;
 
 use crate::commissions_data::{
-    CommissionMedia, GalleryItem, ARTWORK_INTRO, ARTWORK_ITEMS, EILI_YOUTUBE, LAPIDARY_INTRO,
+    GalleryItem, LapidaryItem, ARTWORK_INTRO, ARTWORK_ITEMS, EILI_YOUTUBE, LAPIDARY_INTRO,
     LAPIDARY_ITEMS, SONGS, SONGS_INTRO,
 };
 use crate::sections::{Footer, NavBar};
@@ -98,28 +98,37 @@ fn YoutubeEmbed(video_id: &'static str, title: &'static str) -> impl IntoView {
 }
 
 #[component]
-fn LapidaryMediaCard(item: CommissionMedia) -> impl IntoView {
-    match item {
-        CommissionMedia::Image { src, alt, caption } => view! {
-            <figure class="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
-                <img src=src alt=alt class="aspect-[4/3] w-full object-cover" loading="lazy" />
-                {caption.map(|text| view! {
-                    <figcaption class="border-t border-white/5 px-4 py-3 text-sm text-slate-400">
-                        {text}
-                    </figcaption>
-                })}
-            </figure>
-        }
-        .into_any(),
-        CommissionMedia::Youtube { video_id, title } => view! {
-            <figure class="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
-                <YoutubeEmbed video_id=video_id title=title />
-                <figcaption class="border-t border-white/5 px-4 py-3 text-sm text-slate-400">
-                    {title}
-                </figcaption>
-            </figure>
-        }
-        .into_any(),
+fn LapidaryMediaCard(item: LapidaryItem) -> impl IntoView {
+    let crystal = item.crystal;
+    let design = item.design;
+    let designer = item.designer;
+    let lighting = item.lighting;
+    view! {
+        <figure class="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+            <img
+                src=item.src
+                alt=item.alt
+                class="aspect-[4/3] w-full bg-slate-900 object-contain"
+                loading="lazy"
+            />
+            <figcaption class="space-y-1 border-t border-white/5 px-4 py-3 text-sm text-slate-400">
+                <p class="font-medium text-slate-300">
+                    {crystal}
+                    " · "
+                    {design}
+                </p>
+                <p>
+                    "Design by "
+                    <span class="text-slate-300">{designer}</span>
+                    {lighting.map(|note| view! {
+                        <span class="text-slate-500">
+                            " · "
+                            {note}
+                        </span>
+                    })}
+                </p>
+            </figcaption>
+        </figure>
     }
 }
 

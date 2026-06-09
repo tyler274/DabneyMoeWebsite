@@ -2,16 +2,13 @@
 //! Add images under `public/commissions/` and update the entries below.
 
 #[derive(Clone, Copy)]
-pub enum CommissionMedia {
-    Image {
-        src: &'static str,
-        alt: &'static str,
-        caption: Option<&'static str>,
-    },
-    Youtube {
-        video_id: &'static str,
-        title: &'static str,
-    },
+pub struct LapidaryItem {
+    pub src: &'static str,
+    pub alt: &'static str,
+    pub crystal: &'static str,
+    pub design: &'static str,
+    pub designer: &'static str,
+    pub lighting: Option<&'static str>,
 }
 
 #[derive(Clone, Copy)]
@@ -24,26 +21,33 @@ pub struct GalleryItem {
 }
 
 pub const LAPIDARY_INTRO: &str =
-    "Custom-cut stones, cabochons, and lapidary work - from rough rock to finished pieces.";
+    "Custom-cut stones, cabochons, and lapidary work — from rough rock to finished pieces. \
+     Registered member of the U.S. Faceters Guild.";
 
-pub const LAPIDARY_ITEMS: &[CommissionMedia] = &[
-    CommissionMedia::Image {
-        src: "/commissions/lapidary/cabochon-01.svg",
-        alt: "Polished cabochon with banded agate",
-        caption: Some("Banded agate cabochon"),
+pub const LAPIDARY_ITEMS: &[LapidaryItem] = &[
+    LapidaryItem {
+        src: "/commissions/lapidary/GGAG_Whirlpool_Arya-Akhavan_blue-light.jpg",
+        alt: "GGAG Whirlpool cut gemstone fluorescing yellow-green under blue light",
+        crystal: "GGAG",
+        design: "Whirlpool",
+        designer: "Arya Akhavan",
+        lighting: Some("blue light"),
     },
-    CommissionMedia::Youtube {
-        video_id: "dQw4w9WgXcQ",
-        title: "Lapidary process demo",
+    LapidaryItem {
+        src: "/commissions/lapidary/Ce-YAG-Turtles-Special_Treforze_Arya-Akhavan_white-light.jpg",
+        alt: "Ce-YAG Turtles Special Treforze cut gemstone held in hand under white light",
+        crystal: "Ce-YAG Turtles Special",
+        design: "Treforze",
+        designer: "Arya Akhavan",
+        lighting: Some("white light"),
     },
-    CommissionMedia::Image {
-        src: "/commissions/lapidary/slab-01.svg",
-        alt: "Polished stone slab on display stand",
-        caption: Some("Display slab"),
-    },
-    CommissionMedia::Youtube {
-        video_id: "9bZkp7q19f0",
-        title: "Cutting and polishing walkthrough",
+    LapidaryItem {
+        src: "/commissions/lapidary/Ce-YAG-Turtles-Special_Secret-Dungeon_Arya-Akhavan_blue-light.jpg",
+        alt: "Ce-YAG Turtles Special Definitely Final Dungeon cut gemstone fluorescing under blue light",
+        crystal: "Ce-YAG Turtles Special",
+        design: "Definitely Final Dungeon",
+        designer: "Arya Akhavan",
+        lighting: Some("blue light"),
     },
 ];
 
@@ -87,16 +91,12 @@ pub const SONGS: &[Song] = &[
     Song {
         video_id: "yPEGrkSUmzM",
         title: "Alicia",
-        description: Some(
-            "Lorien Testard, Sandfall Interactive - Clair Obscur: Expedition 33",
-        ),
+        description: Some("Lorien Testard, Sandfall Interactive - Clair Obscur: Expedition 33"),
     },
     Song {
         video_id: "D7Tc1s1LptQ",
         title: "Lumière",
-        description: Some(
-            "Lorien Testard, Sandfall Interactive - Clair Obscur: Expedition 33",
-        ),
+        description: Some("Lorien Testard, Sandfall Interactive - Clair Obscur: Expedition 33"),
     },
     Song {
         video_id: "himNXBaTWDc",
