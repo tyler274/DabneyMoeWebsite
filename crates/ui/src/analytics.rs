@@ -128,7 +128,7 @@ fn send_page_view(path: &str) {
 }
 
 #[cfg(any(feature = "csr", feature = "hydrate"))]
-fn install_error_reporter(consent: leptos::prelude::ReadSignal<Option<ConsentChoices>>) {
+fn install_error_reporter(consent: leptos::prelude::Memo<Option<ConsentChoices>>) {
     use std::cell::Cell;
     use std::rc::Rc;
     use wasm_bindgen::{prelude::*, JsCast};

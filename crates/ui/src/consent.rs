@@ -14,67 +14,65 @@ pub struct ConsentChoices {
     pub error_reporting: bool,
 }
 
-/// Reactive signal holding the current consent state. `None` means no decision yet.
-pub fn provide_consent_context() -> ReadSignal<Option<ConsentChoices>> {
-    // Start with no stored choice so SSR and the hydration pass match. localStorage is
-    // read after mount in a client Effect (see consent_loaded).
-    let consent = RwSignal::new(None::<ConsentChoices>);
+/// Single hydration-safe consent state (one signal avoids loaded/choices update races).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ConsentStatus {
+    /// SSR + first hydration pass: localStorage not read yet; never show the banner.
+    Pending,
+    /// localStorage read, no saved decision.
+    Undecided,
+    /// localStorage read or user just saved.
+    Decided(ConsentChoices),
+}
+
+pub fn provide_consent_context() {
+    let status = RwSignal::new(ConsentStatus::Pending);
     let dialog_open = RwSignal::new(false);
-    let consent_loaded = RwSignal::new(false);
 
     #[cfg(any(feature = "csr", feature = "hydrate"))]
     {
         Effect::new(move |_| {
-            if consent_loaded.get_untracked() {
+            if !matches!(status.get_untracked(), ConsentStatus::Pending) {
                 return;
             }
-            consent.set(load_consent());
-            consent_loaded.set(true);
+            status.set(match load_consent() {
+                Some(choices) => {
+                    apply_consent_scripts(&choices);
+                    ConsentStatus::Decided(choices)
+                }
+                None => ConsentStatus::Undecided,
+            });
         });
     }
 
-    provide_context(consent);
+    provide_context(status);
     provide_context(dialog_open);
-    provide_context(consent_loaded);
-    consent.read_only()
 }
 
-pub fn use_consent() -> ReadSignal<Option<ConsentChoices>> {
-    expect_context::<RwSignal<Option<ConsentChoices>>>().read_only()
-}
-
-pub fn use_consent_writer() -> RwSignal<Option<ConsentChoices>> {
-    expect_context()
+pub fn use_consent() -> Memo<Option<ConsentChoices>> {
+    let status = expect_context::<RwSignal<ConsentStatus>>();
+    Memo::new(move |_| match status.get() {
+        ConsentStatus::Decided(choices) => Some(choices),
+        _ => None,
+    })
 }
 
 #[component]
 pub fn ConsentBanner() -> impl IntoView {
-    let consent = expect_context::<RwSignal<Option<ConsentChoices>>>();
+    let status = expect_context::<RwSignal<ConsentStatus>>();
     let dialog_open = expect_context::<RwSignal<bool>>();
-    // Hidden until client has read localStorage so SSR HTML matches hydration.
-    let show_banner = RwSignal::new(false);
+    let needs_consent = Memo::new(move |_| status.get() == ConsentStatus::Undecided);
     let show_preferences = RwSignal::new(false);
     let analytics_on = RwSignal::new(false);
     let error_reporting_on = RwSignal::new(false);
 
-    #[cfg(any(feature = "csr", feature = "hydrate"))]
-    {
-        let consent_loaded = expect_context::<RwSignal<bool>>();
-        Effect::new(move |_| {
-            if consent_loaded.get() {
-                show_banner.set(consent.get().is_none());
-            }
-        });
-    }
-
     Effect::new(move |_| {
         if dialog_open.get() {
-            if let Some(choices) = consent.get_untracked() {
+            if let ConsentStatus::Decided(choices) = status.get_untracked() {
                 analytics_on.set(choices.analytics);
                 error_reporting_on.set(choices.error_reporting);
             }
             show_preferences.set(true);
-            show_banner.set(true);
             dialog_open.set(false);
         }
     });
@@ -84,10 +82,14 @@ pub fn ConsentBanner() -> impl IntoView {
             analytics,
             error_reporting,
         };
-        store_consent(&choices);
-        consent.set(Some(choices.clone()));
+        #[cfg(any(feature = "csr", feature = "hydrate"))]
+        if !store_consent(&choices) {
+            leptos::logging::warn!("consent: localStorage write failed");
+        }
+        #[cfg(not(any(feature = "csr", feature = "hydrate")))]
+        let _ = store_consent(&choices);
+        status.set(ConsentStatus::Decided(choices.clone()));
         apply_consent_scripts(&choices);
-        show_banner.set(false);
         show_preferences.set(false);
     };
 
@@ -98,7 +100,7 @@ pub fn ConsentBanner() -> impl IntoView {
     };
 
     view! {
-        <Show when=move || show_banner.get()>
+        <Show when=move || needs_consent.get() || show_preferences.get()>
             <div
                 class="fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-slate-900/95 p-4 shadow-lg backdrop-blur sm:p-6"
                 role="dialog"
@@ -160,7 +162,7 @@ pub fn ConsentBanner() -> impl IntoView {
                                     <button
                                         type="button"
                                         class="rounded-lg border border-white/20 px-4 py-2 text-sm text-slate-300 hover:bg-white/5"
-                                        on:click=move |_| show_banner.set(false)
+                                        on:click=move |_| show_preferences.set(false)
                                     >
                                         "Cancel"
                                     </button>
@@ -223,38 +225,45 @@ fn event_target_checked(_ev: &leptos::ev::Event) -> bool {
     false
 }
 
+/// Parse persisted consent JSON. `None` = missing or invalid (treat as undecided).
+#[cfg(any(feature = "csr", feature = "hydrate", test))]
+fn parse_consent_json(raw: &str) -> Option<ConsentChoices> {
+    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    Some(ConsentChoices {
+        analytics: value.get("analytics")?.as_bool()?,
+        error_reporting: value.get("error_reporting")?.as_bool()?,
+    })
+}
+
+#[cfg(any(feature = "csr", feature = "hydrate", test))]
+fn serialize_consent(choices: &ConsentChoices) -> String {
+    serde_json::json!({
+        "analytics": choices.analytics,
+        "error_reporting": choices.error_reporting,
+    })
+    .to_string()
+}
+
 #[cfg(any(feature = "csr", feature = "hydrate"))]
 fn load_consent() -> Option<ConsentChoices> {
     let storage = web_sys::window()?.local_storage().ok()??;
     let raw = storage.get_item(STORAGE_KEY).ok()??;
-    parse_consent(&raw)
-}
-
-fn store_consent(choices: &ConsentChoices) {
-    #[cfg(any(feature = "csr", feature = "hydrate"))]
-    {
-        if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
-            let json = format!(
-                r#"{{"analytics":{},"error_reporting":{}}}"#,
-                choices.analytics, choices.error_reporting
-            );
-            let _ = storage.set_item(STORAGE_KEY, &json);
-        }
-    }
-    #[cfg(not(any(feature = "csr", feature = "hydrate")))]
-    {
-        let _ = choices;
-    }
+    parse_consent_json(&raw)
 }
 
 #[cfg(any(feature = "csr", feature = "hydrate"))]
-fn parse_consent(raw: &str) -> Option<ConsentChoices> {
-    let analytics = raw.contains(r#""analytics":true"#);
-    let error_reporting = raw.contains(r#""error_reporting":true"#);
-    Some(ConsentChoices {
-        analytics,
-        error_reporting,
-    })
+fn store_consent(choices: &ConsentChoices) -> bool {
+    let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) else {
+        return false;
+    };
+    storage
+        .set_item(STORAGE_KEY, &serialize_consent(choices))
+        .is_ok()
+}
+
+#[cfg(not(any(feature = "csr", feature = "hydrate")))]
+fn store_consent(_choices: &ConsentChoices) -> bool {
+    true
 }
 
 /// Apply consent updates to third-party scripts (GA4 consent mode, error reporter).
@@ -312,6 +321,41 @@ fn update_gtag_consent(analytics: bool) {
         &JsValue::from_str("update"),
         &params,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_rejected_consent() {
+        let choices = parse_consent_json(r#"{"analytics":false,"error_reporting":false}"#).unwrap();
+        assert!(!choices.analytics);
+        assert!(!choices.error_reporting);
+    }
+
+    #[test]
+    fn parse_accepted_consent() {
+        let choices = parse_consent_json(r#"{"analytics":true,"error_reporting":true}"#).unwrap();
+        assert!(choices.analytics);
+        assert!(choices.error_reporting);
+    }
+
+    #[test]
+    fn parse_invalid_returns_none() {
+        assert!(parse_consent_json("not json").is_none());
+        assert!(parse_consent_json(r#"{"analytics":true}"#).is_none());
+    }
+
+    #[test]
+    fn roundtrip_serialization() {
+        let original = ConsentChoices {
+            analytics: true,
+            error_reporting: false,
+        };
+        let parsed = parse_consent_json(&serialize_consent(&original)).unwrap();
+        assert_eq!(parsed, original);
+    }
 }
 
 /// Re-open the consent banner from the footer or privacy page.
