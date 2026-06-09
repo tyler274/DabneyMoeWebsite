@@ -22,7 +22,8 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["fs", "compression-gzip", "trace", "request-id", "limit"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-tracing-loki = { version = "0.2", features = ["compat-0-2-1"] }
+# rustls (not default native-tls/openssl) so the static-musl Nix image builds offline.
+tracing-loki = { version = "0.2", default-features = false, features = ["compat-0-2-1", "rustls"] }
 base64 = "0.22"
 http = "1"
 # Pinned to match the `wasm-bindgen-cli` provided by the Nix dev shell.
