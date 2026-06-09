@@ -17,6 +17,7 @@ pub mod tools;
 use leptos::prelude::*;
 use leptos_meta::{provide_meta_context, Link, Meta, MetaTags, Stylesheet, Title};
 use leptos_router::components::{Route, Router, Routes};
+use leptos_router::hooks::use_location;
 use leptos_router::StaticSegment;
 
 use commissions::{ArtworkPage, LapidaryPage, SongsPage};
@@ -111,6 +112,7 @@ pub fn App() -> impl IntoView {
 #[component]
 fn HomePage() -> impl IntoView {
     view! {
+        <HomeHashScroll />
         <NavBar />
         <Hero />
         <About />
@@ -121,4 +123,54 @@ fn HomePage() -> impl IntoView {
         <Contact />
         <Footer />
     }
+}
+
+/// When navigating from another route to `/#section`, the browser tries to
+/// scroll before home sections exist. Re-scroll after the home page mounts.
+#[component]
+#[allow(clippy::unused_unit)]
+fn HomeHashScroll() -> impl IntoView {
+    let location = use_location();
+
+    #[cfg(any(feature = "csr", feature = "hydrate"))]
+    Effect::new(move |_| {
+        let hash = location.hash.get();
+        if hash.len() > 1 {
+            schedule_scroll_to_hash(&hash);
+        }
+    });
+
+    #[cfg(not(any(feature = "csr", feature = "hydrate")))]
+    let _ = location;
+
+    view! {}
+}
+
+#[cfg(any(feature = "csr", feature = "hydrate"))]
+fn schedule_scroll_to_hash(hash: &str) {
+    use wasm_bindgen::closure::Closure;
+    use wasm_bindgen::JsCast;
+
+    let id = hash.trim_start_matches('#').to_string();
+
+    let scroll = move || {
+        web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.get_element_by_id(&id))
+            .map(|element| element.scroll_into_view())
+            .is_some()
+    };
+
+    if scroll() {
+        return;
+    }
+
+    let closure = Closure::once(Box::new(move || {
+        scroll();
+    }) as Box<dyn FnMut()>);
+
+    if let Some(window) = web_sys::window() {
+        let _ = window.request_animation_frame(closure.as_ref().unchecked_ref());
+    }
+    closure.forget();
 }

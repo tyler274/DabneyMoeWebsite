@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos_router::components::A;
 
 use crate::commissions::CommissionsMenu;
 use crate::data::{
@@ -68,12 +69,21 @@ pub const LINKEDIN: &str = "https://linkedin.com/in/tyler-port-9a795455";
 /// the internal `tauri.localhost` origin that an external browser can't reach.
 pub const RESUME_PUBLIC_URL: &str = "https://dabney.moe/resume.pdf";
 
+const MOBILE_NAV_LINK: &str =
+    "block rounded-lg px-3 py-2.5 text-slate-300 transition hover:bg-white/5 hover:text-white";
+const MOBILE_NAV_SUBLINK: &str =
+    "block rounded-lg py-2 pl-6 pr-3 text-sm text-slate-400 transition hover:bg-white/5 hover:text-white";
+
 #[component]
 pub fn NavBar() -> impl IntoView {
+    let mobile_open = RwSignal::new(false);
+    let toggle_mobile = move |_| mobile_open.update(|open| *open = !*open);
+    let close_mobile = move |_| mobile_open.set(false);
+
     view! {
         <header class="sticky top-0 z-50 border-b border-white/5 bg-slate-950/70 backdrop-blur">
             <nav class="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-                <a href="/#top" class="text-lg font-semibold tracking-tight text-white">
+                <a href="/#top" class="text-lg font-semibold tracking-tight text-white" on:click=close_mobile>
                     "Tyler Port"
                     <span class="text-cyan-400">"."</span>
                 </a>
@@ -92,7 +102,62 @@ pub fn NavBar() -> impl IntoView {
                         "Hire me"
                     </a>
                 </div>
+                <button
+                    type="button"
+                    class="rounded-lg p-2 text-slate-300 transition hover:bg-white/5 hover:text-white md:hidden"
+                    aria-expanded=move || mobile_open.get()
+                    aria-controls="mobile-nav"
+                    aria-label=move || if mobile_open.get() { "Close menu" } else { "Open menu" }
+                    on:click=toggle_mobile
+                >
+                    <span class="sr-only">{move || if mobile_open.get() { "Close menu" } else { "Open menu" }}</span>
+                    <span class="text-xl leading-none" aria-hidden="true">
+                        {move || if mobile_open.get() { "✕" } else { "☰" }}
+                    </span>
+                </button>
             </nav>
+            <Show when=move || mobile_open.get()>
+                <div
+                    id="mobile-nav"
+                    class="border-t border-white/5 bg-slate-950/95 px-6 py-4 md:hidden"
+                >
+                    <div class="mx-auto max-w-5xl space-y-1 text-sm">
+                        <a href="/#about" class=MOBILE_NAV_LINK on:click=close_mobile>"About"</a>
+                        <a href="/#expertise" class=MOBILE_NAV_LINK on:click=close_mobile>"Expertise"</a>
+                        <a href="/#services" class=MOBILE_NAV_LINK on:click=close_mobile>"Services"</a>
+                        <a href="/#experience" class=MOBILE_NAV_LINK on:click=close_mobile>"Experience"</a>
+                        <a href="/#skills" class=MOBILE_NAV_LINK on:click=close_mobile>"Skills"</a>
+
+                        <p class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">
+                            "Commissions"
+                        </p>
+                        <A href="/commissions/lapidary" on:click=close_mobile>
+                            <span class=MOBILE_NAV_SUBLINK>"Lapidary"</span>
+                        </A>
+                        <A href="/commissions/artwork" on:click=close_mobile>
+                            <span class=MOBILE_NAV_SUBLINK>"Artwork"</span>
+                        </A>
+                        <A href="/commissions/songs" on:click=close_mobile>
+                            <span class=MOBILE_NAV_SUBLINK>"Songs"</span>
+                        </A>
+
+                        <p class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">
+                            "Tools"
+                        </p>
+                        <A href="/tools/investment-account" on:click=close_mobile>
+                            <span class=MOBILE_NAV_SUBLINK>"Investment Account Calculator"</span>
+                        </A>
+
+                        <a
+                            href="/#contact"
+                            class="mt-4 block rounded-full bg-cyan-500 px-4 py-2.5 text-center font-medium text-slate-950 transition hover:bg-cyan-400"
+                            on:click=close_mobile
+                        >
+                            "Hire me"
+                        </a>
+                    </div>
+                </div>
+            </Show>
         </header>
     }
 }
@@ -102,13 +167,13 @@ pub fn Hero() -> impl IntoView {
     view! {
         <section
             id="top"
-            class="relative overflow-hidden border-b border-white/5 px-6 py-24 sm:py-32"
+            class="scroll-mt-20 relative overflow-hidden border-b border-white/5 px-6 py-24 sm:py-32"
         >
             <div class="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60%_50%_at_50%_0%,rgba(34,211,238,0.18),transparent)]"></div>
             <div class="mx-auto grid max-w-5xl items-center gap-12 lg:grid-cols-[1fr_auto] lg:gap-16">
                 <div>
                     <p class="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium uppercase tracking-widest text-cyan-300">
-                        "Available for freelance & contract work"
+                        "Available for full time, part time, freelance & contract work"
                     </p>
                     <h1 class="max-w-3xl text-4xl font-bold leading-tight tracking-tight text-white sm:text-6xl">
                         "Tyler Alamo Port"
@@ -503,7 +568,7 @@ fn Section(
     children: Children,
 ) -> impl IntoView {
     view! {
-        <section id=id class="border-b border-white/5 px-6 py-20">
+        <section id=id class="scroll-mt-20 border-b border-white/5 px-6 py-20">
             <div class="mx-auto max-w-5xl">
                 <p class="mb-2 text-sm font-semibold uppercase tracking-widest text-cyan-400">
                     {eyebrow}

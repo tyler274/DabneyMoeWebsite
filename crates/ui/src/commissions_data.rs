@@ -21,7 +21,7 @@ pub struct GalleryItem {
 }
 
 pub const LAPIDARY_INTRO: &str =
-    "Custom-cut stones, cabochons, and lapidary work — from rough rock to finished pieces. \
+    "Custom-cut stones, cabochons, and lapidary work - from rough rock to finished pieces. \
      Registered member of the U.S. Faceters Guild.";
 
 pub const LAPIDARY_ITEMS: &[LapidaryItem] = &[
