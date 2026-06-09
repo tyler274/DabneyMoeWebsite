@@ -97,7 +97,8 @@ pub fn AnalyticsRuntime() -> impl IntoView {
         let _ = (consent, location);
     }
 
-    view! {}
+    // Invisible anchor so the component has a stable view tree (no empty `view! {}` / `()`).
+    view! { <span class="hidden" aria-hidden="true"></span> }
 }
 
 #[cfg(any(feature = "csr", feature = "hydrate"))]
@@ -233,7 +234,7 @@ fn scrub_client_text(input: &str) -> String {
     }
     if out.len() > 500 {
         out.truncate(500);
-        out.push_str("…");
+        out.push('…');
     }
     out
 }

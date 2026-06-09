@@ -51,7 +51,6 @@ pub fn use_consent_writer() -> RwSignal<Option<ConsentChoices>> {
 pub fn ConsentBanner() -> impl IntoView {
     let consent = expect_context::<RwSignal<Option<ConsentChoices>>>();
     let dialog_open = expect_context::<RwSignal<bool>>();
-    let consent_loaded = expect_context::<RwSignal<bool>>();
     // Hidden until client has read localStorage so SSR HTML matches hydration.
     let show_banner = RwSignal::new(false);
     let show_preferences = RwSignal::new(false);
@@ -60,6 +59,7 @@ pub fn ConsentBanner() -> impl IntoView {
 
     #[cfg(any(feature = "csr", feature = "hydrate"))]
     {
+        let consent_loaded = expect_context::<RwSignal<bool>>();
         Effect::new(move |_| {
             if consent_loaded.get() {
                 show_banner.set(consent.get().is_none());
@@ -223,18 +223,11 @@ fn event_target_checked(_ev: &leptos::ev::Event) -> bool {
     false
 }
 
+#[cfg(any(feature = "csr", feature = "hydrate"))]
 fn load_consent() -> Option<ConsentChoices> {
-    #[cfg(any(feature = "csr", feature = "hydrate"))]
-    {
-        let storage = web_sys::window()?.local_storage().ok()??;
-        let raw = storage.get_item(STORAGE_KEY).ok()??;
-        parse_consent(&raw)
-    }
-    #[cfg(not(any(feature = "csr", feature = "hydrate")))]
-    {
-        let _ = STORAGE_KEY;
-        None
-    }
+    let storage = web_sys::window()?.local_storage().ok()??;
+    let raw = storage.get_item(STORAGE_KEY).ok()??;
+    parse_consent(&raw)
 }
 
 fn store_consent(choices: &ConsentChoices) {
