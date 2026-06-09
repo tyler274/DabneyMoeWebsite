@@ -6,6 +6,8 @@
 //! - `hydrate` : browser hydration of the server-rendered HTML.
 //! - `csr`     : pure client-side rendering for the Tauri (Trunk) build.
 
+pub mod commissions;
+pub mod commissions_data;
 pub mod data;
 pub mod portfolio;
 pub mod portfolio_chart;
@@ -17,6 +19,7 @@ use leptos_meta::{provide_meta_context, Link, Meta, MetaTags, Stylesheet, Title}
 use leptos_router::components::{Route, Router, Routes};
 use leptos_router::StaticSegment;
 
+use commissions::{ArtworkPage, LapidaryPage, SongsPage};
 use tools::InvestmentAccountPage;
 
 use sections::{About, Contact, Experience, Expertise, Footer, Hero, NavBar, Services, Skills};
@@ -86,6 +89,18 @@ pub fn App() -> impl IntoView {
                     <Route
                         path=(StaticSegment("tools"), StaticSegment("investment-account-sell"))
                         view=InvestmentAccountPage
+                    />
+                    <Route
+                        path=(StaticSegment("commissions"), StaticSegment("lapidary"))
+                        view=LapidaryPage
+                    />
+                    <Route
+                        path=(StaticSegment("commissions"), StaticSegment("artwork"))
+                        view=ArtworkPage
+                    />
+                    <Route
+                        path=(StaticSegment("commissions"), StaticSegment("songs"))
+                        view=SongsPage
                     />
                 </Routes>
             </main>

@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 
+use crate::commissions::CommissionsMenu;
 use crate::data::{
     ABOUT, ABOUT_PHOTO, EXPERIENCE, EXPERTISE, PROFILE_PHOTO, SERVICES, SKILLS, SUMMARY, TAGLINE,
 };
@@ -10,7 +11,7 @@ use crate::tools::ToolsMenu;
 /// if the call was dispatched (so the caller can `prevent_default` on the
 /// originating DOM event), `false` otherwise (e.g. running in a plain browser;
 /// let the standard `href` behaviour take over).
-#[cfg(not(feature = "ssr"))]
+#[cfg(any(feature = "csr", feature = "hydrate"))]
 fn try_tauri_open(url: &str) -> bool {
     use js_sys::{Function, Object, Reflect};
     use wasm_bindgen::{JsCast, JsValue};
@@ -82,6 +83,7 @@ pub fn NavBar() -> impl IntoView {
                     <a href="/#services" class="transition hover:text-white">"Services"</a>
                     <a href="/#experience" class="transition hover:text-white">"Experience"</a>
                     <a href="/#skills" class="transition hover:text-white">"Skills"</a>
+                    <CommissionsMenu />
                     <ToolsMenu />
                     <a
                         href="/#contact"
@@ -131,7 +133,7 @@ pub fn Hero() -> impl IntoView {
                                 // live at the internal `tauri.localhost` origin which
                                 // an external browser can't resolve, so open the
                                 // public URL instead.
-                                #[cfg(not(feature = "ssr"))]
+                                #[cfg(any(feature = "csr", feature = "hydrate"))]
                                 if try_tauri_open(RESUME_PUBLIC_URL) {
                                     _ev.prevent_default();
                                 }

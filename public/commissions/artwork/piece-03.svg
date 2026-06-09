@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" role="img" aria-label="Artwork placeholder 3">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="40%" r="75%">
+      <stop offset="0%" stop-color="#164e63"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </radialGradient>
+  </defs>
+  <rect width="800" height="600" fill="url(#bg)"/>
+  <ellipse cx="400" cy="260" rx="150" ry="190" fill="#f8fafc" opacity="0.9"/>
+  <ellipse cx="360" cy="220" rx="28" ry="18" fill="#0f172a"/>
+  <ellipse cx="440" cy="220" rx="28" ry="18" fill="#0f172a"/>
+  <path d="M330 310 Q400 360 470 310" stroke="#0f172a" stroke-width="10" fill="none" stroke-linecap="round"/>
+  <text x="400" y="540" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="22">Artwork 3</text>
+</svg>

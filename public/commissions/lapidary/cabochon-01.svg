@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" role="img" aria-label="Lapidary placeholder">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#164e63"/>
+    </linearGradient>
+    <radialGradient id="stone" cx="40%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#67e8f9"/>
+      <stop offset="45%" stop-color="#0891b2"/>
+      <stop offset="100%" stop-color="#164e63"/>
+    </radialGradient>
+  </defs>
+  <rect width="800" height="600" fill="url(#bg)"/>
+  <ellipse cx="400" cy="310" rx="220" ry="170" fill="url(#stone)" opacity="0.95"/>
+  <ellipse cx="340" cy="250" rx="70" ry="45" fill="#a5f3fc" opacity="0.35"/>
+  <text x="400" y="520" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="22">Lapidary placeholder</text>
+</svg>
