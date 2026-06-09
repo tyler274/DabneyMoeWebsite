@@ -18,11 +18,13 @@ pub enum CommissionMedia {
 pub struct GalleryItem {
     pub src: &'static str,
     pub alt: &'static str,
-    pub caption: Option<&'static str>,
+    pub title: &'static str,
+    pub artist: &'static str,
+    pub artist_url: &'static str,
 }
 
 pub const LAPIDARY_INTRO: &str =
-    "Custom-cut stones, cabochons, and lapidary work — from rough rock to finished pieces.";
+    "Custom-cut stones, cabochons, and lapidary work - from rough rock to finished pieces.";
 
 pub const LAPIDARY_ITEMS: &[CommissionMedia] = &[
     CommissionMedia::Image {
@@ -45,28 +47,30 @@ pub const LAPIDARY_ITEMS: &[CommissionMedia] = &[
     },
 ];
 
-pub const ARTWORK_INTRO: &str = "Original artwork across media — commissions and personal pieces.";
+pub const ARTWORK_INTRO: &str = "Artwork commissioned from independent artists. Copyright remains \
+with the creators - these are pieces they made at my request.";
 
 pub const ARTWORK_ITEMS: &[GalleryItem] = &[
     GalleryItem {
-        src: "/commissions/artwork/piece-01.svg",
-        alt: "Abstract composition in cool tones",
-        caption: Some("Study in cyan"),
+        src: "/commissions/artwork/Jack-O_Kiron_fightstick.jpg",
+        alt: "Jack-O' Valentine fightstick artwork with in-game UI elements",
+        title: "Jack-O' Valentine - fightstick art",
+        artist: "Subakeye",
+        artist_url: "https://x.com/Subakeye/status/1408890470827184128/photo/1",
     },
     GalleryItem {
-        src: "/commissions/artwork/piece-02.svg",
-        alt: "Geometric landscape study",
-        caption: Some("Horizon lines"),
-    },
-    GalleryItem {
-        src: "/commissions/artwork/piece-03.svg",
-        alt: "Portrait sketch with bold contrast",
-        caption: Some("Portrait study"),
+        src: "/commissions/artwork/Angela.png",
+        alt: "Angela character portrait in a clinical office setting",
+        title: "Angela",
+        artist: "Hydowa",
+        artist_url: "https://vgen.co/Hydowa",
     },
 ];
 
+pub const EILI_YOUTUBE: &str = "https://www.youtube.com/@EiliYT";
+
 pub const SONGS_INTRO: &str =
-    "Original songs and recordings — listen below or reach out for custom work.";
+    "Vocal covers performed by eili. Listen below. I commissioned these and did not work on them in any way.";
 
 pub struct Song {
     pub video_id: &'static str,
@@ -76,13 +80,27 @@ pub struct Song {
 
 pub const SONGS: &[Song] = &[
     Song {
-        video_id: "dQw4w9WgXcQ",
-        title: "Song title (replace me)",
-        description: Some("Short description of the track."),
+        video_id: "HhpaUIl9ZJs",
+        title: "Flares of the Blazing Sun (Female Version)",
+        description: Some("Honkai: Star Rail"),
     },
     Song {
-        video_id: "9bZkp7q19f0",
-        title: "Another track (replace me)",
-        description: None,
+        video_id: "yPEGrkSUmzM",
+        title: "Alicia",
+        description: Some(
+            "Lorien Testard, Sandfall Interactive - Clair Obscur: Expedition 33",
+        ),
+    },
+    Song {
+        video_id: "D7Tc1s1LptQ",
+        title: "Lumière",
+        description: Some(
+            "Lorien Testard, Sandfall Interactive - Clair Obscur: Expedition 33",
+        ),
+    },
+    Song {
+        video_id: "himNXBaTWDc",
+        title: "Sis Puella Magica!",
+        description: Some("Yuki Kajiura - Madoka Magica"),
     },
 ];

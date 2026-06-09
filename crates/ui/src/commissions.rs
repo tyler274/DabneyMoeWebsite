@@ -4,8 +4,8 @@ use leptos::prelude::*;
 use leptos_router::components::A;
 
 use crate::commissions_data::{
-    CommissionMedia, GalleryItem, ARTWORK_INTRO, ARTWORK_ITEMS, LAPIDARY_INTRO, LAPIDARY_ITEMS,
-    SONGS, SONGS_INTRO,
+    CommissionMedia, GalleryItem, ARTWORK_INTRO, ARTWORK_ITEMS, EILI_YOUTUBE, LAPIDARY_INTRO,
+    LAPIDARY_ITEMS, SONGS, SONGS_INTRO,
 };
 use crate::sections::{Footer, NavBar};
 
@@ -213,9 +213,9 @@ fn RotatingGallery(items: &'static [GalleryItem]) -> impl IntoView {
                                 alt=alt
                                 class=move || {
                                     if current.get() == index {
-                                        "absolute inset-0 h-full w-full object-cover opacity-100 transition-opacity duration-700"
+                                        "absolute inset-0 h-full w-full object-contain opacity-100 transition-opacity duration-700"
                                     } else {
-                                        "absolute inset-0 h-full w-full object-cover opacity-0 transition-opacity duration-700"
+                                        "absolute inset-0 h-full w-full object-contain opacity-0 transition-opacity duration-700"
                                     }
                                 }
                                 loading="lazy"
@@ -243,14 +243,25 @@ fn RotatingGallery(items: &'static [GalleryItem]) -> impl IntoView {
             </div>
 
             <div class="flex items-center justify-between gap-4">
-                <p class="min-h-[1.5rem] text-sm text-slate-400">
+                <div class="min-h-[1.5rem] text-sm text-slate-400">
                     {move || {
-                        items
-                            .get(current.get())
-                            .and_then(|item| item.caption)
-                            .unwrap_or("")
+                        let item = items.get(current.get())?;
+                        Some(view! {
+                            <p class="font-medium text-slate-300">{item.title}</p>
+                            <p>
+                                "Art by "
+                                <a
+                                    href=item.artist_url
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    class="text-cyan-400 transition hover:text-cyan-300"
+                                >
+                                    {item.artist}
+                                </a>
+                            </p>
+                        })
                     }}
-                </p>
+                </div>
                 <div class="flex items-center gap-2">
                     {(0..len)
                         .map(|index| {
@@ -298,6 +309,27 @@ pub fn SongsPage() -> impl IntoView {
             title="Songs"
             intro=SONGS_INTRO
         >
+            <p class="-mt-4 mb-10 text-sm text-slate-400">
+                "Vocals by "
+                <a
+                    href=EILI_YOUTUBE
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="text-cyan-400 transition hover:text-cyan-300"
+                >
+                    "eili"
+                </a>
+                " ("
+                <a
+                    href=EILI_YOUTUBE
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="text-cyan-400 transition hover:text-cyan-300"
+                >
+                    "@EiliYT"
+                </a>
+                " on YouTube)"
+            </p>
             <div class="space-y-10">
                 {SONGS
                     .iter()

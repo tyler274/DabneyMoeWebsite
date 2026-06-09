@@ -8,7 +8,7 @@ use super::fixtures::{
     RJF_REBALANCE,
 };
 
-/// Same fund values as `june2nd.csv` but without cash — a fully-invested target allocation.
+/// Same fund values as `june2nd.csv` but without cash - a fully-invested target allocation.
 const JUNE2ND_TARGET_FIXTURE: &str = r#""Description","SYMBOL/CUSIP","Quantity","Delayed Price","Current Value","Product Type"
 "AMERICAN FUNDS EUPAC FUND CL F2 N/L","AEPFX","378.010","$67.40*","$25,477.87","Funds"
 "COHEN & STEERS GLOBAL REALTY FUND CL I N/L","CSSPX","103.918","$58.06*","$6,033.48","Funds"
