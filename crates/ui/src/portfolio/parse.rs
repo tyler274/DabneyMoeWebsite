@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Cursor;
 
 use super::types::Holding;
@@ -107,4 +108,23 @@ pub fn load_portfolio(csv_text: &str) -> Result<(Vec<Holding>, f64), String> {
     }
 
     Ok((holdings, cash_value))
+}
+
+/// Derive target fund weights from a Raymond James portfolio CSV export.
+///
+/// Each fund's weight is its `Current Value` share of the target portfolio total
+/// (invested funds + cash). Any cash in the target CSV is implicit target cash weight.
+pub fn target_weights_from_csv(csv_text: &str) -> Result<HashMap<String, f64>, String> {
+    let (holdings, cash) = load_portfolio(csv_text)?;
+    if holdings.is_empty() {
+        return Err("Target portfolio CSV has no fund holdings.".into());
+    }
+    let total = holdings.iter().map(|h| h.current_value).sum::<f64>() + cash;
+    if total <= 0.005 {
+        return Err("Target portfolio has zero value.".into());
+    }
+    Ok(holdings
+        .iter()
+        .map(|h| (h.symbol.clone(), h.current_value / total))
+        .collect())
 }

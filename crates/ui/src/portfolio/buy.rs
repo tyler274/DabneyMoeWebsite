@@ -5,7 +5,7 @@ use super::types::{BuyLine, BuyReport, Holding};
 /// Compute whole-share buys that preserve portfolio weights as closely as possible.
 pub fn compute_buy_plan(holdings: &[Holding], deposit: f64) -> Result<Vec<BuyLine>, String> {
     if holdings.is_empty() {
-        return Err("No fund holdings found — nothing to buy.".into());
+        return Err("No fund holdings found - nothing to buy.".into());
     }
 
     let floor_shares = allocate_whole_shares(holdings, deposit)?;

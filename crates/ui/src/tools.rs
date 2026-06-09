@@ -84,7 +84,7 @@ pub fn InvestmentAccountPage() -> impl IntoView {
                     "Investment Account Calculator"
                 </h1>
                 <p class="mb-10 max-w-2xl text-lg leading-relaxed text-slate-300">
-                    "Upload a Raymond James portfolio CSV. Choose sell, buy, or quarterly rebalance—"
+                    "Upload a Raymond James portfolio CSV. Choose sell, buy, or quarterly rebalance-"
                     "everything runs in your browser and your file never leaves this device."
                 </p>
                 <InvestmentAccountCalculator />
@@ -109,6 +109,8 @@ pub fn InvestmentAccountCalculator() -> impl IntoView {
     let state_pct = RwSignal::new("7".to_string());
     let csv_text = RwSignal::new(None::<String>);
     let file_name = RwSignal::new(None::<String>);
+    let target_csv_text = RwSignal::new(None::<String>);
+    let target_file_name = RwSignal::new(None::<String>);
     let amount = RwSignal::new(String::new());
     let error = RwSignal::new(None::<String>);
     let sell_report = RwSignal::new(None::<SellReport>);
@@ -188,15 +190,21 @@ pub fn InvestmentAccountCalculator() -> impl IntoView {
                     Err(message) => error.set(Some(message)),
                 }
             }
-            CalculatorMode::Rebalance => match analyze_rebalance(&text) {
-                Ok(result) => rebalance_report.set(Some(result)),
-                Err(message) => error.set(Some(message)),
-            },
+            CalculatorMode::Rebalance => {
+                let Some(target_text) = target_csv_text.get() else {
+                    return;
+                };
+                match analyze_rebalance(&text, &target_text) {
+                    Ok(result) => rebalance_report.set(Some(result)),
+                    Err(message) => error.set(Some(message)),
+                }
+            }
         }
     };
 
     Effect::new(move |_| {
         let _ = csv_text.get();
+        let _ = target_csv_text.get();
         let _ = amount.get();
         let _ = mode.get();
         let _ = account_type.get();
@@ -210,6 +218,10 @@ pub fn InvestmentAccountCalculator() -> impl IntoView {
         move |_| {
             mode.set(next);
             amount.set(String::new());
+            if next != CalculatorMode::Rebalance {
+                target_csv_text.set(None);
+                target_file_name.set(None);
+            }
         }
     };
 
@@ -246,8 +258,27 @@ pub fn InvestmentAccountCalculator() -> impl IntoView {
         read_csv_file(file, csv_text, error);
     };
 
+    #[cfg(any(feature = "hydrate", feature = "csr"))]
+    let on_target_file_change = move |ev: leptos::ev::Event| {
+        error.set(None);
+        let input = event_target::<web_sys::HtmlInputElement>(&ev);
+        let Some(file_list) = input.files() else {
+            return;
+        };
+        let Some(file) = file_list.get(0) else {
+            target_csv_text.set(None);
+            target_file_name.set(None);
+            return;
+        };
+        target_file_name.set(Some(file.name()));
+        read_csv_file(file, target_csv_text, error);
+    };
+
     #[cfg(not(any(feature = "hydrate", feature = "csr")))]
     let on_file_change = move |_ev: leptos::ev::Event| {};
+
+    #[cfg(not(any(feature = "hydrate", feature = "csr")))]
+    let on_target_file_change = move |_ev: leptos::ev::Event| {};
 
     view! {
         <div class="space-y-8">
@@ -286,7 +317,7 @@ pub fn InvestmentAccountCalculator() -> impl IntoView {
                     <p class="mt-2 text-xs text-slate-500">
                         {move || match account_type.get() {
                             AccountType::Taxable =>
-                                "No tax withholding on sales—proceeds go directly to cash.",
+                                "No tax withholding on sales-proceeds go directly to cash.",
                             AccountType::TraditionalIra =>
                                 "Distributions may have federal and state tax withheld at source.",
                             AccountType::RothIra =>
@@ -348,25 +379,61 @@ pub fn InvestmentAccountCalculator() -> impl IntoView {
                     </div>
                 </Show>
 
-                <div class="sm:col-span-2 sm:max-w-md">
-                    <label class="mb-2 block text-sm font-medium text-slate-200" for="portfolio-csv">
-                        "Portfolio CSV"
-                    </label>
-                    <input
-                        id="portfolio-csv"
-                        type="file"
-                        accept=".csv,text/csv"
-                        class="block w-full cursor-pointer rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-sm text-slate-300 file:mr-3 file:rounded-md file:border-0 file:bg-cyan-500/20 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-cyan-200 hover:file:bg-cyan-500/30"
-                        on:change=on_file_change
-                    />
-                    <p class="mt-2 text-xs text-slate-500">
-                        {move || {
-                            file_name
-                                .get()
-                                .map(|name| format!("Loaded: {name}"))
-                                .unwrap_or_else(|| "Raymond James export with SYMBOL/CUSIP columns.".to_string())
-                        }}
-                    </p>
+                <div class=move || {
+                    if mode.get() == CalculatorMode::Rebalance {
+                        "sm:col-span-2 grid gap-6 sm:grid-cols-2"
+                    } else {
+                        "sm:col-span-2 sm:max-w-md"
+                    }
+                }>
+                    <div>
+                        <label class="mb-2 block text-sm font-medium text-slate-200" for="portfolio-csv">
+                            {move || if mode.get() == CalculatorMode::Rebalance {
+                                "Current portfolio CSV"
+                            } else {
+                                "Portfolio CSV"
+                            }}
+                        </label>
+                        <input
+                            id="portfolio-csv"
+                            type="file"
+                            accept=".csv,text/csv"
+                            class="block w-full cursor-pointer rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-sm text-slate-300 file:mr-3 file:rounded-md file:border-0 file:bg-cyan-500/20 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-cyan-200 hover:file:bg-cyan-500/30"
+                            on:change=on_file_change
+                        />
+                        <p class="mt-2 text-xs text-slate-500">
+                            {move || {
+                                file_name
+                                    .get()
+                                    .map(|name| format!("Loaded: {name}"))
+                                    .unwrap_or_else(|| "Raymond James export with SYMBOL/CUSIP columns.".to_string())
+                            }}
+                        </p>
+                    </div>
+                    <Show when=move || mode.get() == CalculatorMode::Rebalance>
+                        <div>
+                            <label class="mb-2 block text-sm font-medium text-slate-200" for="target-weights-csv">
+                                "Target portfolio CSV"
+                            </label>
+                            <input
+                                id="target-weights-csv"
+                                type="file"
+                                accept=".csv,text/csv"
+                                class="block w-full cursor-pointer rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-sm text-slate-300 file:mr-3 file:rounded-md file:border-0 file:bg-cyan-500/20 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-cyan-200 hover:file:bg-cyan-500/30"
+                                on:change=on_target_file_change
+                            />
+                            <p class="mt-2 text-xs text-slate-500">
+                                {move || {
+                                    target_file_name
+                                        .get()
+                                        .map(|name| format!("Loaded: {name}"))
+                                        .unwrap_or_else(|| {
+                                            "Raymond James export; fund weights are derived from Current Value.".to_string()
+                                        })
+                                }}
+                            </p>
+                        </div>
+                    </Show>
                 </div>
 
                 <Show when=move || mode.get() != CalculatorMode::Rebalance>
@@ -402,9 +469,10 @@ pub fn InvestmentAccountCalculator() -> impl IntoView {
                 </Show>
 
                 <Show when=move || mode.get() == CalculatorMode::Rebalance>
-                    <div class="flex items-center text-sm leading-relaxed text-slate-400">
-                        "Deploys idle cash (RJBDP) into funds proportionally so each fund matches its "
-                        "target share of the total portfolio. No amount needed—the CSV cash balance is used."
+                    <div class="sm:col-span-2 text-sm leading-relaxed text-slate-400">
+                        "Computes whole-share buys and sells to move the current portfolio toward the allocation "
+                        "in the target CSV. Fund weights are derived from each fund's Current Value share of "
+                        "the target portfolio total; any cash in the target CSV sets the target cash weight."
                     </div>
                 </Show>
             </div>

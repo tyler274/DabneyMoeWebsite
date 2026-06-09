@@ -14,6 +14,8 @@ pub struct FundImpact {
 pub struct PortfolioImpact {
     pub total_before: f64,
     pub total_after: f64,
+    pub fund_value_before: f64,
+    pub fund_value_after: f64,
     pub cash_before: f64,
     pub cash_after: f64,
     pub funds: Vec<FundImpact>,
@@ -47,8 +49,8 @@ impl PortfolioImpact {
                     label: line.holding.description.clone(),
                     value_before,
                     value_after,
-                    weight_before: pct_of(value_before, fund_value_before),
-                    weight_after: pct_of(value_after, fund_value_after),
+                    weight_before: pct_of(value_before, total_before),
+                    weight_after: pct_of(value_after, total_after),
                 }
             })
             .collect();
@@ -56,6 +58,8 @@ impl PortfolioImpact {
         Self {
             total_before,
             total_after,
+            fund_value_before,
+            fund_value_after,
             cash_before: report.cash_value,
             cash_after,
             funds,
@@ -63,6 +67,7 @@ impl PortfolioImpact {
     }
 
     pub fn from_buy(report: &BuyReport) -> Self {
+        let fund_value_before = report.total_fund_value();
         let total_before = report.total_portfolio();
         let leftover = report.leftover();
         let cash_after = report.cash_value + report.deposit - leftover;
@@ -92,6 +97,8 @@ impl PortfolioImpact {
         Self {
             total_before,
             total_after,
+            fund_value_before,
+            fund_value_after,
             cash_before: report.cash_value,
             cash_after,
             funds,
@@ -99,6 +106,7 @@ impl PortfolioImpact {
     }
 
     pub fn from_rebalance(report: &RebalanceReport) -> Self {
+        let fund_value_before = report.total_fund_value();
         let total_before = report.total_portfolio();
         let cash_after = report.cash_leftover();
         let fund_value_after: f64 = report
@@ -136,6 +144,8 @@ impl PortfolioImpact {
         Self {
             total_before,
             total_after,
+            fund_value_before,
+            fund_value_after,
             cash_before: report.cash_value,
             cash_after,
             funds,

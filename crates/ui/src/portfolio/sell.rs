@@ -8,7 +8,7 @@ pub fn compute_sell_plan(holdings: &[Holding], withdrawal: f64) -> Result<Vec<Se
     let total_fund_value: f64 = holdings.iter().map(|h| h.current_value).sum();
 
     if total_fund_value <= 0.0 {
-        return Err("No fund holdings found — nothing to sell.".into());
+        return Err("No fund holdings found - nothing to sell.".into());
     }
     if withdrawal > total_fund_value {
         return Err(format!(
