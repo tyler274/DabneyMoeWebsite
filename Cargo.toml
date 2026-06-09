@@ -45,7 +45,7 @@ assets-dir = "public"
 site-addr = "127.0.0.1:3039"
 reload-port = 3040
 browserquery = "defaults"
-env = "DEV"
+# env = "DEV"
 
 bin-features = ["ssr"]
 bin-default-features = false
