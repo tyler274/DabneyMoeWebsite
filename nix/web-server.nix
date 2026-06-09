@@ -4,12 +4,12 @@
 # the hashed asset bundle under `target/site`. The deploy unit is therefore a
 # container, which we build reproducibly with Nix and ship to any cloud's
 # registry (see ../terraform).
-{ pkgs
-, crane
-, rustToolchain
-, rustToolchainMusl
-, src
-,
+{
+  pkgs,
+  crane,
+  rustToolchain,
+  rustToolchainMusl,
+  src,
 }:
 let
   craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
@@ -41,8 +41,8 @@ let
   # refs. The wasm hydrate bundle always stays `wasm32-unknown-unknown`
   # regardless (cargo-leptos's bin-target-triple only affects the server bin).
   mkWebServer =
-    { staticMusl ? false
-    ,
+    {
+      staticMusl ? false,
     }:
     let
       toolchain = if staticMusl then rustToolchainMusl else rustToolchain;

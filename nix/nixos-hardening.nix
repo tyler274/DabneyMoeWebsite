@@ -14,10 +14,11 @@
 # On managed container platforms (Cloud Run GEN2, etc.) this module is NOT
 # needed; the runtime's own sandbox (gVisor / Kata Containers) provides the
 # equivalent protections at a lower level.
-{ config
-, lib
-, pkgs
-, ...
+{
+  config,
+  lib,
+  pkgs,
+  ...
 }:
 let
   cfg = config.services.dabney-web;

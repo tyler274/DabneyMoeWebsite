@@ -1,15 +1,15 @@
 # Developer shells: the default web/desktop shell and the Android cross-compile
 # / emulator shell. Each supplies its own Rust toolchain but shares the base
 # tooling and Tauri dependency closure.
-{ pkgs
-, rustToolchain
-, rustToolchainAndroid
-, baseTools
-, tauriDeps
-, pkgConfigPath
-, ldLibraryPath
-, android
-,
+{
+  pkgs,
+  rustToolchain,
+  rustToolchainAndroid,
+  baseTools,
+  tauriDeps,
+  pkgConfigPath,
+  ldLibraryPath,
+  android,
 }:
 {
   default = pkgs.mkShell {

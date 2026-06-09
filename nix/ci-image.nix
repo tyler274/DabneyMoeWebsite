@@ -12,11 +12,11 @@
 # and pushes it to GHCR. Jobs in ci.yml then use that image as their container
 # so that every `cargo` invocation runs offline from day one - no `cargo fetch`
 # loop, no crates.io latency.
-{ pkgs
-, crane
-, rustToolchain
-, src
-,
+{
+  pkgs,
+  crane,
+  rustToolchain,
+  src,
 }:
 let
   craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
