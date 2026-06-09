@@ -1,0 +1,36 @@
+{
+  "title": "dabney.moe Errors & HTTP",
+  "uid": "dabney-errors",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Error log rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate({service=\"dabney-web\"} |= \"ERROR\" [5m]))",
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
+          "queryType": "range"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "HTTP 5xx rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate({service=\"dabney-web\"} | json | status >= 500 [5m]))",
+          "refId": "B",
+          "datasource": { "type": "loki", "uid": "grafanacloud-logs" },
+          "queryType": "range"
+        }
+      ]
+    }
+  ]
+}

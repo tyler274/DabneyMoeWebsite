@@ -18,7 +18,7 @@ variable "image" {
 variable "custom_domain" {
   type        = string
   description = "Custom domain to map (e.g. dabney.moe). Empty disables it."
-  default     = ""
+  default     = "dabney.moe"
 }
 
 variable "manage_dns" {
@@ -38,7 +38,7 @@ variable "dns_root" {
 variable "enable_cloudflare_dns" {
   type        = bool
   description = "Create the Cloud Run domain-mapping records (and optional verification TXT) in Cloudflare."
-  default     = false
+  default     = true
 }
 
 variable "cloudflare_api_token" {
@@ -79,4 +79,37 @@ variable "doppler_config" {
   type        = string
   description = "Doppler config (root config name = environment slug) the secrets are written to."
   default     = "prd"
+}
+
+# --- Observability (Grafana Cloud + GA4) -------------------------------------
+
+variable "grafana_cloud_access_policy_token" {
+  type        = string
+  description = "Grafana Cloud org access policy token (org realm) with stacks:read|write|delete, accesspolicies:read|write|delete, and stack-service-accounts:write. Empty disables Grafana/Loki resources."
+  default     = ""
+  sensitive   = true
+}
+
+variable "grafana_cloud_existing_stack_slug" {
+  type        = string
+  description = "Adopt an existing Grafana Cloud stack by slug instead of creating dabneymoe. Required on free/trial plans (one stack per org). Set via GRAFANA_CLOUD_EXISTING_STACK_SLUG in Doppler."
+  default     = ""
+}
+
+variable "grafana_cloud_region" {
+  type        = string
+  description = "Fallback Grafana Cloud API region when observability is disabled. Active stacks derive region from cluster_slug / region_slug automatically."
+  default     = "prod-eu-west-0"
+}
+
+variable "ga4_measurement_id" {
+  type        = string
+  description = "Google Analytics 4 measurement ID (G-XXXXXXXX). Empty skips client analytics env injection."
+  default     = ""
+}
+
+variable "ga4_property_id" {
+  type        = string
+  description = "GA4 property numeric ID, used for BigQuery export dataset naming (analytics_PROPERTY_ID)."
+  default     = ""
 }

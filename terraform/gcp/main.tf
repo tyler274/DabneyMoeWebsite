@@ -14,6 +14,10 @@ terraform {
       source  = "DopplerHQ/doppler"
       version = "~> 1.0"
     }
+    grafana = {
+      source  = "grafana/grafana"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -42,12 +46,15 @@ locals {
   # Runtime env for the SSR server. LEPTOS_SITE_ROOT is intentionally NOT set
   # here: the Nix image already points it at the in-store asset bundle. We only
   # pin the values that should be visible/overridable at the infra layer.
-  leptos_env = {
+  leptos_env = merge({
     LEPTOS_OUTPUT_NAME  = "dabney"
     LEPTOS_SITE_PKG_DIR = "pkg"
     LEPTOS_SITE_ADDR    = "0.0.0.0:8080"
     LEPTOS_ENV          = "PROD"
-  }
+    RUST_LOG            = "info"
+    }, var.ga4_measurement_id != "" ? {
+    GA4_MEASUREMENT_ID = var.ga4_measurement_id
+  } : {})
 }
 
 module "site" {
@@ -57,11 +64,20 @@ module "site" {
   region        = var.region
   image         = var.image
   env           = local.leptos_env
+  secret_env    = local.cloudrun_secret_env
+  service_account_email = length(google_service_account.web_runtime) > 0 ? google_service_account.web_runtime[0].email : ""
   custom_domain = var.custom_domain
   # DNS is managed in Cloudflare below, not Cloud DNS, so the module's own
   # Cloud DNS zone stays off regardless of var.manage_dns intent.
   manage_dns = false
   dns_root   = var.dns_root
+
+  # Cloud Run references Secret Manager versions; wait until Loki values exist.
+  depends_on = [
+    google_secret_manager_secret_version.loki_url,
+    google_secret_manager_secret_version.loki_user,
+    google_secret_manager_secret_version.loki_token,
+  ]
 }
 
 # --- Cloudflare DNS for the custom domain ------------------------------------
@@ -127,13 +143,20 @@ locals {
   # Non-sensitive secrets, skipping empties. These are plain strings, so the map
   # is safe to use with for_each. The sensitive Cloudflare token is handled in
   # its own resource below (a sensitive value taints for_each / instance keys).
+  # Observability-derived secrets (LOKI_URL, etc.) live in observability.tf as
+  # individual resources: their values are unknown until the Grafana stack
+  # exists, which breaks for_each on this map.
   doppler_plain_secrets = local.doppler_enabled ? {
-    for k, v in {
+    for k, v in merge({
       CLOUDFLARE_ZONE_ID       = var.cloudflare_zone_id
       GCP_PROJECT_ID           = var.project_id
       GCP_REGION               = var.region
       GOOGLE_SITE_VERIFICATION = var.google_site_verification
-    } : k => v if v != ""
+      }, var.ga4_measurement_id != "" ? {
+      GA4_MEASUREMENT_ID = var.ga4_measurement_id
+    } : {}, var.ga4_property_id != "" ? {
+      GA4_PROPERTY_ID = var.ga4_property_id
+    } : {}) : k => v if v != ""
   } : {}
 }
 

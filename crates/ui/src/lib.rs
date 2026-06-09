@@ -6,11 +6,14 @@
 //! - `hydrate` : browser hydration of the server-rendered HTML.
 //! - `csr`     : pure client-side rendering for the Tauri (Trunk) build.
 
+pub mod analytics;
 pub mod commissions;
 pub mod commissions_data;
+pub mod consent;
 pub mod data;
 pub mod portfolio;
 pub mod portfolio_chart;
+pub mod privacy;
 pub mod sections;
 pub mod tools;
 
@@ -20,7 +23,10 @@ use leptos_router::components::{Route, Router, Routes};
 use leptos_router::hooks::use_location;
 use leptos_router::StaticSegment;
 
+use analytics::{AnalyticsHead, AnalyticsRuntime};
 use commissions::{ArtworkPage, LapidaryPage, SongsPage};
+use consent::{provide_consent_context, ConsentBanner};
+use privacy::PrivacyPage;
 use tools::InvestmentAccountPage;
 
 use sections::{About, Contact, Experience, Expertise, Footer, Hero, NavBar, Services, Skills};
@@ -37,6 +43,7 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <AutoReload options=options.clone() />
                 <HydrationScripts options />
                 <MetaTags />
+                <AnalyticsHead />
             </head>
             <body class="bg-slate-950 font-sans text-slate-200 antialiased">
                 <App />
@@ -49,6 +56,7 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
 #[component]
 pub fn App() -> impl IntoView {
     provide_meta_context();
+    provide_consent_context();
 
     view! {
         <Stylesheet id="leptos" href="/pkg/dabney.css" />
@@ -79,10 +87,14 @@ pub fn App() -> impl IntoView {
             content="Rust, GPU computing, and high-performance systems. Available for freelance and contract work."
         />
 
+        <ConsentBanner />
+
         <Router>
+            <AnalyticsRuntime />
             <main>
                 <Routes fallback=|| view! { <HomePage /> }>
                     <Route path=StaticSegment("") view=HomePage />
+                    <Route path=StaticSegment("privacy") view=PrivacyPage />
                     <Route
                         path=(StaticSegment("tools"), StaticSegment("investment-account"))
                         view=InvestmentAccountPage

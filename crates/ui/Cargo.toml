@@ -9,16 +9,26 @@ leptos = { workspace = true }
 leptos_meta = { workspace = true }
 leptos_router = { workspace = true }
 csv = "1.3"
+serde_json = { workspace = true }
 # JS interop for the Tauri native-opener click handler (WASM builds only).
 js-sys = { version = "0.3", optional = true }
 web-sys = { version = "0.3", optional = true, features = [
   "Document",
   "Element",
+  "ErrorEvent",
+  "Event",
   "File",
   "FileList",
   "FileReader",
+  "Headers",
   "HtmlInputElement",
+  "PromiseRejectionEvent",
   "ProgressEvent",
+  "Request",
+  "RequestInit",
+  "RequestMode",
+  "Response",
+  "Storage",
   "Window",
 ] }
 wasm-bindgen = { workspace = true, optional = true }

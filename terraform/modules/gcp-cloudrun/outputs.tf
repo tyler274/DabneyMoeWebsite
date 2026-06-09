@@ -12,3 +12,8 @@ output "dns_records" {
   description = "Records the custom domain mapping requires (add these at your registrar if manage_dns is false)."
   value       = local.mapping_records
 }
+
+output "service_name" {
+  description = "Cloud Run service name."
+  value       = google_cloud_run_v2_service.web.name
+}

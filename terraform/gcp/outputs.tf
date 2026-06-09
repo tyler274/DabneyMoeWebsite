@@ -30,7 +30,23 @@ output "doppler_secret_names" {
     keys(doppler_secret.plain),
     [for r in doppler_secret.cloudflare_api_token : r.name],
     [for r in doppler_secret.gcp_sa_key : r.name],
+    [for r in doppler_secret.loki_url : r.name],
+    [for r in doppler_secret.loki_user : r.name],
+    [for r in doppler_secret.grafana_stack_url : r.name],
+    [for r in doppler_secret.loki_token : r.name],
+    [for r in doppler_secret.grafana_sa_token : r.name],
   ))
+}
+
+output "grafana_stack_url" {
+  description = "Grafana Cloud stack URL (EU). Empty when observability is disabled."
+  value       = try(local.grafana_stack_url, "")
+}
+
+output "loki_push_url" {
+  description = "Loki push endpoint for the Cloud Run service."
+  value       = local.loki_push_url
+  sensitive   = true
 }
 
 output "doppler_ci_token" {

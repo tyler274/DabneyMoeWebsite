@@ -2,6 +2,7 @@ use leptos::prelude::*;
 use leptos_router::components::A;
 
 use crate::commissions::CommissionsMenu;
+use crate::consent::OpenConsentButton;
 use crate::data::{
     ABOUT, ABOUT_PHOTO, EXPERIENCE, EXPERTISE, PROFILE_PHOTO, SERVICES, SKILLS, SUMMARY, TAGLINE,
 };
@@ -441,7 +442,13 @@ pub fn Footer() -> impl IntoView {
             <div class="mx-auto flex max-w-5xl flex-col items-center gap-2 text-center text-sm text-slate-500">
                 <div class="flex flex-col items-center gap-2 sm:flex-row sm:justify-between sm:gap-4 w-full">
                     <span>"© 2026 Tyler Port · dabney.moe"</span>
-                    <span>"Built with Rust, Leptos & Tauri"</span>
+                    <span class="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+                        <A href="/privacy" attr:class="hover:text-slate-300">"Privacy"</A>
+                        <span class="text-slate-700">"·"</span>
+                        <OpenConsentButton />
+                        <span class="text-slate-700">"·"</span>
+                        <span>"Built with Rust, Leptos & Tauri"</span>
+                    </span>
                 </div>
                 <span class="text-xs text-slate-600">"Icon © HoYoverse. All Rights Reserved."</span>
             </div>

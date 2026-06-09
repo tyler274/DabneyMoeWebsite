@@ -62,6 +62,21 @@ variable "env" {
   default     = {}
 }
 
+variable "secret_env" {
+  type = map(object({
+    secret_id = string
+    version   = optional(string, "latest")
+  }))
+  description = "Environment variables sourced from Secret Manager (name -> secret reference)."
+  default     = {}
+}
+
+variable "service_account_email" {
+  type        = string
+  description = "Runtime service account for the Cloud Run revision. Empty uses the project default compute SA."
+  default     = ""
+}
+
 variable "allow_unauthenticated" {
   type        = bool
   description = "Grant roles/run.invoker to allUsers so the site is publicly reachable."

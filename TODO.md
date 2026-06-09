@@ -6,7 +6,7 @@ and the résumé. Items are also tracked as GitHub issues.
 ## Site content & features
 - [ ] Projects / Portfolio section (Rummage + select freelance work, with tech tags and links)
 - [ ] Testimonials / client logos for social proof
-- [ ] Fuller About section with bio and headshot
+- [X] Fuller About section with bio and headshot
 - [ ] Crawlable `/resume` HTML route (router fallback already in place) in addition to the PDF
 - [ ] Contact form backed by a Leptos server function (the site currently has none) wired to email/webhook
 - [ ] Blog / writing section (`/blog`) on Rust / GPU / HPC topics
@@ -19,7 +19,7 @@ and the résumé. Items are also tracked as GitHub issues.
 - [ ] `robots.txt` and `sitemap.xml` in `public/`
 - [ ] JSON-LD structured data (`schema.org/Person`)
 - [ ] Favicon set derived from `src-tauri/icons/source.png`
-- [ ] Privacy-friendly analytics (e.g. Plausible)
+- [x] GDPR observability: Grafana Cloud Loki (US atm, EU later) + GA4 Consent Mode v2 + BigQuery export + privacy policy / cookie banner
 - [x] CI: GitHub Actions running `cargo leptos build`, `cargo tauri build --no-bundle`, `clippy`, `fmt`, tests + Android APK build (`nix run .#ci` mirrors it locally)
 - [x] Deployment: Nix `dockerTools` image (`nix build .#serverImage`) + modular Terraform/OpenTofu under `terraform/` (Cloud Run / App Runner / Container Apps); CI deploys the web image to GCP Cloud Run on green `main` once `GCP_SA_KEY`/`GCP_PROJECT` secrets + the remote state backend are configured
 - [x] Harden the `serverImage` build: static `x86_64-unknown-linux-musl` target with the `mold` linker (+ fat LTO) and hardened Microsoft `mimalloc` (`-DMI_SECURE`) as the global allocator. `nix build .#serverImage` is now the hardened, glibc-free build (zero runtime store refs, ~18.7 MB image vs ~82 MB; `serverImageGlibc` kept as fallback); SSR + hydration verified in the container
@@ -35,7 +35,7 @@ and the résumé. Items are also tracked as GitHub issues.
 ## Résumé content (`Resume/resume.tex`)
 - [ ] Add a one-line summary/objective framing freelance contracting
 - [ ] Quantify impact with metrics rather than only responsibilities
-- [ ] Add `dabney.moe` to the contact line
+- [X] Add `dabney.moe` to the contact line
 - [ ] Add a Projects section mirroring the site
 - [ ] Trim/condense older roles to keep it to one page
 

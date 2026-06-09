@@ -4,13 +4,10 @@ region     = "us-central1"
 # Set after the registry exists and the image has been pushed (phase 2):
 # image = "us-central1-docker.pkg.dev/your-gcp-project-id/dabney/web:latest"
 
-# Optional custom domain (requires domain verification in Google Search Console):
-# custom_domain = "dabney.moe"
-
-# DNS via Cloudflare (dabney.moe is hosted there). Set after the domain mapping
-# exists so the apex A/AAAA records it reports can be mirrored into Cloudflare.
-# enable_cloudflare_dns    = true
-# cloudflare_zone_id       = "your-cloudflare-zone-id"
+# Custom domain + Cloudflare DNS default to dabney.moe / enabled. Override if needed:
+# custom_domain            = "dabney.moe"
+# enable_cloudflare_dns    = false
+# cloudflare_zone_id       = "your-cloudflare-zone-id"   # or CLOUDFLARE_ZONE_ID in Doppler
 # google_site_verification = "token-from-search-console"     # value after google-site-verification=
 
 # Secrets (cloudflare_api_token, doppler_token) should NOT live in this file.
@@ -28,3 +25,9 @@ region     = "us-central1"
 # Cloud DNS path (unused when using Cloudflare):
 # manage_dns = true
 # dns_root   = "dabney.moe."
+
+# Observability (optional). Pass tokens via TF_VAR_* - never commit them.
+# export TF_VAR_grafana_cloud_access_policy_token=glc_xxxx
+# grafana_cloud_region = "prod-eu-west-0"
+# ga4_measurement_id   = "G-XXXXXXXX"
+# ga4_property_id      = "123456789"

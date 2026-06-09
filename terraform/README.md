@@ -185,3 +185,85 @@ the live revision.
 Each root uses **local state** by default. Commented remote-backend stanzas
 (`gcs` / `s3` / `azurerm`) live in each `backend.tf`; uncomment and `tofu init`
 once the backing bucket/account exists.
+
+## Observability (Grafana Cloud + GA4)
+
+The GCP root can provision a **Grafana Cloud stack in the EU** (`terraform/gcp/observability.tf`)
+for Loki log ingestion and dashboards, plus a **BigQuery dataset** for GA4 exports.
+The Leptos SSR server pushes structured logs to Loki when `LOKI_*` env vars are set
+(via Secret Manager on Cloud Run).
+
+### Bootstrap (one-time)
+
+1. Create a [Grafana Cloud](https://grafana.com/products/cloud/) account.
+2. In Grafana Cloud → **Security** → **Access Policies**, create a token with:
+   - `stacks:read`, `stacks:write`, `stacks:delete`
+   - `accesspolicies:read`, `accesspolicies:write`, `accesspolicies:delete`
+3. Bootstrap Terraform with Doppler + Grafana tokens:
+
+```bash
+export TF_VAR_doppler_token=dp.pt.xxxx
+export TF_VAR_grafana_cloud_access_policy_token=glc_xxxx
+export TF_VAR_ga4_measurement_id=G-XXXXXXXX   # optional until GA4 property exists
+export TF_VAR_ga4_property_id=123456789       # optional, for dashboard SQL
+tofu -chdir=terraform/gcp init
+tofu -chdir=terraform/gcp apply
+```
+
+4. Create a **GA4 property** for `dabney.moe` and store IDs in Doppler:
+
+```bash
+./scripts/setup-ga4-doppler.sh   # walks through GA4 UI steps, then writes prd secrets
+```
+
+Or set manually: `doppler secrets set GA4_MEASUREMENT_ID=G-... GA4_PROPERTY_ID=... -c prd`
+
+5. Apply infra (reuses Cloudflare + Grafana + GA4 from Doppler):
+
+```bash
+./scripts/tofu-apply.sh apply
+```
+
+6. In GA4 Admin → **Product links** → **BigQuery links**, link the property with
+   **daily export** to the **EU** region (matches `google_bigquery_dataset.analytics`).
+7. Import Grafana dashboards from `terraform/grafana/dashboards/` (replace
+   `PROPERTY_ID` in `analytics.json` with your GA4 property ID).
+8. In Grafana Cloud, add a **BigQuery** datasource using a GCP service account
+   with `roles/bigquery.dataViewer` on the GA4 export dataset.
+
+### Doppler secret inventory (observability)
+
+| Secret | Purpose |
+| --- | --- |
+| `LOKI_URL` | Grafana Cloud Loki base URL (tracing-loki appends `/loki/api/v1/push`) |
+| `LOKI_USER` | Loki tenant / user ID |
+| `LOKI_TOKEN` | Access policy token (`logs:write`) |
+| `GRAFANA_STACK_URL` | Grafana UI URL |
+| `GRAFANA_CLOUD_SA_TOKEN` | Stack service account token (dashboard admin) |
+| `GA4_MEASUREMENT_ID` | Public GA4 ID injected into SSR (`GA4_MEASUREMENT_ID` env) |
+| `GA4_PROPERTY_ID` | Numeric GA4 property ID (dashboards / BigQuery dataset `analytics_<id>`) |
+| `GRAFANA_CLOUD_ACCESS_POLICY_TOKEN` | Org token for Terraform Grafana provider (set manually in Doppler) |
+
+Cloud Run receives `LOKI_*` via **Secret Manager** (`loki-url`, `loki-user`, `loki-token`);
+the runtime service account `web-runtime@…` has `secretAccessor`.
+
+### GDPR admin checklist
+
+**Grafana Cloud**
+
+- Stack region: `eu` (Terraform `region_slug`)
+- Set Loki retention to **30 days** in Grafana Cloud portal
+
+**Google Analytics 4**
+
+- Disable Google Signals and ads personalization
+- Data retention: **2 months**
+- IP anonymization: on (GA4 default)
+- Use **Consent Mode v2** (implemented in the site; analytics load only after opt-in)
+- Sign Google’s DPA as data processor
+
+**Site**
+
+- Privacy policy at `/privacy`
+- Cookie banner with Analytics + Error reporting tiers
+- Server request logs: legitimate interest (disclosed in privacy policy; no marketing cookies)
