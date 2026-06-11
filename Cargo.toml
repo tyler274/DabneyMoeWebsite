@@ -78,6 +78,13 @@ panic = "abort"
 # Faster incremental dependency builds during development.
 [profile.dev]
 opt-level = 1
+# Line tables only: the SSR link pulls in a huge static closure (Leptos → gloo →
+# js-sys/web-sys) whose combined `.debug_info` exceeds rust-lld's 32-bit relocation
+# range on 1.96+. Full DWARF is still the default for `--release` builds.
+debug = 1
+# Keep DWARF in sidecar `.dwo` files so dev binaries stay small and the linker
+# never has to pack a multi-gigabyte `.debug_info` section into the executable.
+split-debuginfo = "unpacked"
 # `opt-level > 0` enables thin-local LTO unless explicitly disabled. With
 # cargo-leptos rebuilding SSR + WASM targets, incremental reuse can leave stale
 # internalized symbols and break the native link (undefined hidden hashbrown /
