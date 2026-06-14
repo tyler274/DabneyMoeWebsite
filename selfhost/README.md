@@ -37,7 +37,7 @@ cp .env.example .env          # set ACME_EMAIL and (if needed) SITE_DOMAIN
 # Build the hardened SSR image with Nix and load it into the local daemon.
 # (Or set WEB_IMAGE in .env to a registry ref to pull instead.)
 nix -C .. build .#serverImage
-docker load < ../result
+skopeo --insecure-policy copy docker-archive:../result docker-daemon:dabney-web:latest
 
 docker compose up -d
 docker compose logs -f caddy   # watch the cert get issued

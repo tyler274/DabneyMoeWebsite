@@ -45,7 +45,9 @@ To smoke-test the image locally against a (rootless) Docker daemon instead:
 
 ```bash
 nix build .#serverImage
-docker load --input result               # or: skopeo --insecure-policy copy docker-archive:result docker-daemon:dabney-web:latest
+# The tarball is tagged dabney-web:<store-hash>, not :latest - retag on load or
+# `docker run dabney-web:latest` will keep using a stale local image.
+skopeo --insecure-policy copy docker-archive:result docker-daemon:dabney-web:latest
 docker run --rm -p 8080:8080 dabney-web:latest
 curl -fsS http://127.0.0.1:8080/         # SSR HTML; assets under /pkg/*
 ```

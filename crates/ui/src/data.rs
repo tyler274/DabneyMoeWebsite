@@ -109,9 +109,16 @@ pub const EXPERIENCE: &[Role] = &[
         title: "Independent Contractor",
         period: "Oct 2024 – Present",
         points: &[
+            "Leading a from-scratch Rust rewrite of gssproxy, the GSSAPI/Kerberos proxy \
+             daemon and its mechglue interposer: a memory-safe, drop-in replacement across \
+             a multi-crate workspace, with FFI to MIT krb5/GSSAPI and Kani formal \
+             verification of the security-critical XDR/gssx wire codec.",
+            "Designed and built this site (dabney.moe) as a Leptos (SSR + WebAssembly) and \
+             Tauri v2 multiplatform app sharing one Rust UI crate, with a Nix-driven, \
+             multi-cloud (GCP/AWS/Azure) Terraform CI/CD pipeline producing hardened, \
+             statically-linked container images.",
             "Built custom software for clients leveraging Rust, Python, C++, and GPU \
-             acceleration.",
-            "Designed and implemented core systems for the independent game Rummage.",
+             acceleration, and designed the core systems for the independent game Rummage.",
         ],
     },
     Role {
@@ -198,6 +205,10 @@ pub const SKILLS: &[SkillGroup] = &[
             "HPC environments",
             "FPGAs (Intel, AMD)",
             "Docker",
+            "Nix",
+            "Terraform / OpenTofu",
+            "CI/CD (GitHub Actions)",
+            "Cloud (GCP, AWS, Azure)",
             "Git",
             "Windows",
             "macOS",
@@ -211,6 +222,8 @@ pub const SKILLS: &[SkillGroup] = &[
             "Systems engineering & administration",
             "DevOps & infrastructure",
             "High-performance computing",
+            "Cross-platform apps (Tauri, Leptos/WASM)",
+            "Formal verification (Kani)",
             "AI/ML (PyTorch)",
             "Low-level programming",
             "Relational database design",

@@ -9,7 +9,10 @@
 #   2. Open inbound 80 + 443 (80 must stay open for the ACME http-01 challenge
 #      and the HTTP->HTTPS redirect).
 #   3. cp .env.example .env  &&  edit ACME_EMAIL / SITE_DOMAIN.
-#   4. Load the image:  nix build .#serverImage && docker load < result
+#   4. Load the image (retags as :latest - plain `docker load` leaves a
+#      content-hash tag and compose will keep using an old :latest):
+#      nix build .#serverImage
+#      skopeo --insecure-policy copy docker-archive:result docker-daemon:dabney-web:latest
 #   5. docker compose up -d
 #
 # Caddy handles HTTP->HTTPS redirect, cert issuance/renewal (at randomized
