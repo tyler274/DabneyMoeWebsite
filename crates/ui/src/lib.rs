@@ -29,7 +29,9 @@ use consent::{provide_consent_context, ConsentBanner};
 use privacy::PrivacyPage;
 use tools::InvestmentAccountPage;
 
-use sections::{About, Contact, Experience, Expertise, Footer, Hero, NavBar, Services, Skills};
+use sections::{
+    About, Contact, Experience, Expertise, Footer, Hero, NavBar, Projects, Services, Skills,
+};
 
 /// Server-rendered HTML document shell. Used only by the SSR build; the Tauri
 /// CSR build supplies its own `index.html`.
@@ -130,6 +132,7 @@ fn HomePage() -> impl IntoView {
         <About />
         <Expertise />
         <Services />
+        <Projects />
         <Experience />
         <Skills />
         <Contact />

@@ -4,7 +4,8 @@ use leptos_router::components::A;
 use crate::commissions::CommissionsMenu;
 use crate::consent::OpenConsentButton;
 use crate::data::{
-    ABOUT, ABOUT_PHOTO, EXPERIENCE, EXPERTISE, PROFILE_PHOTO, SERVICES, SKILLS, SUMMARY, TAGLINE,
+    ABOUT, ABOUT_PHOTO, EXPERIENCE, EXPERTISE, PROFILE_PHOTO, PROJECTS, SERVICES, SKILLS, SUMMARY,
+    TAGLINE,
 };
 use crate::tools::ToolsMenu;
 
@@ -92,6 +93,7 @@ pub fn NavBar() -> impl IntoView {
                     <a href="/#about" class="transition hover:text-white">"About"</a>
                     <a href="/#expertise" class="transition hover:text-white">"Expertise"</a>
                     <a href="/#services" class="transition hover:text-white">"Services"</a>
+                    <a href="/#projects" class="transition hover:text-white">"Projects"</a>
                     <a href="/#experience" class="transition hover:text-white">"Experience"</a>
                     <a href="/#skills" class="transition hover:text-white">"Skills"</a>
                     <CommissionsMenu />
@@ -126,6 +128,7 @@ pub fn NavBar() -> impl IntoView {
                         <a href="/#about" class=MOBILE_NAV_LINK on:click=close_mobile>"About"</a>
                         <a href="/#expertise" class=MOBILE_NAV_LINK on:click=close_mobile>"Expertise"</a>
                         <a href="/#services" class=MOBILE_NAV_LINK on:click=close_mobile>"Services"</a>
+                        <a href="/#projects" class=MOBILE_NAV_LINK on:click=close_mobile>"Projects"</a>
                         <a href="/#experience" class=MOBILE_NAV_LINK on:click=close_mobile>"Experience"</a>
                         <a href="/#skills" class=MOBILE_NAV_LINK on:click=close_mobile>"Skills"</a>
 
@@ -310,6 +313,51 @@ pub fn Services() -> impl IntoView {
                                     {s.blurb}
                                 </p>
                             </div>
+                        }
+                    })
+                    .collect_view()}
+            </div>
+        </Section>
+    }
+}
+
+#[component]
+pub fn Projects() -> impl IntoView {
+    view! {
+        <Section id="projects" eyebrow="What I'm building" title="Projects">
+            <div class="space-y-6">
+                {PROJECTS
+                    .iter()
+                    .map(|p| {
+                        view! {
+                            <article class="rounded-2xl border border-white/10 bg-white/[0.02] p-6 transition hover:border-cyan-400/40 hover:bg-white/[0.04]">
+                                <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
+                                    <h3 class="text-lg font-semibold text-white">{p.name}</h3>
+                                    <a
+                                        href=p.href
+                                        target="_blank"
+                                        rel="noopener"
+                                        class="text-sm font-medium text-cyan-300 transition hover:text-cyan-200"
+                                    >
+                                        "GitHub →"
+                                    </a>
+                                </div>
+                                <p class="mt-3 text-sm leading-relaxed text-slate-400">
+                                    {p.blurb}
+                                </p>
+                                <ul class="mt-4 flex flex-wrap gap-2">
+                                    {p.tags
+                                        .iter()
+                                        .map(|tag| {
+                                            view! {
+                                                <li class="rounded-lg bg-white/5 px-2.5 py-1 text-xs text-slate-300">
+                                                    {*tag}
+                                                </li>
+                                            }
+                                        })
+                                        .collect_view()}
+                                </ul>
+                            </article>
                         }
                     })
                     .collect_view()}
@@ -534,6 +582,15 @@ mod render_tests {
                 "services missing title: {}",
                 s.title
             );
+        }
+    }
+
+    #[test]
+    fn projects_render_every_entry() {
+        let html = render(view! { <Projects /> });
+        for p in PROJECTS {
+            assert!(html.contains(p.name), "projects missing name: {}", p.name);
+            assert!(html.contains(p.href), "projects missing href: {}", p.name);
         }
     }
 

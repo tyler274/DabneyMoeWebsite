@@ -28,14 +28,22 @@ pub struct Expertise {
     pub image_alt: &'static str,
 }
 
+pub struct Project {
+    pub name: &'static str,
+    pub blurb: &'static str,
+    pub tags: &'static [&'static str],
+    pub href: &'static str,
+}
+
 pub const PROFILE_PHOTO: &str = "/photos/tyler-dunes.jpg";
 pub const ABOUT_PHOTO: &str = "/photos/tyler-travel.png";
 
 pub const TAGLINE: &str = "Independent software engineer & freelance contractor";
 
 pub const SUMMARY: &str = "Caltech-trained software engineer specializing in Rust, GPU \
-computing, and high-performance systems. I take projects from first commit to production \
-deployment. I'm available for freelance and contract work.";
+computing, and high-performance systems. Recent independent work includes Elysian Studio, \
+ElyMalloc, and ElyLD — a slicer, allocator, and linker in safe Rust. I take projects from \
+first commit to production deployment. I'm available for freelance and contract work.";
 
 pub const ABOUT: &str = "When I'm not shipping systems code, you'll find me behind a camera \
 or exploring somewhere new. I bring the same curiosity I have for travel and culture to \
@@ -90,6 +98,33 @@ pub const SERVICES: &[Service] = &[
     },
 ];
 
+pub const PROJECTS: &[Project] = &[
+    Project {
+        name: "Elysian Studio",
+        blurb: "Safe-Rust rewrite of Bambu Studio. Deterministic CPU slicing (walls, infill, \
+                supports), wgpu Vulkan compute contours, an iced UI, and LAN MQTT/FTPS \
+                printer control. Uses ElyMalloc in-process and links with ElyLD.",
+        tags: &["Rust", "wgpu", "Vulkan", "iced", "3D printing"],
+        href: "https://github.com/tyler274/elysian-studio",
+    },
+    Project {
+        name: "ElyMalloc",
+        blurb: "Pure-Rust drop-in for Microsoft mimalloc v3.5.2. Ships the C ABI and SONAME \
+                (libmimalloc.so.3, mi_*), always-on MI_SECURE mitigations, WASM GlobalAlloc, \
+                Kani proofs, and a first-class NixOS malloc provider.",
+        tags: &["Rust", "allocators", "mimalloc", "NixOS", "WASM"],
+        href: "https://github.com/tyler274/ElyMalloc",
+    },
+    Project {
+        name: "ElyLD",
+        blurb: "GNU-ld-compatible incremental ELF linker, forked from Wild. --incremental \
+                patches an existing output in place. Links Linux kernel vmlinux and glibc \
+                DSOs, and runs as a NixOS stdenv linker.",
+        tags: &["Rust", "ELF", "linkers", "Linux kernel", "NixOS"],
+        href: "https://github.com/tyler274/ElyLD",
+    },
+];
+
 pub const EXPERIENCE: &[Role] = &[
     Role {
         company: "Tivara",
@@ -109,6 +144,11 @@ pub const EXPERIENCE: &[Role] = &[
         title: "Independent Contractor",
         period: "Oct 2024 – Present",
         points: &[
+            "Building the Elysian systems stack in safe Rust: Elysian Studio (AGPL rewrite \
+             of Bambu Studio with wgpu Vulkan slicing and open LAN printer I/O), ElyMalloc \
+             (pure-Rust mimalloc v3 drop-in with always-on MI_SECURE mitigations and a \
+             NixOS malloc provider), and ElyLD (GNU-ld-compatible incremental ELF linker \
+             for Linux vmlinux, glibc DSOs, and NixOS stdenv).",
             "Leading a from-scratch Rust rewrite of gssproxy, the GSSAPI/Kerberos proxy \
              daemon and its mechglue interposer: a memory-safe, drop-in replacement across \
              a multi-crate workspace, with FFI to MIT krb5/GSSAPI and Kani formal \
@@ -224,6 +264,8 @@ pub const SKILLS: &[SkillGroup] = &[
             "High-performance computing",
             "Cross-platform apps (Tauri, Leptos/WASM)",
             "Formal verification (Kani)",
+            "Memory allocators",
+            "ELF linkers",
             "AI/ML (PyTorch)",
             "Low-level programming",
             "Relational database design",
@@ -260,6 +302,32 @@ mod tests {
                 "service icon must not be empty: {}",
                 s.title
             );
+        }
+    }
+
+    #[test]
+    fn projects_are_well_formed() {
+        assert!(!PROJECTS.is_empty(), "expected at least one project");
+        for p in PROJECTS {
+            assert!(!p.name.trim().is_empty(), "project name must not be empty");
+            assert!(
+                !p.blurb.trim().is_empty(),
+                "project blurb must not be empty: {}",
+                p.name
+            );
+            assert!(
+                p.href.starts_with("https://"),
+                "project href must be https: {}",
+                p.name
+            );
+            assert!(!p.tags.is_empty(), "project must have tags: {}", p.name);
+            for tag in p.tags {
+                assert!(
+                    !tag.trim().is_empty(),
+                    "project tag must not be empty: {}",
+                    p.name
+                );
+            }
         }
     }
 
