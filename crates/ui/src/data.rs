@@ -41,8 +41,8 @@ pub const ABOUT_PHOTO: &str = "/photos/tyler-travel.png";
 pub const TAGLINE: &str = "Independent software engineer & freelance contractor";
 
 pub const SUMMARY: &str = "Caltech-trained software engineer specializing in Rust, GPU \
-computing, and high-performance systems. Recent independent work includes Elysian Studio, \
-ElyMalloc, and ElyLD — a slicer, allocator, and linker in safe Rust. I take projects from \
+computing, and high-performance systems. Recent work spans Coda (full-stack clinical AI \
+workspace), Elysian Studio, ElyMalloc, and ElyLD in safe Rust. I take projects from \
 first commit to production deployment. I'm available for freelance and contract work.";
 
 pub const ABOUT: &str = "When I'm not shipping systems code, you'll find me behind a camera \
@@ -100,6 +100,16 @@ pub const SERVICES: &[Service] = &[
 
 pub const PROJECTS: &[Project] = &[
     Project {
+        name: "Coda",
+        blurb:
+            "Unlicense 37-crate Rust clinical workspace spanning Dioxus/WASM and Axum web apps, \
+                SeaORM/PostgreSQL with pgvector, a bounded LLM tool harness, FHIR/EHR adapters, \
+                Chrome connector, HealthKit/Health Connect bridges, Nix OCI images, and OpenTofu \
+                GCP infrastructure.",
+        tags: &["Rust", "Dioxus", "PostgreSQL", "Nix", "OpenTofu"],
+        href: "https://github.com/tyler274/coda-rust",
+    },
+    Project {
         name: "Elysian Studio",
         blurb: "Safe-Rust rewrite of Bambu Studio. Deterministic CPU slicing (walls, infill, \
                 supports), wgpu Vulkan compute contours, an iced UI, and LAN MQTT/FTPS \
@@ -126,6 +136,24 @@ pub const PROJECTS: &[Project] = &[
 ];
 
 pub const EXPERIENCE: &[Role] = &[
+    Role {
+        company: "Coda Health",
+        location: "Remote",
+        title: "Senior System Software Engineer",
+        period: "Oct 2026 – Nov 2026",
+        points: &[
+            "Engineered a 37-crate full-stack Rust workspace (Dioxus/WASM web, Axum services, \
+             SeaORM/PostgreSQL with pgvector, Redis SSE fan-out, and Swift HealthKit / Kotlin \
+             Health Connect bridges) powering clinician and patient workflows.",
+            "Built a bounded LLM tool-execution harness, offline BGE vector encoder, FHIR R4 / \
+             EHR source adapters, Chrome extension connector, and clinical literature pipeline \
+             backed by TLA+ model checks, PostgreSQL crash-recovery tests, and Chromium E2E \
+             suites.",
+            "Automated Nix distroless OCI images, 9 OpenTofu GCP roots (Cloud Run, GKE \
+             Autopilot, Cloud SQL, IAP, Doppler), OpenTelemetry/Datadog/Langfuse telemetry, and \
+             Firecracker/act sandboxed CI.",
+        ],
+    },
     Role {
         company: "Tivara",
         location: "New York City",
@@ -230,6 +258,7 @@ pub const SKILLS: &[SkillGroup] = &[
             "C / C++",
             "CUDA / SYCL / OpenCL / HIP",
             "SQL",
+            "Swift",
             "C#",
             "Java / Kotlin",
             "TypeScript / JavaScript",
@@ -242,6 +271,9 @@ pub const SKILLS: &[SkillGroup] = &[
         label: "Platforms & Tech",
         items: &[
             "Linux (Gentoo, Arch, RHEL, Debian)",
+            "Dioxus",
+            "PostgreSQL / pgvector",
+            "Redis",
             "HPC environments",
             "FPGAs (Intel, AMD)",
             "Docker",
@@ -262,8 +294,10 @@ pub const SKILLS: &[SkillGroup] = &[
             "Systems engineering & administration",
             "DevOps & infrastructure",
             "High-performance computing",
-            "Cross-platform apps (Tauri, Leptos/WASM)",
-            "Formal verification (Kani)",
+            "Cross-platform apps (Dioxus, Tauri, Leptos/WASM)",
+            "LLM agent harnesses",
+            "Formal verification (TLA+, Kani)",
+            "OpenTelemetry / Datadog",
             "Memory allocators",
             "ELF linkers",
             "AI/ML (PyTorch)",
