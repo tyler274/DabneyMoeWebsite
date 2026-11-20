@@ -15,7 +15,7 @@ use crate::tools::ToolsMenu;
 /// originating DOM event), `false` otherwise (e.g. running in a plain browser;
 /// let the standard `href` behaviour take over).
 #[cfg(any(feature = "csr", feature = "hydrate"))]
-fn try_tauri_open(url: &str) -> bool {
+pub(crate) fn try_tauri_open(url: &str) -> bool {
     use js_sys::{Function, Object, Reflect};
     use wasm_bindgen::{JsCast, JsValue};
 
@@ -69,7 +69,18 @@ pub const LINKEDIN: &str = "https://linkedin.com/in/tyler-port-9a795455";
 /// Public, externally-resolvable resume URL. Used when handing the download
 /// off to the system browser from the Tauri app, since bundled assets live at
 /// the internal `tauri.localhost` origin that an external browser can't reach.
+pub const SITE_ORIGIN: &str = "https://dabney.moe";
 pub const RESUME_PUBLIC_URL: &str = "https://dabney.moe/resume.pdf";
+
+#[cfg(any(feature = "csr", feature = "hydrate"))]
+pub(crate) fn open_site_or_external(path_or_url: &str) -> bool {
+    let target = if path_or_url.starts_with('/') {
+        format!("{SITE_ORIGIN}{path_or_url}")
+    } else {
+        path_or_url.to_string()
+    };
+    try_tauri_open(&target)
+}
 
 const MOBILE_NAV_LINK: &str =
     "block rounded-lg px-3 py-2.5 text-slate-300 transition hover:bg-white/5 hover:text-white";
@@ -148,6 +159,32 @@ pub fn NavBar() -> impl IntoView {
                         <p class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">
                             "Tools"
                         </p>
+                        <a
+                            href="/coda/"
+                            class=MOBILE_NAV_SUBLINK
+                            on:click=move |ev| {
+                                #[cfg(any(feature = "csr", feature = "hydrate"))]
+                                if open_site_or_external("/coda/") {
+                                    ev.prevent_default();
+                                }
+                                close_mobile(ev);
+                            }
+                        >
+                            "Coda Clinical Workspace"
+                        </a>
+                        <a
+                            href="/coda/physician/"
+                            class=MOBILE_NAV_SUBLINK
+                            on:click=move |ev| {
+                                #[cfg(any(feature = "csr", feature = "hydrate"))]
+                                if open_site_or_external("/coda/physician/") {
+                                    ev.prevent_default();
+                                }
+                                close_mobile(ev);
+                            }
+                        >
+                            "Coda Physician Demo (WASM)"
+                        </a>
                         <A href="/tools/investment-account" on:click=close_mobile>
                             <span class=MOBILE_NAV_SUBLINK>"Investment Account Calculator"</span>
                         </A>
@@ -333,14 +370,34 @@ pub fn Projects() -> impl IntoView {
                             <article class="rounded-2xl border border-white/10 bg-white/[0.02] p-6 transition hover:border-cyan-400/40 hover:bg-white/[0.04]">
                                 <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
                                     <h3 class="text-lg font-semibold text-white">{p.name}</h3>
-                                    <a
-                                        href=p.href
-                                        target="_blank"
-                                        rel="noopener"
-                                        class="text-sm font-medium text-cyan-300 transition hover:text-cyan-200"
-                                    >
-                                        "GitHub →"
-                                    </a>
+                                    <div class="flex flex-wrap items-baseline gap-4">
+                                        {p.demo_href.map(|demo| {
+                                            view! {
+                                                <a
+                                                    href=demo
+                                                    target="_blank"
+                                                    rel="noopener"
+                                                    on:click=move |_ev| {
+                                                        #[cfg(any(feature = "csr", feature = "hydrate"))]
+                                                        if open_site_or_external(demo) {
+                                                            _ev.prevent_default();
+                                                        }
+                                                    }
+                                                    class="text-sm font-semibold text-cyan-300 transition hover:text-cyan-200"
+                                                >
+                                                    "Live Demo →"
+                                                </a>
+                                            }
+                                        })}
+                                        <a
+                                            href=p.href
+                                            target="_blank"
+                                            rel="noopener"
+                                            class="text-sm font-medium text-cyan-300 transition hover:text-cyan-200"
+                                        >
+                                            "GitHub →"
+                                        </a>
+                                    </div>
                                 </div>
                                 <p class="mt-3 text-sm leading-relaxed text-slate-400">
                                     {p.blurb}

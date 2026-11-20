@@ -1,0 +1,8 @@
+/* Linked only inside <noscript>: with scripts disabled, show what site.js would
+   otherwise reveal. It never applies while site.js runs. */
+.rv { opacity: 1; transform: none; }
+:is(.a-pre .a-row, .a-msg, .a-lines li, .a-also, .a-updates, .a-arrive, .cm, .ps, .ph-attach, .ph-stat) {
+  opacity: 1; transform: none; visibility: visible;
+}
+.mt-row [data-d] { opacity: 1; }
+.mt-clip { clip-path: none; }

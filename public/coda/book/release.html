@@ -1,0 +1,427 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Build, CI, and release - Coda Rust</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-490d032f.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-4caaaa21.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Coda Rust</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="build-ci-and-release"><a class="header" href="#build-ci-and-release">Build, CI, and release</a></h1>
+<p>This page links the owners of each release path. Each owner keeps its own procedure.</p>
+<h2 id="continuous-integration"><a class="header" href="#continuous-integration">Continuous integration</a></h2>
+<ul>
+<li><a href="/.github/workflows/ci.yml"><code>.github/workflows/ci.yml</code></a> owns pull-request and main checks plus the existing staging deploys. Every run checks engineering skills and documentation. <a href="/scripts/ci_scope.py">CI selection</a> adds the full Rust, database, infrastructure and image suite for product/build or mixed changes, and the runtime clinical <code>skills/</code> count as product; unavailable comparisons also select full. A change under <code>crates/workspace-tools/sandbox/</code> selects only the <code>sandbox</code> job, which runs <code>nix flake check ./crates/workspace-tools/sandbox</code>; a root <code>Cargo.toml</code> or <code>Cargo.lock</code> change selects it beside the full suite, and <code>CI result</code> requires it whenever it is selected. Browser tests are ignored by the ordinary test harness; their explicit targets run on <code>workflow_dispatch</code>. A green routine CI run does not establish browser qualification. The workflow and its comments own the exact step list.</li>
+<li><code>main</code> takes pull requests through GitHub’s merge queue, set in the repository’s <code>main</code> ruleset. A pull request passes <code>CI result</code> on its own branch and need not be level with <code>main</code>. Merging it, or auto-merge, adds it to the queue, which builds a candidate from <code>main</code>, the entries ahead and this pull request, and runs the workflow on that candidate as a <code>merge_group</code> event. The pull request merges when the candidate’s <code>CI result</code> passes, so other merges do not send it back for another branch update and run. A candidate is scoped by what it adds to the commit it was built on, runs no deployment, and saves no build cache.</li>
+<li>The other jobs are <code>foundations</code> (offline cloud foundation contracts and mocked release adapters), <code>images</code> (the locked Nix images, built and run but not pushed), <code>postgres</code> (fresh migrations and the Postgres proofs), <code>observability</code> (the collector config and its OpenTofu roots), and <code>cargo-deny</code> (which applies <a href="/deny.toml"><code>deny.toml</code></a>).</li>
+<li><code>deploy-public-site-staging</code> applies the public site’s reviewed staging plan after full validation on pushes to <code>main</code> only when the repository variable <code>PUBLIC_SITE_STAGING_DEPLOY</code> is <code>enabled</code> (<a href="public-site.html">public site</a>).</li>
+<li><a href="/.github/workflows/promote-public-site.yml"><code>.github/workflows/promote-public-site.yml</code></a> is a manual workflow that promotes the image staging tested for one <code>main</code> commit to public-site production, with the <code>production</code> environment’s approval (<a href="public-site.html#promotion">promotion</a>).</li>
+<li><a href="/.github/workflows/doppler-watch.yml"><code>.github/workflows/doppler-watch.yml</code></a> is a separate daily workflow that watches the pinned Doppler CLI for releases and advisories.</li>
+<li><a href="/.github/workflows/pstack-watch.yml">PStack skill updates</a> uses the built-in <code>GITHUB_TOKEN</code> to open or refresh a PR for the <a href="/verification/README%2Emd#pstack">vendored verification skills</a>. Enable <strong>Allow GitHub Actions to create and approve pull requests</strong> in the repository’s Actions settings for publication. A maintainer with write access approves the CI runs on the resulting PR.</li>
+<li><code>deploy-staging</code> runs after full validation on pushes to <code>main</code> only when the repository variable <code>RUST_STAGING_DEPLOY</code> is <code>enabled</code>. It downloads the successful image proof’s archives from the same run, verifies their commit and checksums, and publishes those exact images without rebuilding. It runs both migration jobs and moves the <code>coda-rust-staging</code> services to Ready revisions on the new digests. <code>physician-worker</code> is updated once the scaling plan has created that service; <a href="gcp.html#direct-staging-rollout">direct staging rollout</a> describes the three-day artifact retention, retry behavior and how to turn it off.</li>
+<li>The staging release command in <a href="/crates/workspace-tools/src/staging_release.rs"><code>workspace-tools</code></a> owns rollout receipts and final-state reconciliation. It updates only each service’s product container image and refuses a rollout that moves a sidecar or any other infrastructure-owned field (<a href="gcp.html#direct-staging-rollout">direct staging rollout</a>). A partial rollout or unknown traffic is not success. <a href="gcp.html#operating-limits-and-failure-investigation">Operating limits and failure investigation</a> distinguishes declared resource limits from verified spending controls; <a href="privacy-recovery.html#isolated-restore-qualification">privacy recovery</a> describes the additional Duet restore gate. Mocked release tests and successful image checks do not qualify a hosted database restore.</li>
+<li>Skills/docs-only main pushes skip both deployments. A successful <code>CI result</code> confirms the selected checks passed, not that a deployment occurred.</li>
+<li><a href="/rust-toolchain.toml"><code>rust-toolchain.toml</code></a> is the one Rust pin. The Nix packages and dev shells read it through <a href="/nix/rust-toolchain.nix"><code>nix/rust-toolchain.nix</code></a>, the <code>ci</code> job installs it with <code>rustup</code>, and <code>cargo-deny</code> runs on it. A toolchain bump is its own PR, and <code>ci_scope.py</code> treats it as a dependency change. The Rust cache key includes the version, so it only changes in that PR.</li>
+<li>A weekly <code>schedule</code> run on <code>main</code> takes the full path without browser qualification or deployments. Restoring the <code>rust-v2-*</code> and <code>postgres-*-shard*</code> entries keeps them from being evicted after seven idle days, so the first PR after a quiet week starts warm. The private Nix cache has no idle expiry, so only <code>main</code> pushes publish to it. <code>workflow_dispatch</code> also runs the full path, plus browser qualification.</li>
+<li>Postgres shard caches save one entry per <code>main</code> or scheduled commit, so concurrent merges don’t race for a key. Restores fall back from the same dependency set to the same shard. A PR saves only when <code>main</code> had nothing for its dependency set.</li>
+<li>Rust build caches are best effort. A restore, save, or cache-size failure can make the next build slower; it does not invalidate passing checks.</li>
+<li>CI installs <code>wasm-bindgen</code>, mdBook, and lychee from pinned, checksum-verified release archives, not with <code>cargo install</code>. The comments next to each install step give the reason for its pin.</li>
+<li>CI makes no anonymous GitHub downloads that it can authenticate, because GitHub throttles anonymous traffic first. Release archives (<a href="/.github/actions/release-archive/action.yml"><code>release-archive</code></a>, with curl, since the <code>act</code> image has no <code>gh</code>) and the Doppler CLI come through the GitHub API with the job token; <code>github.com</code> download URLs ignore the token. OpenTofu fetches providers from those URLs and cannot send a token, so <a href="/.github/actions/tofu-providers/action.yml"><code>tofu-providers</code></a> caches them per job, keyed on the committed lock files.</li>
+<li>CI runs on GitHub-hosted <code>ubuntu-24.04</code> runners and serves <code>actions/cache</code> from GitHub’s workflow cache. <a href="/.actrc"><code>.actrc</code></a> maps <code>ubuntu-24.04</code> and custom runner labels to the <code>act</code> image, and <a href="/.github/actionlint.yaml"><code>.github/actionlint.yaml</code></a> declares self-hosted labels outside GitHub’s hosted set.</li>
+<li>The repository variable <code>CI_JOB_RUNNER</code> moves the <code>ci</code> job to another runner label (such as <code>cyrene-coda</code>); deleting it returns the job to GitHub-hosted <code>ubuntu-24.04</code>.<sup class="footnote-reference" id="fr-cyrene-1"><a href="#footnote-cyrene">1</a></sup></li>
+<li>Run the workflow locally with <code>act</code> from <code>nix develop</code>; it needs the host’s Docker daemon, which the shell does not provide. <a href="/.actrc"><code>.actrc</code></a> selects the runner image and the <code>ci</code> job. Check the workflow with <code>actionlint .github/workflows/ci.yml</code>. Where there is no Docker, <code>coda-sandbox ci run [&lt;repo-path-or-commit&gt;] --job &lt;job&gt;</code> from <a href="/crates/workspace-tools/sandbox/"><code>crates/workspace-tools/sandbox/</code></a> runs the job of a committed revision the same way on a self-hosted CI spool, with no secrets, and exits with its status.<sup class="footnote-reference" id="fr-cyrene-2"><a href="#footnote-cyrene">1</a></sup></li>
+<li><a href="/.githooks/pre-commit"><code>.githooks/pre-commit</code></a> runs the same rustfmt and clippy steps before a commit.</li>
+</ul>
+<h2 id="private-nix-binary-cache"><a class="header" href="#private-nix-binary-cache">Private Nix binary cache</a></h2>
+<p><a href="/infra/gcp/nix-cache"><code>infra/gcp/nix-cache</code></a> owns an isolated private GCS bucket
+and bucket-scoped reader/writer identities. Select its project and remote-state
+backend explicitly; apply only an operator-approved saved plan. It does not own
+product deployment permissions. Nix uses GCS’s S3 interoperability endpoint, so
+its HMAC credentials are distinct from the WIF credentials used by deploy jobs.</p>
+<p>Keep HMAC and signing secrets in Doppler, outside OpenTofu state. Deliver the
+reader credentials to CI separately from the writer credentials. The reader HMAC
+pair is a repository secret, because every Nix job reads the cache and most run
+outside any environment; it grants only object reads on this bucket. The GitHub
+<code>nix-cache-write</code> environment must restrict deployment branches to <code>main</code> before
+installing any writer or signing secrets. Never put those secrets at repository
+scope: a workflow condition alone cannot protect secrets from edited PR code.
+Only the <code>nix-cache-publish</code> job enters <code>nix-cache-write</code>. It runs on a <code>main</code>
+push after <code>images</code> passes, rebuilds the allowlisted roots from the cache, and
+uploads them. <code>images</code> itself holds no cache-writer secrets on any event.
+Changing cache trust or rotating its signing key requires operator review.
+Publishers share the <code>nix-cache-main-writer</code> concurrency group because create-only
+object permissions cannot safely handle simultaneous uploads of the same object.
+An active publisher is not cancelled; GitHub may replace an older pending one
+with a newer one, whose closure supersedes it. The image proofs, <code>CI result</code> and
+deployments stay outside that group and do not wait for publication, so a burst
+of merges cannot cancel them. Any additional publisher must use the same
+serialization policy rather than weakening the bucket permissions.</p>
+<p>The cache retains compiled dependency artifacts as well as application outputs;
+final image closures alone do not retain the intermediate Rust compilation work.
+Native server, WebAssembly and patient-bank builds keep separate dependency
+artifacts in <a href="/nix/packages.nix"><code>nix/packages.nix</code></a>. Cache reads preserve Nix’s
+signature verification and the upstream substituter. A cache miss or outage must
+still run the build and all image proofs. Disabling <code>NIX_CACHE_ENABLED</code> restores
+the uncached workflow without changing the proof commands.</p>
+<p>The cache contains private build inputs and outputs. Do not make the bucket
+public or copy credentials into the Nix store. Object-age deletion is not a safe
+cache garbage collector: deleting a NAR while retaining its metadata or references
+can break substitution. Retention changes must account for the reference graph.</p>
+<h3 id="local-cache-warming-with-act"><a class="header" href="#local-cache-warming-with-act">Local cache warming with act</a></h3>
+<p><a href="/.github/workflows/nix-cache-local.yml">The local workflow</a> builds the same
+<a href="/scripts/nix-cache/nix_cache_roots.py">allowlisted roots</a> as the hosted writer: three
+dependency artifacts, six runtime, migration and job images, and the three dev
+shells CI enters (<code>agent</code>, <code>release</code>, <code>observability</code>). It only warms the
+binary cache; it does not load or push images, deploy services, or replace the
+hosted image proofs. Hosted publication remains a protected <code>main</code>-push operation.
+Local publication is an explicit operator-authorized exception for a reviewed,
+full commit SHA. Serialize it with every other writer: do not run it while a
+hosted or another local publication is active. <code>act</code> does not participate in
+GitHub’s writer concurrency group.</p>
+<p>Use a clean, standalone checkout containing the reviewed commit, not a linked
+worktree: <code>act</code> copies files into the container, and a worktree’s <code>.git</code> file points
+outside that copy. A local <code>git clone --no-hardlinks /path/to/repository /path/to/cache-warm-checkout</code> provides a standalone checkout without a GitHub token;
+check out the reviewed SHA there. Commit the reviewed changes before running; do
+not bypass cleanliness checks. The workflow verifies <code>HEAD</code> and tracked/untracked
+changes before installation and credentials, and the publisher rechecks the
+revision. Never pass unreviewed local code signing credentials.</p>
+<p>From that checkout, enter <code>nix develop .#agent</code>. First check workflow selection and
+syntax without credentials or a build:</p>
+<pre><code class="language-bash">EXPECTED_SHA="$(git rev-parse HEAD)"
+act workflow_dispatch -W .github/workflows/nix-cache-local.yml -j nix-cache-local \
+  --var ACT=true --input expected_sha="$EXPECTED_SHA" \
+  --env-file /dev/null --secret-file /dev/null --var-file /dev/null --input-file /dev/null \
+  --container-daemon-socket - --list
+# Repeat the command with --dryrun instead of --list to validate step planning.
+</code></pre>
+<p>The explicit <code>-W</code> and <code>-j nix-cache-local</code> are required: <a href="/.actrc"><code>.actrc</code></a>
+defaults to <code>-j ci</code>. Both the manual event and the local <code>ACT</code> checks are required;
+a hosted manual dispatch cannot publish. The installer uses
+<code>cachix/install-nix-action@v31</code> with <code>--no-daemon</code>: its single-user branch clears
+<code>build-users-group</code> and exports the user profile, without systemd. The container
+uses its own disposable <code>/nix</code>, with sandboxing disabled inside Docker. Do not add
+host <code>/nix</code>, systemd, home, credential or Docker-socket mounts, <code>--bind</code>,
+<code>--privileged</code>, or <code>--reuse</code>. The Docker daemon is needed by <code>act</code> on the host, not
+inside the job. A cold build can need substantial time and disk space.</p>
+<p>For an authorized write, first record the current <code>NIX_CACHE_ENABLED</code> repository
+variable, set it to <code>false</code> with operator approval, and wait for active hosted
+writers to finish. This pauses private reads as well as writes. Restore the exact
+previous value after the local run, including failures. Do not assume a local lock
+coordinates with GitHub’s concurrency group.</p>
+<p>The <a href="/scripts/nix-cache/warm_nix_cache.py">launcher</a> fetches only seven named settings from
+Doppler: bucket, public key, writer HMAC pair, signing key, and reader HMAC pair.
+It passes names rather than values on <code>act</code> arguments; no unrelated Doppler
+secrets are forwarded. The writer HMAC remains bucket-scoped and create-only.</p>
+<pre><code class="language-bash"># Inside nix develop .#agent, with a clean reviewed standalone checkout
+# and hosted publishers paused/drained under operator authorization:
+python scripts/nix-cache/warm_nix_cache.py \
+  --expected-sha "$(git rev-parse HEAD)" \
+  --doppler-config stg_nix_cache --acknowledge-exclusive-writer
+</code></pre>
+<p>Do not use broad Doppler export/forwarding, <code>.secrets</code> files, literal secret
+arguments, shell tracing, <code>--verbose</code>, <code>--insecure-secrets</code>, or environment dumps.
+Only publication receives writer/signing credentials; the subsequent fresh-reader
+step receives only reader credentials and the public key. Publication first sends
+a leaf-derivation smoke closure, then the full closure twice to prove safe reuse.
+The reader copies the server-dependency closure into an empty disposable store
+from the private cache alone, without builds, and verifies contents and trust.
+All temporary credential files and the reader store are removed on normal failure
+or completion; <code>act --rm</code> also removes the job container on failure. Abrupt host
+termination can require removing that specific stopped act container/volume; do
+not prune unrelated Docker resources.</p>
+<p>The helper reports stages, elapsed heartbeats, exit codes, and fixed error categories
+without printing raw SDK output. A heartbeat means the process is alive, not that
+an object was uploaded. It seeds repeated NAR content before the parallel copy to
+avoid create-only HEAD/PUT races within one publisher. This does not make multiple
+publishers safe. Unknown errors remain withheld; reproduce with synthetic local
+transport credentials rather than enabling verbose real-secret logs. Failures
+are fatal locally. No cache credentials are needed for list, dry-run, checkout
+verification, installation, or building from the upstream cache.</p>
+<h2 id="ci-timing-reports"><a class="header" href="#ci-timing-reports">CI timing reports</a></h2>
+<p><a href="/scripts/ci_timings.py"><code>scripts/ci_timings.py</code></a> collects GitHub job and step
+timings through <code>gh api</code> and renders inspectable graphs with raw data. The
+<code>CI result</code> job retains a report artifact and links it from the step summary.
+Reporting is best effort and does not replace the required result gate. Its live
+snapshot excludes unfinished jobs; deployments occur after validation and must
+not be counted as PR validation latency. Historical comparisons separate full
+successful validation from lightweight, failed, cancelled and manual runs.</p>
+<h2 id="secrets-doppler"><a class="header" href="#secrets-doppler">Secrets: Doppler</a></h2>
+<p>The rule is in <a href="/AGENTS%2Emd#dev-shell"><code>AGENTS.md</code></a>.</p>
+<ul>
+<li>Doppler project <code>coda-rust</code> has the parent configs <code>dev</code>, <code>stg</code> and <code>prd</code>. Locally, log in once with <code>doppler login</code> and prefix a command with <code>doppler run --</code>; <a href="/doppler.yaml"><code>doppler.yaml</code></a> selects <code>dev</code>, and the shell loads it when a login exists and continues when it does not. Creating a config is an operator step, and this repository stores no token and no secret value.</li>
+<li>Physician and Duet services read per-product, per-role child configs, never a parent, because a parent-scoped token would carry the other product’s secrets. <a href="gcp.html">GCP deployment</a> lists those configs and how each image starts under <code>doppler run</code>.</li>
+<li>The public marketing site reads no secrets and runs without Doppler. CI installs the pinned CLI only to verify it and fetches no secrets through it; GitHub jobs reach GCP through Workload Identity Federation.</li>
+<li><code>cargo run -p workspace-tools -- install-doppler OUTPUT_PATH</code> (<a href="/crates/workspace-tools/src/doppler.rs"><code>doppler.rs</code></a>) installs the pinned, checksum-verified CLI for images and runners.</li>
+</ul>
+<h2 id="retained-physician-infrastructure-references"><a class="header" href="#retained-physician-infrastructure-references">Retained physician infrastructure references</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Root</th><th>Owns</th><th>Owner document</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="/infra/gcp/physician-runtime"><code>infra/gcp/physician-runtime</code></a></td><td>The private GKE Autopilot cluster, Cloud SQL with IAM authentication, and the site and migration identities for <code>physician-sample</code> and <code>physician-auth</code></td><td><a href="/infra/gcp/physician-runtime/README%2Emd">README</a>, including its <code>tofu test</code> and <code>validate</code> commands</td></tr>
+<tr><td><a href="/infra/gcp/foundation"><code>infra/gcp/foundation</code></a></td><td>Shared project foundation</td><td><a href="/infra/gcp/foundation/main.tf"><code>main.tf</code></a></td></tr>
+<tr><td><a href="/infra/gcp/staging"><code>infra/gcp/staging</code></a></td><td>The hosted synthetic integration platform on Cloud Run</td><td><a href="/infra/gcp/staging/README%2Emd">README</a></td></tr>
+<tr><td><a href="/infra/gcp/clinical-evidence"><code>infra/gcp/clinical-evidence</code></a></td><td>The production Clinical Evidence runbook</td><td><a href="/infra/gcp/clinical-evidence/README%2Emd">README</a></td></tr>
+</tbody>
+</table>
+</div>
+<p>This workspace does not run <code>init</code> against a backend and does not apply these roots. Apply authority stays with the product repositories and the operator of the target project. <a href="gcp.html">GCP deployment</a> says what runs Duet production.</p>
+<h2 id="workspace-owned-roots"><a class="header" href="#workspace-owned-roots">Workspace-owned roots</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Root</th><th>Owns</th><th>Owner document</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="/infra/gcp/public-site"><code>infra/gcp/public-site</code></a></td><td>Public-site Cloud Run: staging behind IAP, production behind the load balancer without sign-in. This workspace owns both states and applies each only from a reviewed saved plan; production applies require explicit operator authorization.</td><td><a href="public-site.html#production-state-and-deployment">Public site</a></td></tr>
+<tr><td><a href="/infra/gcp/rust-environments"><code>infra/gcp/rust-environments</code></a></td><td>The isolated Rust Cloud Run environments for the physician and Duet services. It needs an administrator bootstrap before its first apply.</td><td><a href="gcp.html#rust-staging-bootstrap-and-deployment-gate">GCP deployment</a></td></tr>
+<tr><td><a href="/infra/gcp/shared-mail"><code>infra/gcp/shared-mail</code></a></td><td>Production mail only in <code>coda-health-prod</code>, with separate state and operator-approved saved-plan applies.</td><td><a href="/infra/gcp/shared-mail/README%2Emd">Production shared mail</a></td></tr>
+<tr><td><a href="/infra/gcp/observability"><code>infra/gcp/observability</code></a></td><td>The shared collector deployment</td><td><a href="observability.html">Observability</a></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="iphone-and-testflight"><a class="header" href="#iphone-and-testflight">iPhone and TestFlight</a></h2>
+<ul>
+<li>The Rust bindings for iPhone are in <a href="/platform/ios"><code>platform/ios</code></a> (see the <a href="crate-map.html#platform-bindings">crate map</a>).</li>
+</ul>
+<h2 id="android-and-google-play"><a class="header" href="#android-and-google-play">Android and Google Play</a></h2>
+<ul>
+<li><code>nix develop .#android</code> (<a href="/nix/android-shell.nix"><code>nix/android-shell.nix</code></a>) provides the Android SDK, NDK, emulator image, JDK and a Rust toolchain with the Android standard library. Run the commands below inside it.</li>
+<li><code>cargo run -p android -- build</code> (<a href="/crates/android/src/main.rs"><code>crates/android</code></a>) builds the debug APK for the <code>mobile</code> mode shell. <code>cargo run -p android -- avd</code> creates the <code>duet</code> AVD once, as CI does.</li>
+<li><code>cargo run -p duet-stub</code> serves the host stand-in that the emulator calls. <code>cargo run -p android -- window</code> opens the emulator, and <code>cargo run -p android -- test coda.duet.ModeShellTest</code> builds the APK and runs UI Automator (see <a href="/crates/android/src/main.rs"><code>crates/android</code></a>).</li>
+<li>CI’s <code>Android emulator</code> job runs <code>cargo run -p android -- test --headless coda.duet.ModeShellTest</code> on a headless emulator. For now it runs only when CI is dispatched by hand: Actions, CI, Run workflow, choosing the branch (or <code>gh workflow run ci.yml --ref &lt;branch&gt;</code>). Setting <code>MOBILE_ON_CHANGE</code> in <a href="/scripts/ci_scope.py"><code>scripts/ci_scope.py</code></a> makes pull requests and main pushes run it whenever a change touches the APK’s build.</li>
+<li>A debug APK is not a Play upload.</li>
+</ul>
+<hr>
+<ol class="footnote-definition">
+<li id="footnote-cyrene">
+<p>The <code>cyrene-coda</code> label is a disposable Firecracker microVM on Cyrene, the developer workstation. It runs the job in the <code>act</code> image (<code>catthehacker/ubuntu</code>) rather than GitHub’s, so a step that passes under <code>act</code> passes there, and it starts without GitHub’s runner cache, so <code>actions/cache</code> restores miss. On Cyrene, agents work in the <code>coda-agent</code> container: Cursor connects to it with Remote-SSH, the main checkout is <code>/agents/coda/src/coda-rust</code> (snapshotted hourly), and git, <code>gh</code> and <code>doppler</code> get a token limited to this repository (and a read-only <code>dev</code> Doppler token) from a token broker on the host, which reads them from the developer’s keyring, so no token sits in a file in the container. The container cannot reach the host, the LAN or Tailscale and has no Docker; <code>coda-sandbox ci run</code> queues its jobs on the same Firecracker runner. <code>coda-sandbox worktree new &lt;slug&gt;</code> makes each worktree under <code>.worktrees/&lt;slug&gt;</code> with a <code>target/</code> that is a reflink clone of a seed of third-party build output on the build root its config names (<code>/agents/coda/build</code> on Cyrene), so a worktree costs its source until a build diverges; <code>coda-sandbox worktree --help</code> lists the commands. Where <code>coda-sandbox</code> is not installed yet, run it from the checkout as <code>nix run ./crates/workspace-tools/sandbox -- worktree new &lt;slug&gt;</code>. The container, runner and their limits are described in <a href="/crates/workspace-tools/sandbox"><code>crates/workspace-tools/sandbox/README.md</code></a>, whose NixOS module declares them. <a href="#fr-cyrene-1">↩</a> <a href="#fr-cyrene-2">↩2</a></p>
+</li>
+</ol>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="observability.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="gcp.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="observability.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="gcp.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-09f2665d.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

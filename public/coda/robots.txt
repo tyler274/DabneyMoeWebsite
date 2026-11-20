@@ -1,0 +1,5 @@
+User-Agent: *
+Allow: /
+
+Host: https://dabney.moe
+Sitemap: https://dabney.moe/coda/sitemap.xml

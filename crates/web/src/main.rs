@@ -36,7 +36,7 @@ async fn main() {
     let addr = leptos_options.site_addr;
     let routes = generate_route_list(App);
 
-    let app = Router::new()
+    let app = web::mount_coda_static(Router::new(), &leptos_options.site_root)
         .route("/api/telemetry/errors", post(report_client_error))
         .leptos_routes(&leptos_options, routes, {
             let leptos_options = leptos_options.clone();

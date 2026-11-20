@@ -1,0 +1,773 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Public site - Coda Rust</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-490d032f.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-4caaaa21.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Coda Rust</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="public-site"><a class="header" href="#public-site">Public site</a></h1>
+<p><code>crates/public-site</code> is the Rust public marketing site. It serves <code>codahealth.ai</code>
+and <code>www.codahealth.ai</code> from <code>coda-health-prod</code>, and <code>staging.codahealth.ai</code> behind
+IAP from <code>coda-health-staging</code>. It is separate from the physician runtime and Duet:
+no database, physician accounts, model execution, or clinical types are introduced
+by the site. Sign-in exists only where <code>PHYSICIAN_APP_URL</code> is configured: that one
+setting mounts the same-origin <code>/physician/</code> proxy and renders the nav’s Sign in
+link. Staging sets it; production doesn’t, so production offers no sign-in and
+<code>/physician/</code> is an ordinary 404.</p>
+<h2 id="application-contract"><a class="header" href="#application-contract">Application contract</a></h2>
+<p>The application design is Dioxus route components prerendered at startup, served
+by a stateless axum binary. The sitemap lists only current documents; archived
+versions stay reachable from their policy pages.
+<code>/physicians</code> and <code>/api/physician-waitlist</code> are 404.</p>
+<p>Startup builds the page/asset tables and their identity, gzip and Brotli
+representations once; requests do not render Dioxus or query a database. The server
+serves content-addressed immutable assets and HTML with bounded public/shared-cache
+lifetimes, encoding-specific ETags, conditional requests and bodyless HEAD responses.
+Every response carries <code>Strict-Transport-Security: max-age=63072000</code>.
+Motion is <code>/homepage/site.js</code> on <code>/</code> and <code>/duet</code>. It also paints the landscapes,
+and the browser proof fails if the hero pointer jumps instead of gliding. The other
+stylesheets and scripts are layout or fallback only, never motion, and
+<code>tests/stylesheets.rs</code> holds <code>stage.css</code> and <code>noscript.css</code> to that: <code>stage.css</code>
+reserves and scales each product frame before the script runs (it then sets the
+same values inline), <code>noscript.css</code> reveals content when scripts are disabled, and
+<code>chrome.js</code> floats the nav after 8px of scroll. Reduced motion is decided by
+<code>site.js</code> at load.</p>
+<p>Chords, the physician product, and Duet, the patient product, are presented the same
+way. The Chords lockup on <code>/</code> introduces the physician product as the Duet lockup
+introduces the patient one: each product’s mark and wordmark (<code>brand/chords/</code>,
+<code>brand/duet/</code>) with its audience, in the <code>product</code> lockup styles, through one
+component (<code>ProductLockup</code> in <code>src/pages/brand.rs</code>). The footer’s link columns are
+Chords, Duet and Coda Health: each product’s pages under its name, and the company’s
+contact, privacy policy and terms, which cover the site and both products, under
+Coda Health.</p>
+<p>The Duet story (<code>src/pages/phones.rs</code>) shows Duet on <code>/</code> and <code>/duet</code> as one story
+across three phones. It reuses <code>site.css</code> phone hardware and the stage scaling and
+landscapes <code>site.js</code> applies to every frame, but its classes (<code>duet-story</code>, <code>ds-*</code>)
+are its own, so the phone loop in <code>site.js</code> never binds to it. Its styles are
+<code>css/duet.css</code>, every selector scoped to <code>.duet-story</code> (<code>tests/stylesheets.rs</code> checks
+this); its motion is <code>homepage/duet.js</code>, which plays only while the stage is on
+screen. The markup is the story’s last frame, which reduced-motion and no-script
+visitors see.</p>
+<p>Every page shares <code>chrome.css</code>, which owns the tokens, type, page opening, cards, nav
+and footer. Pages belong to one of two families (<code>Route::shell</code>) that differ in the
+stylesheets they load and the layout around their content. <code>/</code> and <code>/duet</code> add
+<code>site.css</code>, the motion script and the Duet story. Every other page, the legal
+documents and not-found, adds <code>css/document.css</code>, a hand-written
+stylesheet with its own reset and named classes for those pages, and sits in the
+<code>.page</code> layout, which keeps the footer at the foot of a short page. A trailing slash is removed with a 308 that keeps the
+query.</p>
+<p>Static export mode (<code>public-site --export-dir &lt;dir&gt; --base-path &lt;prefix&gt; --origin &lt;url&gt;</code>)
+renders the same startup pages, <code>404.html</code>, <code>sitemap.xml</code>, <code>robots.txt</code>, <code>.nojekyll</code>,
+and hashed/raw assets to disk for subpath hosting such as GitHub Pages (with the
+architecture book built alongside under <code>/book/</code> by <a href="/.github/workflows/pages.yml"><code>.github/workflows/pages.yml</code></a>).</p>
+<p>Legal documents are data. Each current document is one record in
+<code>data/&lt;document&gt;.json</code> holding every word of it: heading, title, intro, date and
+sections. That covers Duet’s privacy policy, terms and consumer health data policy,
+Coda Health’s privacy policy and terms, and Clinical Transparency. Each archived
+version is its own record in <code>data/archive/&lt;document&gt;/&lt;slug&gt;.json</code>, named by its slug,
+and does not change. Each block of a section’s body is an object with one key naming
+its kind: <code>paragraph</code>, <code>linked</code>, <code>list</code>, <code>table</code> or <code>source</code>. <code>src/legal.rs</code> types and
+loads the records, listing each archive’s versions newest first, and
+<code>src/pages/legal.rs</code> renders them. Startup stops, naming the file and the fault, when
+a record has a missing, renamed or repeated field or a link that isn’t one of the
+site’s pages. Legal pages’ titles and descriptions are
+in <code>src/route.rs</code>, with every other page’s. Legal wording changes with its normal
+legal review.</p>
+<p>Staging applies its origin IAP gate to pages, assets, redirects, health routes
+and errors. Responses force <code>private, no-store, max-age=0</code>, CDN-specific no-store
+headers, <code>Vary: *</code> and <code>X-Robots-Tag: noindex, nofollow</code>. IAP authenticates the
+user in front of Cloud Run. The origin still verifies the signed
+<code>x-goog-iap-jwt-assertion</code> header on every request in
+<a href="/crates/public-site/src/access.rs"><code>access.rs</code></a>, against the exact audience
+<code>/projects/NUMBER/locations/REGION/services/NAME</code>. That is the direct Cloud Run
+signed-header audience, not an OAuth client ID or URL. It does not trust the
+signature-free <code>x-goog-authenticated-user-*</code> headers, and it does not let IAP’s
+presence stand in for verification. When a key refresh fails, cached keys are not
+used, so the request is denied.</p>
+<p>Missing or invalid assertions return 403. A staging process with a missing or
+malformed audience refuses to start. Cloudflare Access variables, headers and
+service tokens authorize nothing. An optional separate loopback-only probe listener
+serves no site content. Local tests prove this application boundary with a public
+test-only key. They do not prove a deployed IAP configuration; member, nonmember
+and direct-origin checks are deployment checks.</p>
+<p>Runtime configuration:</p>
+<ul>
+<li><code>PUBLIC_SITE_LISTEN_ADDR</code>: local default <code>127.0.0.1:8791</code>; the image and Cloud
+Run root explicitly set <code>0.0.0.0:8080</code>.</li>
+<li><code>PHYSICIAN_APP_URL</code>: optional fixed upstream origin for <code>/physician/</code>, not the
+browser navigation link. When set, the site mounts <code>/physician/</code> and the nav offers
+Sign in; when unset, neither exists. There is no default: a local run against the
+sample physician server sets <code>http://127.0.0.1:8790</code>. Deployed values must use
+HTTPS; credentials, non-root paths, queries and fragments are rejected.</li>
+<li><code>OBSERVABILITY_RELAY_URL</code>: staging only, optional. It is the fixed HTTPS origin of
+the observability relay. When set, the site mounts <code>/grafana/</code>
+(see <a href="#observability-mounts">Observability mounts</a>); when unset, it is 404.
+It has the same validation as <code>PHYSICIAN_APP_URL</code>.</li>
+<li><code>PHYSICIAN_PROXY_SERVICE_ACCOUNT</code>: service identity used for keyless upstream
+IAP authentication. Required in staging whenever <code>PHYSICIAN_APP_URL</code> or
+<code>OBSERVABILITY_RELAY_URL</code> is set.
+No browser credential supplies this value.</li>
+<li><code>PUBLIC_SITE_ORIGIN</code>: optional exact browser origin for the physician proxy’s
+unsafe-method Origin validation. Defaults to <code>https://staging.codahealth.ai</code> in staging,
+<code>https://codahealth.ai</code> in production, and the local listener origin otherwise.
+Unspecified local bind addresses (<code>0.0.0.0</code> or <code>::</code>) map to the corresponding
+loopback browser host. Alternate hosts or mapped container ports must set this
+origin explicitly so unsafe-method Origin checks match the browser.</li>
+<li><code>APP_ENV</code>: deployment root permits only <code>staging</code> or <code>production</code>; staging
+selects the origin IAP gate. Do not use a misspelled environment to disable it.</li>
+<li><code>RELEASE_SHA</code>: full Git revision, supplied at runtime for the health response.</li>
+<li><code>PUBLIC_SITE_IAP_AUDIENCE</code>: required for staging. The deployment root sets it
+from the project number, region and service name, and it is not a secret.
+Production and local runs do not read it.</li>
+<li><code>STAGING_HEALTH_TOKEN</code>: when configured, <code>/api/health</code> requires it in addition
+to a valid IAP assertion; it is not an IAP bypass.</li>
+<li><code>PUBLIC_SITE_MAX_CONCURRENCY</code>: default 1024, accepted range 1–65536; excess
+concurrent requests receive 503 with <code>Retry-After: 1</code>.</li>
+<li><code>PUBLIC_SITE_REQUEST_TIMEOUT_MS</code>: static-site response deadline; default 5000,
+accepted range 100–30000. <code>/physician/</code> and <code>/grafana/</code> requests have one 60-second deadline
+through authentication, upstream startup and response headers. The proxy
+does not impose a second deadline, and streaming response bodies are not
+capped by this header deadline.</li>
+<li><code>PUBLIC_SITE_INTERNAL_PROBE_ADDR</code>: optional, loopback-only probe address.</li>
+</ul>
+<p>Local startup (from the workspace root):</p>
+<pre><code class="language-bash">nix develop --command cargo run -p public-site --bin public-site
+</code></pre>
+<p>Use the shell’s Chromium (or set <code>CHROMIUM</code> to the approved browser executable).
+The default startup uses port 8791; choose another <code>PUBLIC_SITE_LISTEN_ADDR</code> if a
+preview already owns it rather than stopping that preview.</p>
+<h2 id="physician-entry-point"><a class="header" href="#physician-entry-point">Physician entry point</a></h2>
+<p>Production configures no physician upstream. Configuring one there requires
+qualified production physician authentication first; production must not expose
+unconfigured proof-token delivery.</p>
+<p>The proxy must preserve physician bearer authorization, query strings and streamed
+responses without forwarding browser cookies, caller-supplied service credentials
+or IAP identity assertions to the upstream. Upstream IAP authentication is a
+separate service-account credential in <code>Proxy-Authorization</code>, not a replacement
+for the physician <code>Authorization</code> header. The public origin’s verified IAP gate
+remains mandatory for all staging proxy requests. Missing service credentials or
+failed refreshes fail closed; neither IAP boundary may be disabled to make the
+proxy work.</p>
+<p>The credential flow is keyless: IAM Credentials <code>signJwt</code>, using the public-site
+runtime identity, a short-lived JWT scoped to the configured physician origin, and
+a self-scoped signing permission. The custom role <code>publicSitePhysicianProxySigner</code>
+(<code>iam.serviceAccounts.signJwt</code> only) is bound runtime-to-itself; the
+<a href="#staging-admin-bootstrap">staging admin bootstrap</a>’s <code>--physician-proxy</code> flag
+creates it. This permission is identity-signing authority, <strong>not</strong> an IAM
+restriction to one audience. The physician infrastructure owner grants that runtime
+identity IAP access to <strong>only</strong> the physician service through its authoritative
+<code>physician_proxy_invokers</code> binding; public-site infrastructure does not compete
+with that binding. No service-account private key or token belongs in source, URLs,
+browser state or logs.</p>
+<p><code>/physician/</code> is not a browser security boundary: marketing scripts on the same origin
+can access the physician session stored in local storage. The entire origin
+must therefore be treated as trusted physician-session code. Proxy responses
+must never enter public or CDN caches. Cloud Run streams are finite; clients
+reconnect rather than relying on a longer request timeout.</p>
+<h2 id="observability-mounts"><a class="header" href="#observability-mounts">Observability mounts</a></h2>
+<p>In staging, <code>/grafana/</code> is proxied to the IAP-protected <code>observability-relay</code>
+Cloud Run service (<a href="/crates/observability-relay"><code>crates/observability-relay</code></a>),
+which forwards it to Grafana’s internal load balancer
+(<a href="/infra/gcp/observability/README%2Emd#staging-proxy">observability README</a>).
+Langfuse is the hosted HIPAA cloud project and has no mount. Each mount is a
+policy in <a href="/crates/public-site/src/proxy.rs"><code>proxy.rs</code></a>; <code>/grafana/</code> differs
+from <code>/physician/</code> as follows:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Mount</th><th>Path</th><th>Cookies</th><th>Identity forwarded</th></tr>
+</thead>
+<tbody>
+<tr><td><code>/physician/</code></td><td>prefix stripped; <code>Location</code> rewritten back under it</td><td>none</td><td>none</td></tr>
+<tr><td><code>/grafana/</code></td><td>prefix kept; <code>Location</code> must stay under <code>/grafana</code> on the public origin, otherwise 502</td><td>none, because Grafana signs in from the assertion on every request</td><td>the caller’s verified IAP assertion as <code>X-Coda-IAP-Assertion</code></td></tr>
+<tr><td>The site drops any <code>X-Coda-IAP-Assertion</code> that the client sent before it forwards</td><td></td><td></td><td></td></tr>
+<tr><td>the verified one. It also drops every <code>x-goog-*</code> header and the hop-by-hop</td><td></td><td></td><td></td></tr>
+<tr><td>headers. Like <code>/physician/</code>, the Grafana mount authenticates to the relay with a JWT</td><td></td><td></td><td></td></tr>
+<tr><td>signed for the site’s own service account, sent as <code>Proxy-Authorization</code>. The</td><td></td><td></td><td></td></tr>
+<tr><td>responses are <code>no-store</code> with <code>Vary: *</code>. The relay’s own IAP admits only the</td><td></td><td></td><td></td></tr>
+<tr><td>engineering group and the accounts in <code>rust-environments</code>’</td><td></td><td></td><td></td></tr>
+<tr><td><code>observability_proxy_invokers</code>. The relay checks its own IAP assertion again</td><td></td><td></td><td></td></tr>
+<tr><td>before forwarding. The proxy carries no WebSockets, so Grafana Live is off.</td><td></td><td></td><td></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="image"><a class="header" href="#image">Image</a></h2>
+<p><code>crates/public-site/Dockerfile</code> builds a static <code>x86_64-unknown-linux-musl</code> binary
+and copies it into distroless static Debian 12 as UID/GID 65532. Builder/runtime
+images are digest-pinned, Cargo uses <code>--locked</code>, and no mutable OS package
+installation occurs during the build. Only workspace manifests/crates are copied,
+not reference submodules, local credentials, or Terraform state. The binary is
+checked for a dynamic ELF interpreter during the build.
+Pinned inputs improve repeatability; bit-for-bit image reproducibility is not
+claimed without a repeated-build comparison.</p>
+<p>The server embeds <code>assets/</code>, including the motion script <code>/homepage/site.js</code>, so
+<code>docker build</code> alone produces the complete site; there is no separate motion build.</p>
+<p>The site reads no secrets, so it has no Doppler config, token or Secret Manager
+access. Cloud Run runs the image’s own <code>/public-site</code> entrypoint, exactly as the
+local smoke tests do, with the deployment-controlled environment values above set
+directly. The dedicated service account has no database, physician or secret access.</p>
+<h3 id="private-registries-only"><a class="header" href="#private-registries-only">Private registries only</a></h3>
+<p>No image is pulled from or pushed to a public registry. The three staging
+repositories are private Artifact Registry Docker repositories in
+<code>coda-health-staging</code>, <code>us-east1</code>, with Google-managed encryption. Production has
+one, <code>public-site</code> in <code>coda-health-prod</code>, which holds digests copied from staging’s.
+The admin bootstraps create them and refuse to continue if any grants <code>allUsers</code> or
+<code>allAuthenticatedUsers</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Repository</th><th>Mode</th><th>Holds</th><th>Readers / writers</th></tr>
+</thead>
+<tbody>
+<tr><td><code>public-site</code></td><td>standard, immutable tags</td><td>site release images</td><td>CI deployer writes; runtime SA <code>public-site-staging@</code> reads</td></tr>
+<tr><td><code>public-site-dockerhub</code></td><td>remote, preset upstream <code>docker-hub</code></td><td>pull-through cache of <code>library/rust</code></td><td>CI deployer and <code>gcp-engineering@</code> read</td></tr>
+<tr><td><code>public-site-base</code></td><td>standard, immutable tags</td><td>digest copy of <code>gcr.io/distroless/static-debian12:nonroot</code></td><td>CI deployer and <code>gcp-engineering@</code> read</td></tr>
+</tbody>
+</table>
+</div>
+<p>The Dockerfile names each base image by registry path (a build <code>ARG</code>) plus a
+fixed digest, and the defaults are the private repositories. An override changes
+only where a base image is fetched from. The digest stays fixed, so a different
+registry must serve identical content or the build fails.</p>
+<p>Distroless is a one-time copy by digest into a standard immutable repository
+rather than a remote repository, so builds never contact <code>gcr.io</code> and the copy
+cannot later change.</p>
+<p>The bootstrap grants the runtime SA reader on <code>public-site</code> alone, so that
+identity’s image access is explicit and limited to that repository. OpenTofu
+rejects any <code>image</code> outside <code>REGION-docker.pkg.dev/PROJECT_ID/public-site/</code> that
+is not digest-pinned (see <a href="#checks">Checks</a>).</p>
+<p><strong>Local builds.</strong> Engineers in <code>gcp-engineering@codahealth.ai</code> read the two
+base-image repositories. Authenticate Docker once through gcloud’s credential
+helper; no key file or password is involved:</p>
+<pre><code class="language-bash">nix develop
+gcloud auth login
+gcloud auth configure-docker us-east1-docker.pkg.dev
+docker build --platform=linux/amd64 \
+  -f crates/public-site/Dockerfile -t public-site:local .
+docker run --rm -p 127.0.0.1:8791:8080 public-site:local
+</code></pre>
+<p>Where <code>*.pkg.dev</code> does not resolve, a developer can build from the same digests at
+their public origin. This is for local use only and must never publish a release:</p>
+<pre><code class="language-bash">docker build --platform=linux/amd64 \
+  --build-arg RUST_REPO=docker.io/library/rust \
+  --build-arg RUNTIME_REPO=gcr.io/distroless/static-debian12 \
+  -f crates/public-site/Dockerfile -t public-site:local .
+</code></pre>
+<h2 id="infrastructure-staging-iap-production-load-balancer"><a class="header" href="#infrastructure-staging-iap-production-load-balancer">Infrastructure: staging IAP, production load balancer</a></h2>
+<p><code>infra/gcp/public-site</code> is an isolated OpenTofu root. It owns public-site staging
+and production state through a partial GCS backend, one file per environment (see
+<a href="#staging-state-and-deployment">Staging state and deployment</a> and
+<a href="#production-state-and-deployment">Production state and deployment</a>).
+Both environments get a separate Cloud Run service and a dedicated service account.
+The root creates no DNS records, project, API enablement, service identity, Google
+Group, database, or physician runtime dependency. Production’s one certificate is the
+Certificate Manager certificate described below. Its scaling defaults are bounded
+configuration, not demonstrated load capacity. Startup uses a TCP probe on port 8080
+rather than an unauthenticated HTTP health route.</p>
+<p><strong>Staging</strong> (<code>environment = "staging"</code>, the default) uses direct Cloud Run IAP and
+no load balancer:</p>
+<ul>
+<li><code>iap_enabled = true</code>, ingress <code>INGRESS_TRAFFIC_ALL</code>, the <code>run.app</code> URL
+enabled (output <code>staging_url</code>) and <code>invoker_iam_disabled = false</code>.</li>
+<li>The only <code>roles/run.invoker</code> member is the project’s IAP service agent,
+<code>service-PROJECT_NUMBER@gcp-sa-iap.iam.gserviceaccount.com</code>. It is set through
+an authoritative binding on this service only. There is no <code>allUsers</code> grant,
+and CI or deployer identities get no implicit website access.</li>
+<li>The only <code>roles/iap.httpsResourceAccessor</code> member is
+<code>group:gcp-engineering@codahealth.ai</code> (variable <code>iap_group</code>). This is also an
+authoritative binding on this service only, not a project or domain grant.</li>
+<li><code>PUBLIC_SITE_IAP_AUDIENCE</code> comes from <code>project_number</code>, <code>region</code> and the service
+name, and it is set directly on the container. The output
+<code>iap_audience</code> exposes the same value.</li>
+<li><code>staging_domain</code> optionally maps a verified hostname to this same service.
+<code>env/staging.tfvars</code> sets it to <code>staging.codahealth.ai</code>. Cloud Run manages TLS;
+the Cloudflare <code>staging</code> record is a DNS-only CNAME to <code>ghs.googlehosted.com</code>, as
+<code>staging_domain_records</code> returns. Native IAP remains the access owner on both
+hostnames.</li>
+</ul>
+<p><strong>Production</strong> (<code>environment = "production"</code>) serves the same image behind a load
+balancer. Ingress is <code>INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER</code> and the <code>run.app</code> URI
+is disabled. It uses a serverless NEG, a global external managed HTTPS load
+balancer, an HTTP frontend on the same address that answers every request with a
+308 to HTTPS (host, path and query kept), a MODERN / TLS 1.2 policy, Cloud CDN, and
+the Cloud Run invoker check turned off (<code>invoker_iam_disabled</code>), because the ALB
+does not authenticate and the organization’s domain restriction forbids an
+<code>allUsers</code> grant; ALB-only ingress and the disabled <code>run.app</code> URL are the boundary.
+TLS comes from one Google-managed Certificate Manager certificate for <code>domains</code>
+(apex and www), attached through a certificate map with an entry per hostname. It
+is authorized by the DNS records the <code>certificate_dns_records</code> output lists, not by
+serving traffic, and those records also renew it. Production without <code>domains</code> is
+rejected. IAP is off. No Cloud Run custom-domain mapping is created for production.</p>
+<h3 id="cloud-cdn-and-staging-safety"><a class="header" href="#cloud-cdn-and-staging-safety">Cloud CDN and staging safety</a></h3>
+<p>IAP and Cloud CDN cannot be enabled together on one backend. That is one reason
+staging uses direct Cloud Run IAP with no backend service.</p>
+<ul>
+<li><strong>Production:</strong> Cloud CDN is enabled with <code>USE_ORIGIN_HEADERS</code>, no forced
+caching and no negative caching. The server emits the cache headers described
+above; the infrastructure does not manufacture application cacheability.</li>
+<li><strong>Staging:</strong> there is no load balancer or Cloud CDN, and no variable can add
+them. Origin responses are <code>no-store</code>, so no upstream layer may cache protected
+content. There is no Cloudflare dependency.</li>
+</ul>
+<h2 id="checks"><a class="header" href="#checks">Checks</a></h2>
+<p>Site checks, from the workspace root:</p>
+<pre><code class="language-bash">nix develop --command cargo test --locked -p public-site
+nix develop --command cargo test --locked -p public-site --test site -- --ignored --nocapture
+nix develop --command mdbook build book
+</code></pre>
+<p>Routine CI does not launch browsers. The <code>site</code> browser test is ignored by default;
+run the explicit command above or manually dispatch the CI workflow for browser
+qualification.</p>
+<p>Infrastructure checks initialize without the backend (<code>-backend=false</code>), so they
+need no ADC credentials and make no live GCP API calls. Do not initialize the other
+GCP roots from this workspace.</p>
+<pre><code class="language-bash">nix develop --command tofu -chdir=infra/gcp/public-site init -backend=false -input=false
+nix develop --command tofu -chdir=infra/gcp/public-site fmt -check -recursive
+nix develop --command tofu -chdir=infra/gcp/public-site validate
+nix develop --command tofu -chdir=infra/gcp/public-site test
+</code></pre>
+<p>The generated <code>.terraform.lock.hcl</code> belongs in version control. These checks
+validate resource contracts, not cloud permissions, API enablement, IAP brand/OAuth
+configuration, group membership, regional quotas, autoscaling behavior, application
+health, or a real deployment.</p>
+<p>The image smoke builds and runs the image locally:</p>
+<pre><code class="language-bash">nix develop --command docker build --platform=linux/amd64 \
+  -f crates/public-site/Dockerfile -t public-site:deployment-check .
+nix develop --command python infra/gcp/public-site/smoke.py public-site:deployment-check
+</code></pre>
+<p><code>smoke.py</code> runs the image in disposable, locked-down containers three ways: as
+production does, with a physician upstream, and in staging mode. It has no signed
+positive path: signed allow, key rotation and fetch failure are proven only by Rust
+tests with a public test key. It does not replace the browser animation tests, a
+deep secret scan of embedded source assets, a load test, cloud ingress verification,
+or a deployment.</p>
+<h3 id="local-load-check"><a class="header" href="#local-load-check">Local load check</a></h3>
+<p><code>crates/public-site/load_check.py</code> starts only disposable loopback listeners. It
+neither targets arbitrary URLs nor starts model/data services.</p>
+<pre><code class="language-bash">nix develop --command env -u RUSTC_WRAPPER -u RUSTC_WORKSPACE_WRAPPER \
+  -u RUSTFLAGS -u CARGO_ENCODED_RUSTFLAGS \
+  cargo build --locked --release -p public-site --bin public-site
+nix develop --command python crates/public-site/load_check.py
+</code></pre>
+<p>Output goes under <code>target/public-site-load/</code> (<code>--output</code> chooses another directory).
+The results are closed-loop, fixed-concurrency numbers from the machine that runs
+them, with no TLS, CDN, browser or Brotli. They don’t establish Cloud Run capacity,
+behavior above the request-permit limit, or a single-digit-millisecond p99.</p>
+<h2 id="staging-state-and-deployment"><a class="header" href="#staging-state-and-deployment">Staging state and deployment</a></h2>
+<p>This root owns public-site staging state. The physician roots under <code>infra/gcp</code>
+keep their product-repository apply authority; this ownership covers only
+<code>infra/gcp/public-site</code> with <code>environment = "staging"</code>.</p>
+<ul>
+<li><strong>State.</strong> <code>backend "gcs" {}</code> is partial. <code>backend/staging.gcs.tfbackend</code>
+selects a dedicated staging bucket. Staging state never lives in a
+<code>coda-health-prod</code> bucket, so the CI deployer needs no production-project IAM.</li>
+<li><strong>Inputs.</strong> <code>env/staging.tfvars</code> holds the non-secret staging inputs: the last
+operator-reviewed image digest in the private <code>public-site</code> repository, release
+SHA, and <code>physician_app_url</code>, the physician preview service in <code>coda-rust-staging</code>
+behind its own IAP. Setting it mounts <code>/physician/</code>, renders Sign in and gives the
+runtime its proxy signing identity. <code>observability_relay_url</code> (staging only) is
+<code>rust-environments</code>’ <code>observability_relay.url</code>; setting it mounts <code>/grafana/</code>
+with the same signing identity.</li>
+<li><strong>No Doppler.</strong> The running site and its deploy read no Doppler config and no
+secret; these files and the CI inputs are the only deploy values.</li>
+</ul>
+<h3 id="staging-admin-bootstrap"><a class="header" href="#staging-admin-bootstrap">Staging admin bootstrap</a></h3>
+<p><code>infra/gcp/public-site/scripts/staging-admin-bootstrap.sh</code> is run by an
+administrator of <code>coda-health-staging</code>, not by the deployer. It prepares only
+what the root deliberately does not own: APIs, the state bucket, the
+<a href="#private-registries-only">private repositories</a> and their base images, the keyless
+CI deployer with resource-scoped roles, and GitHub Workload Identity Federation
+limited to this repository’s <code>main</code> branch and <code>staging</code> environment. Each create
+step checks first, so it is safe to rerun. It prints every command and never
+touches <code>coda-health-prod</code>. Review it with <code>--print</code> first; that mode makes no
+gcloud calls.</p>
+<pre><code class="language-bash"># From the workspace root, inside the dev shell, as the staging admin:
+nix develop
+gcloud auth login                     # the admin's account
+bash infra/gcp/public-site/scripts/staging-admin-bootstrap.sh --print
+bash infra/gcp/public-site/scripts/staging-admin-bootstrap.sh   # needs docker (buildx)
+# OPTIONAL, only if DEPLOYER_USER should run a first apply (expires in 24 h):
+bash infra/gcp/public-site/scripts/staging-admin-bootstrap.sh --temporary-deployer-grant
+# After a first apply, rerun once to add the service-scoped CI bindings:
+bash infra/gcp/public-site/scripts/staging-admin-bootstrap.sh
+</code></pre>
+<p><code>--physician-proxy</code> also creates the <a href="#physician-entry-point">proxy signing role</a> and
+binds it runtime-to-itself. Expired temporary grants grant nothing; remove them
+afterwards with <code>remove-iam-policy-binding ... --all</code>.</p>
+<p>CI gets no <code>iam.serviceAccountAdmin</code> (it never creates or edits the runtime
+account: a first apply is a human apply), no project-wide <code>run.admin</code>,
+<code>iap.admin</code> or <code>actAs</code>, and no <code>run.invoker</code> or <code>iap.httpsResourceAccessor</code>, so
+it has no website access. The service-scoped grants need the service and runtime
+account to exist; the script skips them until then and adds them on a rerun.
+Tofu’s authoritative bindings cover only <code>roles/run.invoker</code> and
+<code>roles/iap.httpsResourceAccessor</code>, so they do not remove these grants.</p>
+<p>A Google Workspace or Cloud Identity admin can confirm the IAP group exists and
+whether <code>DEPLOYER_USER</code> is in it (read-only):</p>
+<pre><code class="language-bash">bash infra/gcp/public-site/scripts/staging-admin-bootstrap.sh --check-group
+</code></pre>
+<h3 id="ci-deploy-on-push-to-main"><a class="header" href="#ci-deploy-on-push-to-main">CI deploy on push to main</a></h3>
+<p>The <code>deploy-public-site-staging</code> job in
+<a href="/.github/workflows/ci.yml"><code>.github/workflows/ci.yml</code></a> redeploys staging from
+pushes to <code>main</code> selected for full validation, after <code>CI result</code> passes.
+Engineering-skills/docs-only pushes skip deployment. It runs only when the repository variable
+<code>PUBLIC_SITE_STAGING_DEPLOY</code> is <code>enabled</code>; unset it to stop deploys without
+editing the workflow. The GitHub <code>staging</code> environment allows only the <code>main</code>
+branch to deploy, which matches the provider’s attribute condition. The job:</p>
+<ol>
+<li>Builds <code>crates/public-site/Dockerfile</code> with the private base-image defaults
+and runs <code>smoke.py</code> on the result.</li>
+<li>Pushes the image to <code>public-site/public-site:&lt;sha&gt;</code>. Tags are immutable, so a
+rerun of the same commit reuses the digest it already published.</li>
+<li>Runs <code>tofu plan</code> with <code>env/staging.tfvars</code> plus <code>-var image=&lt;digest&gt;</code> and
+<code>-var release_sha=&lt;sha&gt;</code>, and fails unless the saved plan is empty or an
+in-place update of <code>google_cloud_run_v2_service.site</code> alone. Then it applies
+that saved plan.</li>
+<li>Requires the latest revision to be Ready, serve 100% of traffic and report
+the new digest. It also requires anonymous requests to the run.app homepage
+and <code>/health</code> and to <code>staging.codahealth.ai</code> to redirect to Google sign-in.</li>
+</ol>
+<p>CI and deployment identities have no website-access grant, so the job checks only
+that anonymous requests are sent to sign-in; an authenticated render is a manual
+check by a member of <code>gcp-engineering@codahealth.ai</code>.</p>
+<p><code>env/staging.tfvars</code> keeps the last operator-reviewed digest; a local plan run
+from it after a CI deploy shows the image going back. Pass the current digest
+with <code>-var image=...</code> (read it from <code>gcloud run services describe</code>) when
+planning by hand. A plan that changes anything beyond the service, such as IAM or
+the domain mapping, stops at the CI guard and needs an operator apply from a
+reviewed saved plan.</p>
+<h3 id="operator-apply"><a class="header" href="#operator-apply">Operator apply</a></h3>
+<p>Run from the workspace root as the staging admin, or as <code>DEPLOYER_USER</code> while a
+temporary grant is valid:</p>
+<pre><code class="language-bash">nix develop
+export GOOGLE_OAUTH_ACCESS_TOKEN="$(gcloud auth print-access-token --project=coda-health-staging)"
+tofu -chdir=infra/gcp/public-site init -input=false -reconfigure \
+  -backend-config=backend/staging.gcs.tfbackend
+tofu -chdir=infra/gcp/public-site plan -input=false \
+  -var-file=env/staging.tfvars -var image=CURRENT_DIGEST_REF -out=staging.tfplan
+# Review the saved plan, then apply only that plan; never apply production here.
+tofu -chdir=infra/gcp/public-site apply staging.tfplan
+tofu -chdir=infra/gcp/public-site output staging_url
+</code></pre>
+<p>After a first apply, rerun the bootstrap so CI gets its service-scoped roles. A new
+staging environment is live only when a member of the engineering group is allowed,
+a nonmember denied, an unauthenticated direct <code>run.app</code> request redirected to
+sign-in, and no protected content served from a cache, on both
+<code>staging.codahealth.ai</code> and the <code>run.app</code> URL.</p>
+<h2 id="production-state-and-deployment"><a class="header" href="#production-state-and-deployment">Production state and deployment</a></h2>
+<p>Production serves the image staging tested, without sign-in, at <code>codahealth.ai</code>
+and <code>www.codahealth.ai</code> from <code>coda-health-prod</code>. Operator applies and DNS changes
+require explicit operator authorization.</p>
+<ul>
+<li><strong>State.</strong> <code>backend/production.gcs.tfbackend</code> selects a dedicated state bucket,
+as staging has its own. The deployer has no access to the shared production state
+bucket: Cloud Storage cannot narrow object listing to a prefix with an IAM
+condition.</li>
+<li><strong>Inputs.</strong> <code>env/production.tfvars</code> holds the non-secret production inputs: the
+project and number, and <code>domains</code>. It sets no <code>physician_app_url</code>, so production
+has no Sign in link and no <code>/physician/</code> mount. <code>image</code> and <code>release_sha</code> are
+supplied per release: the digest staging tested and its commit.</li>
+<li><strong>DNS.</strong> In the <code>codahealth.ai</code> Cloudflare zone, <code>codahealth.ai</code> and
+<code>www.codahealth.ai</code> are DNS-only A records to the root’s <code>load_balancer_ip</code>. The
+<code>_acme-challenge</code> CNAMEs from <code>certificate_dns_records</code> stay in place: Certificate
+Manager renews the certificate through them. The zone’s other records belong to
+other owners.</li>
+</ul>
+<h3 id="production-admin-bootstrap"><a class="header" href="#production-admin-bootstrap">Production admin bootstrap</a></h3>
+<p><code>scripts/production-admin-bootstrap.sh</code> prepares what the root does not own: APIs,
+the state bucket, the private image repository, the keyless
+<code>public-site-prod-deployer</code> account, and a Workload Identity Federation provider
+accepting only <code>tyler274/coda-rust</code> on <code>refs/heads/main</code> in the <code>production</code>
+environment. An administrator of <code>coda-health-prod</code> runs it with explicit operator authorization;
+one step needs an administrator of <code>coda-health-staging</code>. <code>--print</code> shows every
+command without calling gcloud. It is safe to rerun, and a first apply is followed by
+a rerun for the bindings that need the service and runtime account to exist.</p>
+<p>The deployer gets no compute, certificate or IAM admin role: promotion cannot change
+the load balancer, TLS or identities, only clear the CDN. The GitHub <code>production</code>
+environment admits only <code>main</code> and has no required reviewer.</p>
+<h3 id="promotion"><a class="header" href="#promotion">Promotion</a></h3>
+<p><a href="/.github/workflows/promote-public-site.yml"><code>promote-public-site.yml</code></a> is manual
+(<code>workflow_dispatch</code> on <code>main</code>, input <code>release_sha</code>) and runs in the <code>production</code>
+environment. Starting a run is the approval: anyone with write access to the
+repository can promote a commit staging already built and tested. It:</p>
+<ol>
+<li>requires a full SHA that is on <code>main</code> and a successful “Deploy public site to
+staging” job for that push, so the image was deployed and verified on staging,
+not only built. Skills/docs-only pushes skip that job, so promote the latest
+commit staging actually deployed;</li>
+<li>finds the image the staging deploy tagged with that commit (tags are immutable)
+and copies that digest into the production repository unchanged;</li>
+<li>plans the production root with <code>env/production.tfvars</code>, that image and that SHA,
+and fails if the plan changes anything but an in-place update of the Cloud Run
+service. Load balancer, certificate, IAM and identity changes are operator applies;</li>
+<li>applies the saved plan and checks the Ready revision serves the digest with all
+traffic;</li>
+<li>clears the CDN and waits for it to finish;</li>
+<li>pins <code>codahealth.ai</code> and <code>www.codahealth.ai</code> to the load balancer IP with
+<code>curl --resolve</code> and checks each: <code>/api/health</code> reports production and the SHA,
+the homepage sends production’s HSTS and offers no Sign in, <code>/physician/today</code> is
+404, and plain HTTP answers 308 to the same HTTPS URL.</li>
+</ol>
+<p>The CDN is cleared because its cached HTML names hashed CSS and JS the new image no
+longer serves, which would load unstyled pages. Clearing the CDN does not clear
+browsers, so a returning visitor may see one unstyled load before the next load is
+current.</p>
+<h3 id="recovery"><a class="header" href="#recovery">Recovery</a></h3>
+<p>Recovery is a promotion of an earlier staging-tested commit: run the promotion
+workflow with that commit’s SHA.</p>
+<h3 id="rebuilding-production"><a class="header" href="#rebuilding-production">Rebuilding production</a></h3>
+<p>Each step requires explicit operator authorization at the time it runs.</p>
+<ol>
+<li>
+<p>Run the <a href="#production-admin-bootstrap">production admin bootstrap</a>.</p>
+</li>
+<li>
+<p>Copy the staging-tested digest into the production repository as the workflow
+does, then, as an administrator:</p>
+<pre><code class="language-bash">tofu -chdir=infra/gcp/public-site init -backend-config=backend/production.gcs.tfbackend
+tofu -chdir=infra/gcp/public-site plan -var-file=env/production.tfvars \
+  -var image=IMAGE@DIGEST -var release_sha=SHA -out=production.tfplan
+tofu -chdir=infra/gcp/public-site apply production.tfplan   # after review
+</code></pre>
+<p>Rerun the bootstrap for the bindings that need the service and runtime account.</p>
+</li>
+<li>
+<p>Add the <code>certificate_dns_records</code> CNAMEs in Cloudflare, DNS only, and wait until
+<code>gcloud --project=coda-health-prod certificate-manager certificates describe public-site-production</code> reports the certificate <code>ACTIVE</code>.</p>
+</li>
+<li>
+<p>Run the promotion workflow for the same SHA. Its plan is a no-op and its readback
+checks both hostnames through the load balancer before DNS points there. Also
+look at the site in a browser pinned to the load balancer IP.</p>
+</li>
+<li>
+<p>Point the apex and <code>www</code> A records at <code>load_balancer_ip</code>, DNS only, and check
+public DNS answers and the live responses.</p>
+</li>
+</ol>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="physician-site.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="patient-bank.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="physician-site.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="patient-bank.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-09f2665d.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

@@ -58,6 +58,34 @@ pub fn ToolsMenu() -> impl IntoView {
                     class="absolute right-0 z-50 mt-2 min-w-56 rounded-xl border border-white/10 bg-slate-900 py-2 shadow-xl"
                     role="menu"
                 >
+                    <a
+                        href="/coda/"
+                        on:click=move |ev| {
+                            #[cfg(any(feature = "csr", feature = "hydrate"))]
+                            if crate::sections::open_site_or_external("/coda/") {
+                                ev.prevent_default();
+                            }
+                            close(ev);
+                        }
+                        class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white"
+                        role="menuitem"
+                    >
+                        "Coda Clinical Workspace"
+                    </a>
+                    <a
+                        href="/coda/physician/"
+                        on:click=move |ev| {
+                            #[cfg(any(feature = "csr", feature = "hydrate"))]
+                            if crate::sections::open_site_or_external("/coda/physician/") {
+                                ev.prevent_default();
+                            }
+                            close(ev);
+                        }
+                        class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white"
+                        role="menuitem"
+                    >
+                        "Coda Physician Demo (WASM)"
+                    </a>
                     <A href="/tools/investment-account" on:click=close>
                         <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
                             "Investment Account Calculator"

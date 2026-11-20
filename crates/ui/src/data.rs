@@ -33,6 +33,7 @@ pub struct Project {
     pub blurb: &'static str,
     pub tags: &'static [&'static str],
     pub href: &'static str,
+    pub demo_href: Option<&'static str>,
 }
 
 pub const PROFILE_PHOTO: &str = "/photos/tyler-dunes.jpg";
@@ -102,12 +103,13 @@ pub const PROJECTS: &[Project] = &[
     Project {
         name: "Coda",
         blurb:
-            "Unlicense 37-crate Rust clinical workspace spanning Dioxus/WASM and Axum web apps, \
-                SeaORM/PostgreSQL with pgvector, a bounded LLM tool harness, FHIR/EHR adapters, \
-                Chrome connector, HealthKit/Health Connect bridges, Nix OCI images, and OpenTofu \
-                GCP infrastructure.",
-        tags: &["Rust", "Dioxus", "PostgreSQL", "Nix", "OpenTofu"],
+            "Unlicense 37-crate Rust clinical workspace — Chords clinician site, Duet patient app, \
+                Connected Care sync, Epic/Oracle PKCE FHIR R4 & EHR adapters, Poppler/Tesseract OCR, \
+                bounded LLM harness, Valkey SSE, HealthKit/Health Connect bridges, Nix OCI images, \
+                OpenTofu GCP, and live interactive WASM SQLite demo hosted on dabney.moe.",
+        tags: &["Rust", "Dioxus", "PostgreSQL", "Valkey", "Nix", "OpenTofu"],
         href: "https://github.com/tyler274/coda-rust",
+        demo_href: Some("/coda/"),
     },
     Project {
         name: "Elysian Studio",
@@ -116,6 +118,7 @@ pub const PROJECTS: &[Project] = &[
                 printer control. Uses ElyMalloc in-process and links with ElyLD.",
         tags: &["Rust", "wgpu", "Vulkan", "iced", "3D printing"],
         href: "https://github.com/tyler274/elysian-studio",
+        demo_href: None,
     },
     Project {
         name: "ElyMalloc",
@@ -124,6 +127,7 @@ pub const PROJECTS: &[Project] = &[
                 Kani proofs, and a first-class NixOS malloc provider.",
         tags: &["Rust", "allocators", "mimalloc", "NixOS", "WASM"],
         href: "https://github.com/tyler274/ElyMalloc",
+        demo_href: None,
     },
     Project {
         name: "ElyLD",
@@ -132,6 +136,7 @@ pub const PROJECTS: &[Project] = &[
                 DSOs, and runs as a NixOS stdenv linker.",
         tags: &["Rust", "ELF", "linkers", "Linux kernel", "NixOS"],
         href: "https://github.com/tyler274/ElyLD",
+        demo_href: None,
     },
 ];
 
@@ -143,15 +148,17 @@ pub const EXPERIENCE: &[Role] = &[
         period: "Oct 2026 – Nov 2026",
         points: &[
             "Engineered a 37-crate full-stack Rust workspace (Dioxus/WASM web, Axum services, \
-             SeaORM/PostgreSQL with pgvector, Redis SSE fan-out, and Swift HealthKit / Kotlin \
-             Health Connect bridges) powering clinician and patient workflows.",
-            "Built a bounded LLM tool-execution harness, offline BGE vector encoder, FHIR R4 / \
-             EHR source adapters, Chrome extension connector, and clinical literature pipeline \
-             backed by TLA+ model checks, PostgreSQL crash-recovery tests, and Chromium E2E \
-             suites.",
+             SeaORM/PostgreSQL with pgvector RLS, Valkey SSE fan-out, zero-PHI push, and Swift \
+             HealthKit / Kotlin Health Connect bridges) powering the Chords clinician and Duet \
+             patient apps.",
+            "Built a bounded LLM tool-execution harness, offline BGE semantic encoder, \
+             Poppler/Tesseract OCR, Epic/Oracle PKCE FHIR R4 + EHR/Spruce/Chrome adapters, and \
+             Connected Care sync backed by TLA+ model checks, PostgreSQL crash-recovery suites, \
+             headless Android emulator tests, and Chromium E2E qualification.",
             "Automated Nix distroless OCI images, 9 OpenTofu GCP roots (Cloud Run, GKE \
-             Autopilot, Cloud SQL, IAP, Doppler), OpenTelemetry/Datadog/Langfuse telemetry, and \
-             Firecracker/act sandboxed CI.",
+             Autopilot, Cloud SQL, IAP, Doppler), OpenTelemetry/Datadog/Langfuse telemetry, \
+             Firecracker/act sandboxed CI, and live interactive WASM SQLite hosting at \
+             dabney.moe/coda.",
         ],
     },
     Role {
@@ -273,7 +280,7 @@ pub const SKILLS: &[SkillGroup] = &[
             "Linux (Gentoo, Arch, RHEL, Debian)",
             "Dioxus",
             "PostgreSQL / pgvector",
-            "Redis",
+            "Valkey / Redis",
             "HPC environments",
             "FPGAs (Intel, AMD)",
             "Docker",
@@ -354,6 +361,13 @@ mod tests {
                 "project href must be https: {}",
                 p.name
             );
+            if let Some(demo) = p.demo_href {
+                assert!(
+                    demo.starts_with('/') || demo.starts_with("https://"),
+                    "project demo_href must be root-relative or https: {}",
+                    p.name
+                );
+            }
             assert!(!p.tags.is_empty(), "project must have tags: {}", p.name);
             for tag in p.tags {
                 assert!(

@@ -26,7 +26,7 @@ src-tauri          Tauri v2 app (desktop + mobile), serves dist/
 | `Cargo.toml` | Workspace + `[[workspace.metadata.leptos]]` config. |
 | `tailwind.config.js`, `style/input.css` | Tailwind CSS source. |
 | `package.json` | Bun-managed tooling (Tailwind CLI + scripts). |
-| `public/` | Static assets served at the site root (e.g. `resume.pdf`). |
+| `public/` | Static assets served at the site root (`resume.pdf`, `/coda/` static export + WASM SQLite demo via `scripts/sync-coda-site.sh`). |
 | `crates/icon-gen` | Small Rust dev tool that regenerates the source app icon. |
 
 ## Prerequisites
