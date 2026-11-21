@@ -67,18 +67,64 @@ where
         }
     };
 
-    let mut coda_subrouter = axum::Router::new();
+    let mut api_router = axum::Router::new();
     if let Some(cfg) = api_proxy {
-        coda_subrouter = coda_subrouter.merge(coda_proxy::coda_nested_api_proxy_router(cfg));
+        api_router = api_router.merge(coda_proxy::coda_nested_api_proxy_router(cfg));
     } else {
-        coda_subrouter = coda_subrouter.merge(coda_proxy::coda_nested_api_disabled_router());
+        api_router = api_router.merge(coda_proxy::coda_nested_api_disabled_router());
     }
-    let coda_subrouter =
-        coda_subrouter.fallback_service(tower_http::services::ServeDir::new(coda_dir.as_ref()));
+
+    let static_router = axum::Router::new()
+        .fallback_service(tower_http::services::ServeDir::new(coda_dir.as_ref()))
+        .layer(from_fn(coda_static_cache_headers))
+        .layer(tower_http::compression::CompressionLayer::new());
+
+    let coda_subrouter = api_router.fallback_service(static_router);
 
     router
         .nest_service("/coda", coda_subrouter)
         .layer(from_fn(redirect_coda_directories))
+}
+
+#[cfg(feature = "ssr")]
+async fn coda_static_cache_headers(
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{header, HeaderValue};
+
+    // Nix store files carry mtime = 1970-01-01 00:00:01 UTC; strip conditional
+    // mtime headers so browsers with an older 1970 cache entry never get a
+    // false `304 Not Modified` across deployments, and strip `Last-Modified`
+    // from responses to prevent multi-year RFC 9111 heuristic freshness.
+    req.headers_mut().remove(header::IF_MODIFIED_SINCE);
+    req.headers_mut().remove(header::IF_UNMODIFIED_SINCE);
+
+    let path = req.uri().path().to_owned();
+    let has_version_query = req
+        .uri()
+        .query()
+        .is_some_and(|q| q.split('&').any(|kv| kv.starts_with("v=") && kv.len() > 2));
+
+    let mut resp = next.run(req).await;
+    resp.headers_mut().remove(header::LAST_MODIFIED);
+
+    if resp.status().is_success() {
+        let is_html = resp
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.starts_with("text/html"));
+        let immutable = !is_html && (has_version_query || path.starts_with("/assets/"));
+        let cache_value = if immutable {
+            HeaderValue::from_static("public, max-age=31536000, immutable")
+        } else {
+            HeaderValue::from_static("no-cache")
+        };
+        resp.headers_mut()
+            .insert(header::CACHE_CONTROL, cache_value);
+    }
+    resp
 }
 
 #[cfg(feature = "ssr")]
@@ -174,6 +220,59 @@ mod tests {
                 "expected response for {uri} to contain {needle:?}"
             );
         }
+
+        // Conditional 1970 mtime requests must never return 304 Not Modified,
+        // Last-Modified must be stripped, HTML must get Cache-Control: no-cache,
+        // and ?v= versioned assets must be gzipped + immutable.
+        let cond_html = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/coda/physician/")
+                    .header(header::IF_MODIFIED_SINCE, "Thu, 01 Jan 1970 00:00:01 GMT")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cond_html.status(), StatusCode::OK);
+        assert!(cond_html.headers().get(header::LAST_MODIFIED).is_none());
+        assert_eq!(
+            cond_html
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("no-cache")
+        );
+
+        let versioned_js = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/coda/physician/physician-app.js?v=123456789abc")
+                    .header(header::ACCEPT_ENCODING, "gzip")
+                    .header(header::IF_MODIFIED_SINCE, "Thu, 01 Jan 1970 00:00:01 GMT")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(versioned_js.status(), StatusCode::OK);
+        assert!(versioned_js.headers().get(header::LAST_MODIFIED).is_none());
+        assert_eq!(
+            versioned_js
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("public, max-age=31536000, immutable")
+        );
+        assert_eq!(
+            versioned_js
+                .headers()
+                .get(header::CONTENT_ENCODING)
+                .and_then(|v| v.to_str().ok()),
+            Some("gzip")
+        );
 
         let unconfigured_api = app
             .oneshot(

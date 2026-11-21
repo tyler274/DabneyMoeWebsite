@@ -2,6 +2,35 @@
 const IDB_NAME = "coda_physician_demo_sqlite", IDB_STORE = "snapshots";
 let sqlModule = null, db = null, seedBytes = null, snapshotKey = null, initPromise = null;
 let persistQueue = Promise.resolve();
+let persistTimer = null;
+let lifecycleHooked = false;
+
+function persistSnapshotNow() {
+  if (!db || !snapshotKey) return persistQueue;
+  const bytes = db.export(), key = snapshotKey;
+  persistQueue = persistQueue.then(() => idbOp("readwrite", (s) => s.put(bytes, key)));
+  return persistQueue;
+}
+
+function flushPendingPersist() {
+  if (persistTimer === null) return persistQueue;
+  clearTimeout(persistTimer);
+  persistTimer = null;
+  return persistSnapshotNow();
+}
+
+function ensureLifecycleFlush() {
+  if (lifecycleHooked) return;
+  lifecycleHooked = true;
+  if (typeof window !== "undefined") {
+    window.addEventListener("pagehide", () => { void flushPendingPersist(); });
+  }
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") void flushPendingPersist();
+    });
+  }
+}
 
 function assetUrl(path) {
   const u = new URL(window.location.href);
@@ -14,7 +43,7 @@ function loadSqlJs() {
   if (typeof window.initSqlJs === "function") return Promise.resolve();
   return new Promise((resolve, reject) => {
     const cur = document.querySelector('script[data-coda-sqljs="1"]');
-    const el = cur || Object.assign(document.createElement("script"), { src: assetUrl("./sql-wasm.js") });
+    const el = cur || Object.assign(document.createElement("script"), { src: assetUrl("./sql-wasm.js?v=eda696d6406e") });
     el.dataset.codaSqljs = "1";
     el.addEventListener("load", () => resolve(), { once: true });
     el.addEventListener("error", () => reject(new Error("failed to load sql-wasm.js")), { once: true });
@@ -53,17 +82,21 @@ async function idbOp(mode, run) {
 
 function schedulePersist() {
   if (!db || !snapshotKey) return;
-  const bytes = db.export(), key = snapshotKey;
-  persistQueue = persistQueue.then(() => idbOp("readwrite", (s) => s.put(bytes, key)));
+  if (persistTimer !== null) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    void persistSnapshotNow();
+  }, 200);
 }
 
 export async function initDemoDb(dbPath) {
+  ensureLifecycleFlush();
   if (db) return;
   if (!initPromise) {
     initPromise = (async () => {
       await loadSqlJs();
-      sqlModule = await window.initSqlJs({ locateFile: (f) => assetUrl(`./${f}`) });
-      const res = await fetch(assetUrl(dbPath));
+      sqlModule = await window.initSqlJs({ locateFile: (f) => assetUrl(`./${f}?v=eda696d6406e`) });
+      const res = await fetch(assetUrl(dbPath), dbPath.includes("?") ? undefined : { cache: "no-cache" });
       if (!res.ok) throw new Error(`failed to fetch ${dbPath}: HTTP ${res.status}`);
       seedBytes = new Uint8Array(await res.arrayBuffer());
       snapshotKey = await digestKey(seedBytes);
@@ -90,6 +123,10 @@ export function execSql(sql, paramsJson) { runStmt(sql, paramsJson, false); sche
 
 export async function resetDemoDb() {
   if (!sqlModule || !seedBytes) throw new Error("demo SQLite database is not initialized");
+  if (persistTimer !== null) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
   await persistQueue;
   if (snapshotKey) await idbOp("readwrite", (s) => s.delete(snapshotKey));
   if (db) db.close();
