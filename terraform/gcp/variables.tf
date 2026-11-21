@@ -113,3 +113,9 @@ variable "ga4_property_id" {
   description = "GA4 property numeric ID, used for BigQuery export dataset naming (analytics_PROPERTY_ID)."
   default     = ""
 }
+
+variable "coda_physician_api_url" {
+  type        = string
+  description = "Optional HTTPS origin of the Coda physician public-demo Cloud Run runtime proxied under /coda/physician/api. Empty leaves /coda/physician/ in browser-SQLite fallback mode."
+  default     = ""
+}

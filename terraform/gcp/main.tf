@@ -54,6 +54,8 @@ locals {
     RUST_LOG            = "info"
     }, var.ga4_measurement_id != "" ? {
     GA4_MEASUREMENT_ID = var.ga4_measurement_id
+    } : {}, var.coda_physician_api_url != "" ? {
+    CODA_PHYSICIAN_API_URL = var.coda_physician_api_url
   } : {})
 }
 

@@ -35,14 +35,32 @@ async fn main() {
     let leptos_options = conf.leptos_options;
     let addr = leptos_options.site_addr;
     let routes = generate_route_list(App);
+    let coda_api_proxy =
+        web::coda_proxy::CodaApiProxyConfig::from_env(|key| std::env::var(key).ok())
+            .unwrap_or_else(|err| {
+                tracing::error!(error = %err, "invalid CODA_PHYSICIAN_API_URL configuration");
+                std::process::exit(1);
+            });
+    if coda_api_proxy.is_some() {
+        tracing::info!(
+            service = "dabney-web",
+            mount = web::coda_proxy::CODA_API_PREFIX,
+            "enabled Coda physician live API proxy"
+        );
+    }
 
-    let app = web::mount_coda_static(Router::new(), &leptos_options.site_root)
+    let site_routes = Router::new()
         .route("/api/telemetry/errors", post(report_client_error))
         .leptos_routes(&leptos_options, routes, {
             let leptos_options = leptos_options.clone();
             move || shell(leptos_options.clone())
         })
         .fallback(leptos_axum::file_and_error_handler(shell))
+        .layer(RequestBodyLimitLayer::new(8 * 1024))
+        .with_state(leptos_options.clone());
+
+    let app = web::mount_coda_routes(Router::new(), &leptos_options.site_root, coda_api_proxy)
+        .merge(site_routes)
         .layer(SetRequestIdLayer::new(
             HeaderName::from_static("x-request-id"),
             MakeRequestUuid,
@@ -50,7 +68,6 @@ async fn main() {
         .layer(PropagateRequestIdLayer::new(HeaderName::from_static(
             "x-request-id",
         )))
-        .layer(RequestBodyLimitLayer::new(8 * 1024))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|request: &axum::http::Request<axum::body::Body>| {
@@ -64,8 +81,7 @@ async fn main() {
                 })
                 .on_response(DefaultOnResponse::new().level(Level::INFO))
                 .on_failure(DefaultOnFailure::new().level(Level::ERROR)),
-        )
-        .with_state(leptos_options);
+        );
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     tracing::info!(%addr, service = "dabney-web", "listening");

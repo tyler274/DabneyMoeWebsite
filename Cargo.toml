@@ -24,6 +24,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # rustls (not default native-tls/openssl) so the static-musl Nix image builds offline.
 tracing-loki = { version = "0.2", default-features = false, features = ["compat-0-2-1", "rustls"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+futures-util = "0.3"
+url = "2"
 base64 = "0.22"
 http = "1"
 # Pinned to match the `wasm-bindgen-cli` provided by the Nix dev shell.

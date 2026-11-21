@@ -5981,12 +5981,14 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "console_error_panic_hook",
+ "futures-util",
  "http",
  "leptos",
  "leptos_axum",
  "leptos_meta",
  "leptos_router",
  "mimalloc",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tokio",
@@ -5996,6 +5998,7 @@ dependencies = [
  "tracing-loki",
  "tracing-subscriber",
  "ui",
+ "url",
  "wasm-bindgen",
 ]
 
