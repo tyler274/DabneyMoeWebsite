@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-490d032f.js";
+            window.path_to_searchindex_js = "searchindex-b1dfbb4c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4caaaa21.js"></script>
@@ -891,14 +891,16 @@ coverage. The harness owns presentation bounds; those bounds do not reject write
 <p>Sources carry their own limits. Under Google’s Workspace user-data policy, Gmail-derived content cannot train shared models, even when it is de-identified or rewritten. Duet’s data stays with Duet’s owners; its separate consent rules apply, and nothing here reads it.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="public-site"><a class="header" href="#public-site">Public site</a></h1>
-<p><code>crates/public-site</code> is the Rust public marketing site. It serves <code>codahealth.ai</code>
-and <code>www.codahealth.ai</code> from <code>coda-health-prod</code>, and <code>staging.codahealth.ai</code> behind
-IAP from <code>coda-health-staging</code>. It is separate from the physician runtime and Duet:
-no database, physician accounts, model execution, or clinical types are introduced
-by the site. Sign-in exists only where <code>PHYSICIAN_APP_URL</code> is configured: that one
-setting mounts the same-origin <code>/physician/</code> proxy and renders the nav’s Sign in
-link. Staging sets it; production doesn’t, so production offers no sign-in and
-<code>/physician/</code> is an ordinary 404.</p>
+<p><code>crates/public-site</code> is the Rust public marketing site and static showcase builder.
+The live server serves <code>coda.dabney.moe</code> (and <code>staging.coda.dabney.moe</code> behind IAP
+in staging), while static exports via <code>scripts/build-pages-site.sh</code> (default
+<code>ORIGIN=https://dabney.moe</code>) power subpath showcases such as <code>dabney.moe/coda/</code>.
+It is separate from the physician runtime and Duet: no database, physician
+accounts, model execution, or clinical types are introduced by the site. Sign-in
+exists only where <code>PHYSICIAN_APP_URL</code> is configured: that one setting mounts
+the same-origin <code>/physician/</code> proxy and renders the nav’s Sign in link. Production
+leaves it unset, so production offers no sign-in and <code>/physician/</code> is an ordinary
+404.</p>
 <h2 id="application-contract"><a class="header" href="#application-contract">Application contract</a></h2>
 <p>The application design is Dioxus route components prerendered at startup, served
 by a stateless axum binary. The sitemap lists only current documents; archived
@@ -943,8 +945,10 @@ stylesheet with its own reset and named classes for those pages, and sits in the
 query.</p>
 <p>Static export mode (<code>public-site --export-dir &lt;dir&gt; --base-path &lt;prefix&gt; --origin &lt;url&gt;</code>)
 renders the same startup pages, <code>404.html</code>, <code>sitemap.xml</code>, <code>robots.txt</code>, <code>.nojekyll</code>,
-and hashed/raw assets to disk for subpath hosting such as GitHub Pages (with the
-architecture book built alongside under <code>/book/</code> by <a href="/.github/workflows/pages.yml"><code>.github/workflows/pages.yml</code></a>).</p>
+and hashed/raw assets to disk for subpath hosting such as <code>https://dabney.moe/coda/</code>
+or GitHub Pages (with the architecture book and WASM SQLite physician demo built
+alongside by <a href="/scripts/build-pages-site.sh"><code>scripts/build-pages-site.sh</code></a> with
+<code>ORIGIN</code> defaulting to <code>https://dabney.moe</code>).</p>
 <p>Legal documents are data. Each current document is one record in
 <code>data/&lt;document&gt;.json</code> holding every word of it: heading, title, intro, date and
 sections. That covers Duet’s privacy policy, terms and consumer health data policy,
@@ -993,8 +997,8 @@ IAP authentication. Required in staging whenever <code>PHYSICIAN_APP_URL</code> 
 <code>OBSERVABILITY_RELAY_URL</code> is set.
 No browser credential supplies this value.</li>
 <li><code>PUBLIC_SITE_ORIGIN</code>: optional exact browser origin for the physician proxy’s
-unsafe-method Origin validation. Defaults to <code>https://staging.codahealth.ai</code> in staging,
-<code>https://codahealth.ai</code> in production, and the local listener origin otherwise.
+unsafe-method Origin validation. Defaults to <code>https://staging.coda.dabney.moe</code> in staging,
+<code>https://coda.dabney.moe</code> in production, and the local listener origin otherwise.
 Unspecified local bind addresses (<code>0.0.0.0</code> or <code>::</code>) map to the corresponding
 loopback browser host. Alternate hosts or mapped container ports must set this
 origin explicitly so unsafe-method Origin checks match the browser.</li>
@@ -1014,6 +1018,18 @@ through authentication, upstream startup and response headers. The proxy
 does not impose a second deadline, and streaming response bodies are not
 capped by this header deadline.</li>
 <li><code>PUBLIC_SITE_INTERNAL_PROBE_ADDR</code>: optional, loopback-only probe address.</li>
+<li>Shared HTTP ingress protection (<a href="/crates/http/src/ingress.rs"><code>ingress.rs</code></a>):
+<code>CODA_RATE_LIMIT_RPM</code> (default <code>240</code>; <code>0</code> disables rate limiting),
+<code>CODA_AUTH_RATE_LIMIT_RPM</code> (default <code>20</code> for <code>/auth/*</code>, <code>/physician/auth/*</code>,
+<code>/api/auth/email/*</code>, <code>/api/auth/email-change/*</code>, <code>/api/connected-care/sync</code>,
+<code>/front-door/sign-in/*</code>, and
+<code>/front-door/invitations/*</code>), <code>CODA_MAX_REQUEST_BODY_BYTES</code> (<code>64 KiB</code> default on
+standalone <code>public-site</code>, <code>8 MiB</code> when <code>/physician/</code> or <code>/grafana/</code> proxy mounts
+are active), <code>CODA_MAX_CONCURRENT_REQUESTS</code> (default <code>64</code> on the ingress guard),
+<code>CODA_TRUSTED_PROXY_HOPS</code> (default <code>1</code> rightmost <code>X-Forwarded-For</code> hop across
+all header lines), and <code>CODA_RATE_LIMIT_ENFORCE_LOOPBACK</code> (<code>1</code>/<code>true</code> or
+non-empty <code>K_SERVICE</code>, <code>CODA_HOSTED</code>, <code>APP_ENV</code>, or <code>CODA_ENVIRONMENT</code>
+enforces quotas on loopback clients too). Health probes stay exempt.</li>
 </ul>
 <p>Local startup (from the workspace root):</p>
 <pre><code class="language-bash">nix develop --command cargo run -p public-site --bin public-site
@@ -2072,7 +2088,7 @@ threshold variables the Datadog monitors use, so change both together.</p>
 <li><code>deploy-public-site-staging</code> applies the public site’s reviewed staging plan after full validation on pushes to <code>main</code> only when the repository variable <code>PUBLIC_SITE_STAGING_DEPLOY</code> is <code>enabled</code> (<a href="#public-site">public site</a>).</li>
 <li><a href="/.github/workflows/promote-public-site.yml"><code>.github/workflows/promote-public-site.yml</code></a> is a manual workflow that promotes the image staging tested for one <code>main</code> commit to public-site production, with the <code>production</code> environment’s approval (<a href="#promotion">promotion</a>).</li>
 <li><a href="/.github/workflows/doppler-watch.yml"><code>.github/workflows/doppler-watch.yml</code></a> is a separate daily workflow that watches the pinned Doppler CLI for releases and advisories.</li>
-<li><a href="/.github/workflows/pstack-watch.yml">PStack skill updates</a> uses the built-in <code>GITHUB_TOKEN</code> to open or refresh a PR for the <a href="/verification/README%2Emd#pstack">vendored verification skills</a>. Enable <strong>Allow GitHub Actions to create and approve pull requests</strong> in the repository’s Actions settings for publication. A maintainer with write access approves the CI runs on the resulting PR.</li>
+<li><a href="/.github/workflows/pstack-watch.yml">PStack skill updates</a> pushes <code>codex/update-pstack-skills</code> when the <a href="/verification/README%2Emd#pstack">vendored verification skills</a> differ from upstream and opens or refreshes a review PR when Actions PR creation is enabled, or opens or refreshes a tracking issue with a compare link when repository settings disable Actions PR creation. It deletes the update branch and closes any open tracking issue once <code>main</code> is current. A maintainer with write access approves CI runs on any resulting PR.</li>
 <li><code>deploy-staging</code> runs after full validation on pushes to <code>main</code> only when the repository variable <code>RUST_STAGING_DEPLOY</code> is <code>enabled</code>. It downloads the successful image proof’s archives from the same run, verifies their commit and checksums, and publishes those exact images without rebuilding. It runs both migration jobs and moves the <code>coda-rust-staging</code> services to Ready revisions on the new digests. <code>physician-worker</code> is updated once the scaling plan has created that service; <a href="#direct-staging-rollout">direct staging rollout</a> describes the three-day artifact retention, retry behavior and how to turn it off.</li>
 <li>The staging release command in <a href="/crates/workspace-tools/src/staging_release.rs"><code>workspace-tools</code></a> owns rollout receipts and final-state reconciliation. It updates only each service’s product container image and refuses a rollout that moves a sidecar or any other infrastructure-owned field (<a href="#direct-staging-rollout">direct staging rollout</a>). A partial rollout or unknown traffic is not success. <a href="#operating-limits-and-failure-investigation">Operating limits and failure investigation</a> distinguishes declared resource limits from verified spending controls; <a href="#isolated-restore-qualification">privacy recovery</a> describes the additional Duet restore gate. Mocked release tests and successful image checks do not qualify a hosted database restore.</li>
 <li>Skills/docs-only main pushes skip both deployments. A successful <code>CI result</code> confirms the selected checks passed, not that a deployment occurred.</li>
@@ -2204,6 +2220,7 @@ successful validation from lightweight, failed, cancelled and manual runs.</p>
 <p>The rule is in <a href="/AGENTS%2Emd#dev-shell"><code>AGENTS.md</code></a>.</p>
 <ul>
 <li>Doppler project <code>coda-rust</code> has the parent configs <code>dev</code>, <code>stg</code> and <code>prd</code>. Locally, log in once with <code>doppler login</code> and prefix a command with <code>doppler run --</code>; <a href="/doppler.yaml"><code>doppler.yaml</code></a> selects <code>dev</code>, and the shell loads it when a login exists and continues when it does not. Creating a config is an operator step, and this repository stores no token and no secret value.</li>
+<li><a href="/scripts/doppler-fill.sh"><code>scripts/doppler-fill.sh</code></a> names the secrets <code>dev</code> holds and what reads each one. It asks for each missing value at a hidden prompt and saves it to Doppler; <code>--check</code> lists which are set.</li>
 <li>Physician and Duet services read per-product, per-role child configs, never a parent, because a parent-scoped token would carry the other product’s secrets. <a href="#gcp-deployment">GCP deployment</a> lists those configs and how each image starts under <code>doppler run</code>.</li>
 <li>The public marketing site reads no secrets and runs without Doppler. CI installs the pinned CLI only to verify it and fetches no secrets through it; GitHub jobs reach GCP through Workload Identity Federation.</li>
 <li><code>cargo run -p workspace-tools -- install-doppler OUTPUT_PATH</code> (<a href="/crates/workspace-tools/src/doppler.rs"><code>doppler.rs</code></a>) installs the pinned, checksum-verified CLI for images and runners.</li>
@@ -2294,12 +2311,10 @@ Commands that read Doppler secrets need the default shell after <code>doppler lo
 not <code>.#agent</code>, which loads no credentials.</p>
 <h2 id="public-marketing-site"><a class="header" href="#public-marketing-site">Public marketing site</a></h2>
 <p>The separate <a href="/infra/gcp/public-site"><code>infra/gcp/public-site</code></a> root runs the
-stateless Rust marketing server on Cloud Run. The site belongs to the company,
-not to a product, so both environments live in the Coda Health projects:
-<code>staging.codahealth.ai</code> behind direct Cloud Run IAP in <code>coda-health-staging</code>, and
-<code>codahealth.ai</code> and <code>www.codahealth.ai</code> behind a load balancer and Cloud CDN in
-<code>coda-health-prod</code>, apart from the physician and Duet projects such as
-<code>coda-rust-staging</code>. The root shares no physician/Duet databases. CI deploys
+stateless Rust public-site server on Cloud Run, while static showcase exports
+(<code>ORIGIN=https://dabney.moe</code>, <code>BASE_PATH=/coda</code>) live under <code>dabney.moe/coda/</code>.
+Live hosted backends target <code>coda.dabney.moe</code> (<code>staging.coda.dabney.moe</code> behind
+direct Cloud Run IAP). The root shares no physician/Duet databases. CI deploys
 staging from <code>main</code>; production receives staging-tested images through manual
 promotion, and operator applies require explicit operator authorization. <a href="#public-site">Public
 site</a> owns the architecture, IAP and cache controls, runtime
@@ -2733,6 +2748,21 @@ CPU, memory, request concurrency and timeouts bound individual executions;
 migration jobs have one task, a 600-second timeout and no automatic retries.
 SQL disk growth is capped and backups/PITR are retained for seven days. Redis,
 SQL, minimum instances and networking can incur charges while no requests run.</p>
+<p>On <code>coda.dabney.moe</code> and staging Cloud Run services, <code>physician-sample</code>, <code>duet-api</code>,
+and <code>public-site</code> share one HTTP ingress abuse boundary in
+<a href="/crates/http/src/ingress.rs"><code>ingress.rs</code></a> (<code>IngressGuard</code>). It enforces fixed-window
+per-client IP rate limits (<code>429 Too Many Requests</code> with <code>Retry-After</code> and
+<code>Cache-Control: no-store</code>) keyed from the rightmost trusted <code>X-Forwarded-For</code> hop,
+strictly tightens quotas on unauthenticated auth/magic-link/OTP/invite/sync paths,
+rejects oversized bodies fast (<code>413 Payload Too Large</code> + <code>DefaultBodyLimit</code>), bounds
+concurrent in-flight non-probe requests (<code>503 Service Unavailable</code>), caps tracked
+client buckets in memory, and exempts health/readiness probes (<code>/health</code>, <code>/healthz</code>,
+<code>/readyz</code>, <code>/api/health</code>). Runtime knobs are <code>CODA_RATE_LIMIT_RPM</code>,
+<code>CODA_AUTH_RATE_LIMIT_RPM</code>, <code>CODA_MAX_REQUEST_BODY_BYTES</code>,
+<code>CODA_MAX_CONCURRENT_REQUESTS</code>, <code>CODA_TRUSTED_PROXY_HOPS</code>, and
+<code>CODA_RATE_LIMIT_ENFORCE_LOOPBACK</code> (automatically enforced when <code>K_SERVICE</code>,
+<code>CODA_HOSTED</code>, <code>APP_ENV</code>, or <code>CODA_ENVIRONMENT</code> is set, exempting local
+loopback tests otherwise).</p>
 <p>Before a rehearsal, compare the deployed Cloud Run services/jobs, SQL settings
 and worker settings with the reviewed root inputs. Record identifiers and
 nonsecret limits, not full service descriptions containing environment values.

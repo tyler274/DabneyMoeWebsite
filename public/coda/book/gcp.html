@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-490d032f.js";
+            window.path_to_searchindex_js = "searchindex-b1dfbb4c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4caaaa21.js"></script>
@@ -212,12 +212,10 @@ Commands that read Doppler secrets need the default shell after <code>doppler lo
 not <code>.#agent</code>, which loads no credentials.</p>
 <h2 id="public-marketing-site"><a class="header" href="#public-marketing-site">Public marketing site</a></h2>
 <p>The separate <a href="/infra/gcp/public-site"><code>infra/gcp/public-site</code></a> root runs the
-stateless Rust marketing server on Cloud Run. The site belongs to the company,
-not to a product, so both environments live in the Coda Health projects:
-<code>staging.codahealth.ai</code> behind direct Cloud Run IAP in <code>coda-health-staging</code>, and
-<code>codahealth.ai</code> and <code>www.codahealth.ai</code> behind a load balancer and Cloud CDN in
-<code>coda-health-prod</code>, apart from the physician and Duet projects such as
-<code>coda-rust-staging</code>. The root shares no physician/Duet databases. CI deploys
+stateless Rust public-site server on Cloud Run, while static showcase exports
+(<code>ORIGIN=https://dabney.moe</code>, <code>BASE_PATH=/coda</code>) live under <code>dabney.moe/coda/</code>.
+Live hosted backends target <code>coda.dabney.moe</code> (<code>staging.coda.dabney.moe</code> behind
+direct Cloud Run IAP). The root shares no physician/Duet databases. CI deploys
 staging from <code>main</code>; production receives staging-tested images through manual
 promotion, and operator applies require explicit operator authorization. <a href="public-site.html">Public
 site</a> owns the architecture, IAP and cache controls, runtime
@@ -651,6 +649,21 @@ CPU, memory, request concurrency and timeouts bound individual executions;
 migration jobs have one task, a 600-second timeout and no automatic retries.
 SQL disk growth is capped and backups/PITR are retained for seven days. Redis,
 SQL, minimum instances and networking can incur charges while no requests run.</p>
+<p>On <code>coda.dabney.moe</code> and staging Cloud Run services, <code>physician-sample</code>, <code>duet-api</code>,
+and <code>public-site</code> share one HTTP ingress abuse boundary in
+<a href="/crates/http/src/ingress.rs"><code>ingress.rs</code></a> (<code>IngressGuard</code>). It enforces fixed-window
+per-client IP rate limits (<code>429 Too Many Requests</code> with <code>Retry-After</code> and
+<code>Cache-Control: no-store</code>) keyed from the rightmost trusted <code>X-Forwarded-For</code> hop,
+strictly tightens quotas on unauthenticated auth/magic-link/OTP/invite/sync paths,
+rejects oversized bodies fast (<code>413 Payload Too Large</code> + <code>DefaultBodyLimit</code>), bounds
+concurrent in-flight non-probe requests (<code>503 Service Unavailable</code>), caps tracked
+client buckets in memory, and exempts health/readiness probes (<code>/health</code>, <code>/healthz</code>,
+<code>/readyz</code>, <code>/api/health</code>). Runtime knobs are <code>CODA_RATE_LIMIT_RPM</code>,
+<code>CODA_AUTH_RATE_LIMIT_RPM</code>, <code>CODA_MAX_REQUEST_BODY_BYTES</code>,
+<code>CODA_MAX_CONCURRENT_REQUESTS</code>, <code>CODA_TRUSTED_PROXY_HOPS</code>, and
+<code>CODA_RATE_LIMIT_ENFORCE_LOOPBACK</code> (automatically enforced when <code>K_SERVICE</code>,
+<code>CODA_HOSTED</code>, <code>APP_ENV</code>, or <code>CODA_ENVIRONMENT</code> is set, exempting local
+loopback tests otherwise).</p>
 <p>Before a rehearsal, compare the deployed Cloud Run services/jobs, SQL settings
 and worker settings with the reviewed root inputs. Record identifiers and
 nonsecret limits, not full service descriptions containing environment values.

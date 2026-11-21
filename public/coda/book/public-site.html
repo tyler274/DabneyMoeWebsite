@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-490d032f.js";
+            window.path_to_searchindex_js = "searchindex-b1dfbb4c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4caaaa21.js"></script>
@@ -175,14 +175,16 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="public-site"><a class="header" href="#public-site">Public site</a></h1>
-<p><code>crates/public-site</code> is the Rust public marketing site. It serves <code>codahealth.ai</code>
-and <code>www.codahealth.ai</code> from <code>coda-health-prod</code>, and <code>staging.codahealth.ai</code> behind
-IAP from <code>coda-health-staging</code>. It is separate from the physician runtime and Duet:
-no database, physician accounts, model execution, or clinical types are introduced
-by the site. Sign-in exists only where <code>PHYSICIAN_APP_URL</code> is configured: that one
-setting mounts the same-origin <code>/physician/</code> proxy and renders the nav’s Sign in
-link. Staging sets it; production doesn’t, so production offers no sign-in and
-<code>/physician/</code> is an ordinary 404.</p>
+<p><code>crates/public-site</code> is the Rust public marketing site and static showcase builder.
+The live server serves <code>coda.dabney.moe</code> (and <code>staging.coda.dabney.moe</code> behind IAP
+in staging), while static exports via <code>scripts/build-pages-site.sh</code> (default
+<code>ORIGIN=https://dabney.moe</code>) power subpath showcases such as <code>dabney.moe/coda/</code>.
+It is separate from the physician runtime and Duet: no database, physician
+accounts, model execution, or clinical types are introduced by the site. Sign-in
+exists only where <code>PHYSICIAN_APP_URL</code> is configured: that one setting mounts
+the same-origin <code>/physician/</code> proxy and renders the nav’s Sign in link. Production
+leaves it unset, so production offers no sign-in and <code>/physician/</code> is an ordinary
+404.</p>
 <h2 id="application-contract"><a class="header" href="#application-contract">Application contract</a></h2>
 <p>The application design is Dioxus route components prerendered at startup, served
 by a stateless axum binary. The sitemap lists only current documents; archived
@@ -227,8 +229,10 @@ stylesheet with its own reset and named classes for those pages, and sits in the
 query.</p>
 <p>Static export mode (<code>public-site --export-dir &lt;dir&gt; --base-path &lt;prefix&gt; --origin &lt;url&gt;</code>)
 renders the same startup pages, <code>404.html</code>, <code>sitemap.xml</code>, <code>robots.txt</code>, <code>.nojekyll</code>,
-and hashed/raw assets to disk for subpath hosting such as GitHub Pages (with the
-architecture book built alongside under <code>/book/</code> by <a href="/.github/workflows/pages.yml"><code>.github/workflows/pages.yml</code></a>).</p>
+and hashed/raw assets to disk for subpath hosting such as <code>https://dabney.moe/coda/</code>
+or GitHub Pages (with the architecture book and WASM SQLite physician demo built
+alongside by <a href="/scripts/build-pages-site.sh"><code>scripts/build-pages-site.sh</code></a> with
+<code>ORIGIN</code> defaulting to <code>https://dabney.moe</code>).</p>
 <p>Legal documents are data. Each current document is one record in
 <code>data/&lt;document&gt;.json</code> holding every word of it: heading, title, intro, date and
 sections. That covers Duet’s privacy policy, terms and consumer health data policy,
@@ -277,8 +281,8 @@ IAP authentication. Required in staging whenever <code>PHYSICIAN_APP_URL</code> 
 <code>OBSERVABILITY_RELAY_URL</code> is set.
 No browser credential supplies this value.</li>
 <li><code>PUBLIC_SITE_ORIGIN</code>: optional exact browser origin for the physician proxy’s
-unsafe-method Origin validation. Defaults to <code>https://staging.codahealth.ai</code> in staging,
-<code>https://codahealth.ai</code> in production, and the local listener origin otherwise.
+unsafe-method Origin validation. Defaults to <code>https://staging.coda.dabney.moe</code> in staging,
+<code>https://coda.dabney.moe</code> in production, and the local listener origin otherwise.
 Unspecified local bind addresses (<code>0.0.0.0</code> or <code>::</code>) map to the corresponding
 loopback browser host. Alternate hosts or mapped container ports must set this
 origin explicitly so unsafe-method Origin checks match the browser.</li>
@@ -298,6 +302,18 @@ through authentication, upstream startup and response headers. The proxy
 does not impose a second deadline, and streaming response bodies are not
 capped by this header deadline.</li>
 <li><code>PUBLIC_SITE_INTERNAL_PROBE_ADDR</code>: optional, loopback-only probe address.</li>
+<li>Shared HTTP ingress protection (<a href="/crates/http/src/ingress.rs"><code>ingress.rs</code></a>):
+<code>CODA_RATE_LIMIT_RPM</code> (default <code>240</code>; <code>0</code> disables rate limiting),
+<code>CODA_AUTH_RATE_LIMIT_RPM</code> (default <code>20</code> for <code>/auth/*</code>, <code>/physician/auth/*</code>,
+<code>/api/auth/email/*</code>, <code>/api/auth/email-change/*</code>, <code>/api/connected-care/sync</code>,
+<code>/front-door/sign-in/*</code>, and
+<code>/front-door/invitations/*</code>), <code>CODA_MAX_REQUEST_BODY_BYTES</code> (<code>64 KiB</code> default on
+standalone <code>public-site</code>, <code>8 MiB</code> when <code>/physician/</code> or <code>/grafana/</code> proxy mounts
+are active), <code>CODA_MAX_CONCURRENT_REQUESTS</code> (default <code>64</code> on the ingress guard),
+<code>CODA_TRUSTED_PROXY_HOPS</code> (default <code>1</code> rightmost <code>X-Forwarded-For</code> hop across
+all header lines), and <code>CODA_RATE_LIMIT_ENFORCE_LOOPBACK</code> (<code>1</code>/<code>true</code> or
+non-empty <code>K_SERVICE</code>, <code>CODA_HOSTED</code>, <code>APP_ENV</code>, or <code>CODA_ENVIRONMENT</code>
+enforces quotas on loopback clients too). Health probes stay exempt.</li>
 </ul>
 <p>Local startup (from the workspace root):</p>
 <pre><code class="language-bash">nix develop --command cargo run -p public-site --bin public-site
