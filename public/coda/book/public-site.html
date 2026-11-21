@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-b1dfbb4c.js";
+            window.path_to_searchindex_js = "searchindex-03c4b68e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4caaaa21.js"></script>
@@ -421,7 +421,7 @@ cannot later change.</p>
 identity’s image access is explicit and limited to that repository. OpenTofu
 rejects any <code>image</code> outside <code>REGION-docker.pkg.dev/PROJECT_ID/public-site/</code> that
 is not digest-pinned (see <a href="#checks">Checks</a>).</p>
-<p><strong>Local builds.</strong> Engineers in <code>gcp-engineering@codahealth.ai</code> read the two
+<p><strong>Local builds.</strong> Engineers in <code>gcp-engineering@dabney.moe</code> read the two
 base-image repositories. Authenticate Docker once through gcloud’s credential
 helper; no key file or password is involved:</p>
 <pre><code class="language-bash">nix develop
@@ -459,14 +459,14 @@ enabled (output <code>staging_url</code>) and <code>invoker_iam_disabled = false
 an authoritative binding on this service only. There is no <code>allUsers</code> grant,
 and CI or deployer identities get no implicit website access.</li>
 <li>The only <code>roles/iap.httpsResourceAccessor</code> member is
-<code>group:gcp-engineering@codahealth.ai</code> (variable <code>iap_group</code>). This is also an
+<code>group:gcp-engineering@dabney.moe</code> (variable <code>iap_group</code>). This is also an
 authoritative binding on this service only, not a project or domain grant.</li>
 <li><code>PUBLIC_SITE_IAP_AUDIENCE</code> comes from <code>project_number</code>, <code>region</code> and the service
 name, and it is set directly on the container. The output
 <code>iap_audience</code> exposes the same value.</li>
 <li><code>staging_domain</code> optionally maps a verified hostname to this same service.
-<code>env/staging.tfvars</code> sets it to <code>staging.codahealth.ai</code>. Cloud Run manages TLS;
-the Cloudflare <code>staging</code> record is a DNS-only CNAME to <code>ghs.googlehosted.com</code>, as
+<code>env/staging.tfvars</code> sets it to <code>staging.coda.dabney.moe</code>. Cloud Run manages TLS;
+the Cloudflare <code>staging.coda</code> record is a DNS-only CNAME to <code>ghs.googlehosted.com</code>, as
 <code>staging_domain_records</code> returns. Native IAP remains the access owner on both
 hostnames.</li>
 </ul>
@@ -609,11 +609,11 @@ in-place update of <code>google_cloud_run_v2_service.site</code> alone. Then it 
 that saved plan.</li>
 <li>Requires the latest revision to be Ready, serve 100% of traffic and report
 the new digest. It also requires anonymous requests to the run.app homepage
-and <code>/health</code> and to <code>staging.codahealth.ai</code> to redirect to Google sign-in.</li>
+and <code>/health</code> and to <code>staging.coda.dabney.moe</code> to redirect to Google sign-in.</li>
 </ol>
 <p>CI and deployment identities have no website-access grant, so the job checks only
 that anonymous requests are sent to sign-in; an authenticated render is a manual
-check by a member of <code>gcp-engineering@codahealth.ai</code>.</p>
+check by a member of <code>gcp-engineering@dabney.moe</code>.</p>
 <p><code>env/staging.tfvars</code> keeps the last operator-reviewed digest; a local plan run
 from it after a CI deploy shows the image going back. Pass the current digest
 with <code>-var image=...</code> (read it from <code>gcloud run services describe</code>) when
@@ -637,10 +637,10 @@ tofu -chdir=infra/gcp/public-site output staging_url
 staging environment is live only when a member of the engineering group is allowed,
 a nonmember denied, an unauthenticated direct <code>run.app</code> request redirected to
 sign-in, and no protected content served from a cache, on both
-<code>staging.codahealth.ai</code> and the <code>run.app</code> URL.</p>
+<code>staging.coda.dabney.moe</code> and the <code>run.app</code> URL.</p>
 <h2 id="production-state-and-deployment"><a class="header" href="#production-state-and-deployment">Production state and deployment</a></h2>
-<p>Production serves the image staging tested, without sign-in, at <code>codahealth.ai</code>
-and <code>www.codahealth.ai</code> from <code>coda-health-prod</code>. Operator applies and DNS changes
+<p>Production serves the image staging tested, without sign-in, at <code>coda.dabney.moe</code>
+and <code>www.coda.dabney.moe</code> from <code>coda-health-prod</code>. Operator applies and DNS changes
 require explicit operator authorization.</p>
 <ul>
 <li><strong>State.</strong> <code>backend/production.gcs.tfbackend</code> selects a dedicated state bucket,
@@ -651,8 +651,8 @@ condition.</li>
 project and number, and <code>domains</code>. It sets no <code>physician_app_url</code>, so production
 has no Sign in link and no <code>/physician/</code> mount. <code>image</code> and <code>release_sha</code> are
 supplied per release: the digest staging tested and its commit.</li>
-<li><strong>DNS.</strong> In the <code>codahealth.ai</code> Cloudflare zone, <code>codahealth.ai</code> and
-<code>www.codahealth.ai</code> are DNS-only A records to the root’s <code>load_balancer_ip</code>. The
+<li><strong>DNS.</strong> In the <code>dabney.moe</code> Cloudflare zone, <code>coda.dabney.moe</code> and
+<code>www.coda.dabney.moe</code> are DNS-only A records to the root’s <code>load_balancer_ip</code>. The
 <code>_acme-challenge</code> CNAMEs from <code>certificate_dns_records</code> stay in place: Certificate
 Manager renews the certificate through them. The zone’s other records belong to
 other owners.</li>
@@ -687,7 +687,7 @@ service. Load balancer, certificate, IAM and identity changes are operator appli
 <li>applies the saved plan and checks the Ready revision serves the digest with all
 traffic;</li>
 <li>clears the CDN and waits for it to finish;</li>
-<li>pins <code>codahealth.ai</code> and <code>www.codahealth.ai</code> to the load balancer IP with
+<li>pins <code>coda.dabney.moe</code> and <code>www.coda.dabney.moe</code> to the load balancer IP with
 <code>curl --resolve</code> and checks each: <code>/api/health</code> reports production and the SHA,
 the homepage sends production’s HSTS and offers no Sign in, <code>/physician/today</code> is
 404, and plain HTTP answers 308 to the same HTTPS URL.</li>

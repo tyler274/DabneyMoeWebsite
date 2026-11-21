@@ -1040,13 +1040,65 @@ function cancelDictation() {
   stopDictationHardware(state);
 }
 
+// Reads the currently effective appearance (`light` or `dark`) from storage, `data-theme`, or system preference.
+function readAppearance(storageKey) {
+  try {
+    const saved = window.localStorage.getItem(storageKey);
+    if (saved === 'dark' || saved === 'light') return saved;
+  } catch { /* storage denied */ }
+  const current = document.documentElement.dataset.theme;
+  if (current === 'dark' || current === 'light') return current;
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+// Applies `appearance` (`light` or `dark`) to `data-theme` and saves it under `storageKey`.
+function setAppearance(storageKey, appearance) {
+  document.documentElement.dataset.theme = appearance;
+  try {
+    window.localStorage.setItem(storageKey, appearance);
+  } catch { /* storage denied */ }
+}
+
+// Closes every open top-layer popover, including lifted rows on document.body, menus, and citations.
+function dismissOpenPopovers() {
+  for (const el of document.querySelectorAll(':popover-open')) {
+    try { el.hidePopover(); } catch { /* ignore */ }
+  }
+  if (window.codaLift) {
+    try { window.codaLift.hidePopover(); } catch { /* ignore */ }
+    window.codaLift.replaceChildren();
+  }
+  for (const host of document.querySelectorAll('[data-lifted]')) {
+    delete host.dataset.lifted;
+  }
+}
+
+// Listens in window capture phase for Cmd+Shift+L / Ctrl+Shift+L so editors and dialogs never swallow it.
+function watchCoverShortcut(send) {
+  const onKeyDown = (event) => {
+    if (event.repeat || event.isComposing || event.altKey) return;
+    if (
+      (event.metaKey || event.ctrlKey) &&
+      event.shiftKey &&
+      (event.key?.toLowerCase() === 'l' || event.code === 'KeyL')
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      send(true);
+    }
+  };
+  globalThis.addEventListener('keydown', onKeyDown, true);
+  return () => globalThis.removeEventListener('keydown', onKeyDown, true);
+}
+
 const fires = {
   motion, menuKeys, tooltips, contextHost, disposeContextHost, reorder, scrollToPassage, fileDrags,
   sheetDrag, handOff, indeterminate, togglePopover, openCitation, scrollIntoView, focusElement,
-  caretToEnd, readToEnd, jumpToLatest, replyArrived, setDepth, cancelDictation,
+  caretToEnd, readToEnd, jumpToLatest, replyArrived, setDepth, cancelDictation, setAppearance,
+  dismissOpenPopovers,
 };
-const asks = { watchExit, modal, copy, reducedMotion, stopDictation };
-const listens = { watchPage, watchPopover, watchReading, watchDepth, watchDictation };
+const asks = { watchExit, modal, copy, reducedMotion, stopDictation, readAppearance };
+const listens = { watchPage, watchPopover, watchReading, watchDepth, watchDictation, watchCoverShortcut };
 
 const running = new Map();
 let calls = 0;

@@ -16,13 +16,13 @@
   [hidden]:where(:not([hidden=until-found])){display:none!important}
 }
 
-:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+:focus-visible{outline:2px solid var(--green-ink);outline-offset:3px}
 .sr-only{clip-path:inset(50%);white-space:nowrap;border-width:0;width:1px;height:1px;margin:-1px;padding:0;position:absolute;overflow:hidden}
 
 /* A quiet text link. */
 .ghost-link{display:inline-flex;align-items:center;min-height:36px;color:var(--ink2);font-size:14px;font-weight:600;transition:color .18s var(--ease)}
 .ghost-link--inline{min-height:0}
-.ghost-link:hover{color:var(--green)}
+.ghost-link:hover{color:var(--green-ink)}
 
 /* Legal documents. */
 .legal-hero{padding-bottom:56px}
@@ -30,12 +30,12 @@
 .legal-revised{display:block;margin-top:8px}
 .legal-body{padding-bottom:80px}
 .legal-summary{margin-bottom:40px;padding:24px}
-.legal-summary h2{color:var(--green)}
+.legal-summary h2{color:var(--green-ink)}
 .legal-summary ul{display:grid;margin-top:20px;column-gap:40px;row-gap:12px}
 .legal-summary li,.legal-list li{position:relative;padding-left:20px;font-size:16px}
 .legal-summary li{line-height:1.6;color:var(--ink)}
 .legal-list li{line-height:1.7;color:var(--ink2)}
-.legal-summary li::before,.legal-list li::before{content:"";position:absolute;top:.72em;left:0;width:6px;height:6px;border-radius:calc(infinity * 1px);background-color:var(--green)}
+.legal-summary li::before,.legal-list li::before{content:"";position:absolute;top:.72em;left:0;width:6px;height:6px;border-radius:calc(infinity * 1px);background-color:var(--green-ink)}
 .legal-list>:not(:last-child){margin-block-end:8px}
 .legal-section{scroll-margin-top:112px;border-top-width:1px;border-color:var(--line);padding-block:40px}
 .legal-section h2{margin-top:12px;max-width:14em;font-size:22px;line-height:1.375;letter-spacing:-.02em;color:var(--ink)}
@@ -43,7 +43,7 @@
 .legal-section-body>:not(:last-child){margin-block-end:16px}
 .legal-section-body p{font-size:16px;line-height:1.7;color:var(--ink2)}
 .legal-source{overflow-wrap:break-word;text-decoration-line:underline;text-underline-offset:4px}
-.legal-link,.legal-links a{text-decoration-line:underline;text-decoration-color:var(--green);text-decoration-thickness:1px;text-underline-offset:4px}
+.legal-link,.legal-links a{text-decoration-line:underline;text-decoration-color:var(--green-ink);text-decoration-thickness:1px;text-underline-offset:4px}
 .legal-link{color:var(--ink)}
 .legal-table{width:100%;border-collapse:collapse;text-align:left;font-size:.92rem;line-height:28px;color:var(--ink2)}
 .legal-table thead tr{border-bottom-width:1px;border-color:var(--line-strong)}
@@ -62,7 +62,7 @@
 .legal-links-title{margin-right:8px}
 .legal-links-item{display:flex;align-items:baseline;column-gap:12px}
 .legal-links-sep{color:var(--faint)}
-@media (hover:hover){.legal-link:hover,.legal-links a:hover{color:var(--green)}}
+@media (hover:hover){.legal-link:hover,.legal-links a:hover{color:var(--green-ink)}}
 @media not all and (min-width:48rem){.legal-table{display:none}}
 @media (min-width:48rem){.legal-cards{display:none}}
 
@@ -86,4 +86,11 @@
 @media (prefers-reduced-motion:reduce){
   html{scroll-behavior:auto}
   *,::before,::after{transition-duration:.01ms!important;animation-duration:.01ms!important}
+}
+@media (max-width:640px){
+  .hero-cta .ghost-link{min-height:44px;padding-inline:8px}
+}
+@media (prefers-contrast:more){
+  .legal-link,.legal-links a{text-decoration-thickness:2px}
+  .legal-section,.legal-table tbody tr,.legal-cards dl,.legal-links{border-color:var(--line-strong)}
 }

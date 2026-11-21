@@ -3,7 +3,7 @@
    -webkit- blur applies, which Safari honours. */
 .nav{backdrop-filter:saturate(1.4) blur(14px)}
 
-.tlink{display:inline-flex;gap:6px;align-items:center;color:var(--green);font-size:14px;font-weight:600}
+.tlink{display:inline-flex;gap:6px;align-items:center;color:var(--green-ink);font-size:14px;font-weight:600}
 .tlink span{transition:transform .25s var(--ease)}
 .tlink:hover span{transform:translateX(3px)}
 
@@ -35,18 +35,18 @@
 .bp .axis{stroke:rgba(23,33,27,.1)}
 .bp .grid{stroke:rgba(23,33,27,.07);stroke-dasharray:3 5}
 .bp .area{fill:rgba(14,82,55,.1);opacity:0;transition:opacity 1s .6s}
-.bp .trend{fill:none;stroke:var(--green);stroke-width:2.2;stroke-linecap:round;stroke-dasharray:1;stroke-dashoffset:1;transition:stroke-dashoffset 1.6s var(--ease)}
+.bp .trend{fill:none;stroke:#0E5237;stroke-width:2.2;stroke-linecap:round;stroke-dasharray:1;stroke-dashoffset:1;transition:stroke-dashoffset 1.6s var(--ease)}
 .bp .marker{opacity:0;transition:opacity .6s 1.2s}
 .bp .marker line{stroke:rgba(196,78,59,.6);stroke-dasharray:3 4}
 .bp .marker text{fill:#C44E3B;font:700 9px var(--sans);letter-spacing:.08em;text-transform:uppercase}
-.bp .marker circle{fill:var(--green);stroke:#fff;stroke-width:1.5}
+.bp .marker circle{fill:#0E5237;stroke:#fff;stroke-width:1.5}
 .drawn .bp .trend{stroke-dashoffset:0}
 .drawn .bp .area,.drawn .bp .marker{opacity:1}
 /* The cursor moves X and Y on separate eases, so its path curves like a hand instead of sliding on a rail. */
 .ptr-x{position:absolute;left:0;top:0;z-index:20;transform:translateX(1040px);transition:transform .95s cubic-bezier(.22,.75,.28,1)}
 .ptr-y{transform:translateY(660px);transition:transform .95s cubic-bezier(.35,.55,.3,1)}
 .pointer{display:block;width:26px;height:26px;opacity:0;transition:opacity .35s;filter:drop-shadow(0 3px 6px rgba(0,0,0,.25))}
-.pointer path{fill:var(--ink);stroke:#fff;stroke-width:1.6;stroke-linejoin:round}
+.pointer path{fill:#17211B;stroke:#fff;stroke-width:1.6;stroke-linejoin:round}
 .pointer.show{opacity:1}
 .pointer.click{animation:click .35s}
 @keyframes click{50%{scale:.82}}
@@ -83,15 +83,16 @@
 .fitem.on h3{color:var(--ink)}
 .fitem.on p{color:var(--ink2)}
 .fitem.on .idx{color:var(--muted)}
-.fitem.on .idx i{background:var(--green)}
-.fitem:focus-visible{outline:2px solid var(--green);outline-offset:6px;border-radius:8px}
+.fitem.on .idx i{background:var(--green-ink)}
+.fitem:hover:not(.on) h3{color:var(--muted)}
+.fitem:focus-visible{outline:2px solid var(--green-ink);outline-offset:6px;border-radius:8px}
 .fmedia{position:sticky;top:max(84px,calc(50vh - var(--fh,480px)/2))}
 .fframe{display:grid}
 .fstage{grid-area:1/1;opacity:0;visibility:hidden;transition:opacity .55s var(--ease),visibility 0s .55s}
 .fstage.on{opacity:1;visibility:visible;transition:opacity .55s var(--ease),visibility 0s}
 
 .fitem h3 em{font-style:normal;color:#9DB5A8;transition:color .45s}
-.fitem.on h3 em{color:var(--green)}
+.fitem.on h3 em{color:var(--green-ink)}
 /* ---------- duet ---------- */
 .frame-wide{width:100%}
 .duet-stage{width:1280px;height:760px}
@@ -253,7 +254,7 @@
 /* ================= product UI kit =================
    The physician product's surfaces as the homepage shows them (Today, reader, briefing,
    conversation, follow-ups), in the product's own colour tokens. */
-.app{--ag:#126c5a;--agc:#e5f2ea;--agd:#0b4a3d;--aac:#fbf0db;--aad:#6b4408;--abody:#35463e;--amut:#64716a;
+.app{--ink:#17211B;--ink2:#3A4540;--muted:#5E6963;--faint:#8C958F;--green:#0E5237;--ag:#126c5a;--agc:#e5f2ea;--agd:#0b4a3d;--aac:#fbf0db;--aad:#6b4408;--abody:#35463e;--amut:#64716a;
   --asurf:#f1f3f0;--alow:#f6f7f5;--ahigh:#ecefeb;--aol:rgba(35,60,46,.21);--aolv:rgba(35,60,46,.12);
   font-family:var(--sans);color:#23332d;text-align:left}
 .app svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
@@ -535,3 +536,30 @@
 .compact .mt-pill{font-size:13px}
 .compact .mt-h .mt-lab{left:0;transform:none;margin-left:0}
 .hero-disc .a-think:not(.on){margin-top:0}
+.card:hover{border-color:var(--line-strong)}
+.a-row:hover{background:#F7FAF8}
+.a-btn:hover{border-color:rgba(18,108,90,.42);background:#F7FAF8}
+@media (prefers-color-scheme:dark){
+  .frame,.closer{background:#131D18;box-shadow:0 0 0 1px rgba(255,255,255,.08)}
+  .cred-logos{background:#16211B;border-color:var(--line)}
+  .logos img{filter:grayscale(1) brightness(0) invert(.88);opacity:.78}
+  .logos img:hover{opacity:1;filter:grayscale(1) brightness(0) invert(.98)}
+  .fitem h3{color:#66766D}
+  .fitem p{color:#6B7B72}
+  .fitem .idx{color:#73837A}
+  .fitem .idx i{background:#3A4941}
+  .fitem h3 em{color:#4D846A}
+  .closer::after{background:linear-gradient(180deg,rgba(7,13,10,.36),rgba(7,13,10,.62))}
+  .closer p{color:rgba(242,246,243,.92)}
+}
+@media (prefers-contrast:more){
+  .fitem h3{color:#4F5B54}
+  .fitem p{color:#56625B}
+  .cred,.frame,.closer{border:1px solid var(--line-strong)}
+}
+@media (prefers-color-scheme:dark) and (prefers-contrast:more){
+  .fitem h3{color:#8E9E95}
+  .fitem p{color:#94A49B}
+  .fitem .idx{color:#9EB0A6}
+  .fitem h3 em{color:#5BB48C}
+}

@@ -227,3 +227,10 @@
 .compact .duet-story[data-focus="3"] .p2{transform:var(--ds-left);z-index:2}
 .compact .duet-story[data-focus="1"] .p3{transform:var(--ds-far-right);z-index:1}
 .compact .duet-story[data-focus="3"] .p1{transform:var(--ds-far-left);z-index:1}
+@media (prefers-color-scheme:dark){
+  .duet-story .ds-clin{box-shadow:0 40px 80px -26px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.16)}
+}
+@media (prefers-contrast:more){
+  .duet-story{--ds-secondary:#424d47;--ds-label:#46524b;--ds-line:#bfc8bf}
+  .duet-story .ds-card,.duet-story .ds-doc,.duet-story .ds-peek,.duet-story .ds-object,.duet-story .ds-clin{border-color:#9eaca1}
+}

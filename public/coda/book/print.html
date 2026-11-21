@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-b1dfbb4c.js";
+            window.path_to_searchindex_js = "searchindex-03c4b68e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4caaaa21.js"></script>
@@ -1137,7 +1137,7 @@ cannot later change.</p>
 identity’s image access is explicit and limited to that repository. OpenTofu
 rejects any <code>image</code> outside <code>REGION-docker.pkg.dev/PROJECT_ID/public-site/</code> that
 is not digest-pinned (see <a href="#checks">Checks</a>).</p>
-<p><strong>Local builds.</strong> Engineers in <code>gcp-engineering@codahealth.ai</code> read the two
+<p><strong>Local builds.</strong> Engineers in <code>gcp-engineering@dabney.moe</code> read the two
 base-image repositories. Authenticate Docker once through gcloud’s credential
 helper; no key file or password is involved:</p>
 <pre><code class="language-bash">nix develop
@@ -1175,14 +1175,14 @@ enabled (output <code>staging_url</code>) and <code>invoker_iam_disabled = false
 an authoritative binding on this service only. There is no <code>allUsers</code> grant,
 and CI or deployer identities get no implicit website access.</li>
 <li>The only <code>roles/iap.httpsResourceAccessor</code> member is
-<code>group:gcp-engineering@codahealth.ai</code> (variable <code>iap_group</code>). This is also an
+<code>group:gcp-engineering@dabney.moe</code> (variable <code>iap_group</code>). This is also an
 authoritative binding on this service only, not a project or domain grant.</li>
 <li><code>PUBLIC_SITE_IAP_AUDIENCE</code> comes from <code>project_number</code>, <code>region</code> and the service
 name, and it is set directly on the container. The output
 <code>iap_audience</code> exposes the same value.</li>
 <li><code>staging_domain</code> optionally maps a verified hostname to this same service.
-<code>env/staging.tfvars</code> sets it to <code>staging.codahealth.ai</code>. Cloud Run manages TLS;
-the Cloudflare <code>staging</code> record is a DNS-only CNAME to <code>ghs.googlehosted.com</code>, as
+<code>env/staging.tfvars</code> sets it to <code>staging.coda.dabney.moe</code>. Cloud Run manages TLS;
+the Cloudflare <code>staging.coda</code> record is a DNS-only CNAME to <code>ghs.googlehosted.com</code>, as
 <code>staging_domain_records</code> returns. Native IAP remains the access owner on both
 hostnames.</li>
 </ul>
@@ -1325,11 +1325,11 @@ in-place update of <code>google_cloud_run_v2_service.site</code> alone. Then it 
 that saved plan.</li>
 <li>Requires the latest revision to be Ready, serve 100% of traffic and report
 the new digest. It also requires anonymous requests to the run.app homepage
-and <code>/health</code> and to <code>staging.codahealth.ai</code> to redirect to Google sign-in.</li>
+and <code>/health</code> and to <code>staging.coda.dabney.moe</code> to redirect to Google sign-in.</li>
 </ol>
 <p>CI and deployment identities have no website-access grant, so the job checks only
 that anonymous requests are sent to sign-in; an authenticated render is a manual
-check by a member of <code>gcp-engineering@codahealth.ai</code>.</p>
+check by a member of <code>gcp-engineering@dabney.moe</code>.</p>
 <p><code>env/staging.tfvars</code> keeps the last operator-reviewed digest; a local plan run
 from it after a CI deploy shows the image going back. Pass the current digest
 with <code>-var image=...</code> (read it from <code>gcloud run services describe</code>) when
@@ -1353,10 +1353,10 @@ tofu -chdir=infra/gcp/public-site output staging_url
 staging environment is live only when a member of the engineering group is allowed,
 a nonmember denied, an unauthenticated direct <code>run.app</code> request redirected to
 sign-in, and no protected content served from a cache, on both
-<code>staging.codahealth.ai</code> and the <code>run.app</code> URL.</p>
+<code>staging.coda.dabney.moe</code> and the <code>run.app</code> URL.</p>
 <h2 id="production-state-and-deployment"><a class="header" href="#production-state-and-deployment">Production state and deployment</a></h2>
-<p>Production serves the image staging tested, without sign-in, at <code>codahealth.ai</code>
-and <code>www.codahealth.ai</code> from <code>coda-health-prod</code>. Operator applies and DNS changes
+<p>Production serves the image staging tested, without sign-in, at <code>coda.dabney.moe</code>
+and <code>www.coda.dabney.moe</code> from <code>coda-health-prod</code>. Operator applies and DNS changes
 require explicit operator authorization.</p>
 <ul>
 <li><strong>State.</strong> <code>backend/production.gcs.tfbackend</code> selects a dedicated state bucket,
@@ -1367,8 +1367,8 @@ condition.</li>
 project and number, and <code>domains</code>. It sets no <code>physician_app_url</code>, so production
 has no Sign in link and no <code>/physician/</code> mount. <code>image</code> and <code>release_sha</code> are
 supplied per release: the digest staging tested and its commit.</li>
-<li><strong>DNS.</strong> In the <code>codahealth.ai</code> Cloudflare zone, <code>codahealth.ai</code> and
-<code>www.codahealth.ai</code> are DNS-only A records to the root’s <code>load_balancer_ip</code>. The
+<li><strong>DNS.</strong> In the <code>dabney.moe</code> Cloudflare zone, <code>coda.dabney.moe</code> and
+<code>www.coda.dabney.moe</code> are DNS-only A records to the root’s <code>load_balancer_ip</code>. The
 <code>_acme-challenge</code> CNAMEs from <code>certificate_dns_records</code> stay in place: Certificate
 Manager renews the certificate through them. The zone’s other records belong to
 other owners.</li>
@@ -1403,7 +1403,7 @@ service. Load balancer, certificate, IAM and identity changes are operator appli
 <li>applies the saved plan and checks the Ready revision serves the digest with all
 traffic;</li>
 <li>clears the CDN and waits for it to finish;</li>
-<li>pins <code>codahealth.ai</code> and <code>www.codahealth.ai</code> to the load balancer IP with
+<li>pins <code>coda.dabney.moe</code> and <code>www.coda.dabney.moe</code> to the load balancer IP with
 <code>curl --resolve</code> and checks each: <code>/api/health</code> reports production and the SHA,
 the homepage sends production’s HSTS and offers no Sign in, <code>/physician/today</code> is
 404, and plain HTTP answers 308 to the same HTTPS URL.</li>
@@ -1743,7 +1743,7 @@ collector processors, and the backend overlay changes only the exporters.</p>
 <tr><td>Tempo, Loki, Prometheus (<code>grafana</code>)</td><td>Only the gateway collector writes to Tempo and Loki; Prometheus receives only Tempo’s span metrics. Nothing scrapes container logs. All ClusterIP only.</td></tr>
 <tr><td>Gateway</td><td>Accepts only Google ID tokens with the gateway audience from the listed Cloud Run runtime service accounts, over the internal load balancer restricted to the Cloud Run egress range.</td></tr>
 <tr><td>Langfuse</td><td>The hosted HIPAA cloud project at <code>langfuse_host</code>, reached over HTTPS with the project’s key pair. People sign in at <code>https://hipaa.cloud.langfuse.com</code> as members of the Coda organization; nothing in the cluster serves Langfuse. Retention is the project’s 90-day setting.</td></tr>
-<tr><td>Grafana</td><td>ClusterIP, plus the same relay-only internal load balancer. In staging it serves under <code>https://staging.codahealth.ai/grafana/</code> and signs people in from the forwarded IAP assertion (<code>X-Coda-IAP-Assertion</code>) after checking its signature, issuer and the public-site audience; otherwise <code>kubectl port-forward</code>. Grafana-stack retention is 14 days of traces, 30 of logs and 30 of metrics by default.</td></tr>
+<tr><td>Grafana</td><td>ClusterIP, plus the same relay-only internal load balancer. In staging it serves under <code>https://staging.coda.dabney.moe/grafana/</code> and signs people in from the forwarded IAP assertion (<code>X-Coda-IAP-Assertion</code>) after checking its signature, issuer and the public-site audience; otherwise <code>kubectl port-forward</code>. Grafana-stack retention is 14 days of traces, 30 of logs and 30 of metrics by default.</td></tr>
 </tbody>
 </table>
 </div>
@@ -2288,14 +2288,14 @@ operator from reviewed saved plans:</p>
 </thead>
 <tbody>
 <tr><td><a href="/infra/gcp/rust-environments"><code>rust-environments</code></a></td><td>Behind <code>observability_cluster_enabled</code>: the private observability Autopilot cluster on <code>rust-private</code>, its subnet and secondary ranges, and the reserved internal gateway address. Behind <code>observability_relay_image</code>: the IAP-protected <code>observability-relay</code> Cloud Run service, its <code>rust-relay</code> Direct VPC egress subnet and the reserved address of the Grafana internal load balancer. Behind <code>observability_enabled</code>: the collector sidecars on the Cloud Run services and their telemetry environment, including <code>CODA_TELEMETRY_BACKEND</code> from its <code>telemetry_backend</code>, which must match the <code>observability</code> root’s.</td><td><code>rust-environments/stg</code></td></tr>
-<tr><td><a href="/infra/gcp/observability/README%2Emd"><code>observability</code></a></td><td>Inside that cluster: the OpenTelemetry gateway collector and its internal load balancer, one operations backend chosen by <code>telemetry_backend</code> (the Datadog Agent and monitors with, off by default, the project-scoped Datadog GCP integration; or self-hosted Tempo, Loki, Prometheus and Grafana with, off by default, a Cloud Monitoring datasource), the <code>otlphttp/langfuse</code> exporter to the Langfuse HIPAA cloud project at <code>langfuse_host</code>, Grafana’s internal load balancer, which admits only the relay subnet so people reach Grafana only at <code>staging.codahealth.ai/grafana/</code> through public-site, and the Doppler operator. It reads the cluster and network through variables fed from <code>rust-environments</code> outputs and manages neither. Staging only.</td><td><code>observability/stg</code> in the same state bucket</td></tr>
+<tr><td><a href="/infra/gcp/observability/README%2Emd"><code>observability</code></a></td><td>Inside that cluster: the OpenTelemetry gateway collector and its internal load balancer, one operations backend chosen by <code>telemetry_backend</code> (the Datadog Agent and monitors with, off by default, the project-scoped Datadog GCP integration; or self-hosted Tempo, Loki, Prometheus and Grafana with, off by default, a Cloud Monitoring datasource), the <code>otlphttp/langfuse</code> exporter to the Langfuse HIPAA cloud project at <code>langfuse_host</code>, Grafana’s internal load balancer, which admits only the relay subnet so people reach Grafana only at <code>staging.coda.dabney.moe/grafana/</code> through public-site, and the Doppler operator. It reads the cluster and network through variables fed from <code>rust-environments</code> outputs and manages neither. Staging only.</td><td><code>observability/stg</code> in the same state bucket</td></tr>
 </tbody>
 </table>
 </div>
 <p><a href="#observability">Observability</a> describes the per-signal paths and the
 content policy.</p>
 <p>Grafana shows telemetry that can carry PHI, so people reach it only through
-Google IAP, and IAP admits only <code>group:gcp-engineering@codahealth.ai</code> plus the
+Google IAP, and IAP admits only <code>group:gcp-engineering@dabney.moe</code> plus the
 named service accounts a route needs to hop between services. It is not granted
 to <code>allUsers</code>, <code>allAuthenticatedUsers</code>, a <code>domain:</code> or a single <code>user:</code>, and it
 has no listener that skips IAP. Langfuse is the hosted HIPAA cloud project, under
@@ -2448,10 +2448,10 @@ Duet; it does not create physician accounts.</p>
 transport. The Workspace relay option uses these values in
 <code>stg_physician_runtime</code>:</p>
 <pre><code class="language-text">PHYSICIAN_MAIL_TRANSPORT=smtp-relay
-PHYSICIAN_MAIL_FROM=signin@codahealth.ai
-PHYSICIAN_PUBLIC_ORIGIN=https://staging.codahealth.ai/physician
+PHYSICIAN_MAIL_FROM=signin@dabney.moe
+PHYSICIAN_PUBLIC_ORIGIN=https://staging.coda.dabney.moe/physician
 </code></pre>
-<p>The sender is <code>Coda Health &lt;signin@codahealth.ai&gt;</code>. It requires no mailbox, Gmail
+<p>The sender is <code>Coda Health &lt;signin@dabney.moe&gt;</code>. It requires no mailbox, Gmail
 settings change, OAuth grant, or SMTP password. Delivery connects to
 <code>smtp-relay.gmail.com:587</code> with mandatory STARTTLS. A configured but invalid
 transport stays in mailed mode: the sign-in API does not return the token.
@@ -2854,7 +2854,7 @@ limit changed with it.</p>
 be on <code>main</code> with a successful <code>Deploy staging</code> job. Skills/docs-only pushes skip
 that job, so overall CI success is not deployment evidence. The plan refuses to
 run without a digest in <code>images.physician.worker</code>.</li>
-<li><strong>Decide who applies.</strong> The plan creates bindings <code>group:gcp-engineering@codahealth.ai</code>
+<li><strong>Decide who applies.</strong> The plan creates bindings <code>group:gcp-engineering@dabney.moe</code>
 cannot write: the worker’s project-level Cloud SQL and Monitoring metric-writer
 roles. Apply as the project Owner, or grant engineering Project IAM Admin
 conditioned on
@@ -2915,8 +2915,8 @@ Cloud Run service, a runtime identity with no application-data roles, and a
 service-scoped invoker binding. <code>enable_physician_smtp_relay</code> must already be enabled:
 the adapter uses that existing network, subnet and NAT address, preserving the
 Workspace IP allowlist. It needs no Doppler token. Runtime settings are
-<code>MAIL_FROM=signin@codahealth.ai</code>, <code>MAIL_NOTIFICATION_FROM=notifications@codahealth.ai</code>
-(the binary default), and <code>MAIL_LISTEN_ADDR=0.0.0.0:8080</code>.</p>
+<code>MAIL_FROM=signin@dabney.moe</code>, <code>MAIL_NOTIFICATION_FROM=notifications@dabney.moe</code>,
+and <code>MAIL_LISTEN_ADDR=0.0.0.0:8080</code>.</p>
 <p>For Gym staging, the named caller is
 <code>serviceAccount:workspace-web-staging@coda-gym.iam.gserviceaccount.com</code>.
 Production uses <code>serviceAccount:workspace-web@coda-gym.iam.gserviceaccount.com</code>

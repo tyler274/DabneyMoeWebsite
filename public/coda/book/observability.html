@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-b1dfbb4c.js";
+            window.path_to_searchindex_js = "searchindex-03c4b68e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4caaaa21.js"></script>
@@ -367,7 +367,7 @@ collector processors, and the backend overlay changes only the exporters.</p>
 <tr><td>Tempo, Loki, Prometheus (<code>grafana</code>)</td><td>Only the gateway collector writes to Tempo and Loki; Prometheus receives only Tempo’s span metrics. Nothing scrapes container logs. All ClusterIP only.</td></tr>
 <tr><td>Gateway</td><td>Accepts only Google ID tokens with the gateway audience from the listed Cloud Run runtime service accounts, over the internal load balancer restricted to the Cloud Run egress range.</td></tr>
 <tr><td>Langfuse</td><td>The hosted HIPAA cloud project at <code>langfuse_host</code>, reached over HTTPS with the project’s key pair. People sign in at <code>https://hipaa.cloud.langfuse.com</code> as members of the Coda organization; nothing in the cluster serves Langfuse. Retention is the project’s 90-day setting.</td></tr>
-<tr><td>Grafana</td><td>ClusterIP, plus the same relay-only internal load balancer. In staging it serves under <code>https://staging.codahealth.ai/grafana/</code> and signs people in from the forwarded IAP assertion (<code>X-Coda-IAP-Assertion</code>) after checking its signature, issuer and the public-site audience; otherwise <code>kubectl port-forward</code>. Grafana-stack retention is 14 days of traces, 30 of logs and 30 of metrics by default.</td></tr>
+<tr><td>Grafana</td><td>ClusterIP, plus the same relay-only internal load balancer. In staging it serves under <code>https://staging.coda.dabney.moe/grafana/</code> and signs people in from the forwarded IAP assertion (<code>X-Coda-IAP-Assertion</code>) after checking its signature, issuer and the public-site audience; otherwise <code>kubectl port-forward</code>. Grafana-stack retention is 14 days of traces, 30 of logs and 30 of metrics by default.</td></tr>
 </tbody>
 </table>
 </div>
