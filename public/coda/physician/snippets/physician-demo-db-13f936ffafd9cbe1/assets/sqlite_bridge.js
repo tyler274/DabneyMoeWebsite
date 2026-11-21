@@ -1,14 +1,18 @@
-// Browser SQLite bridge backed by SHA-256-verified sql.js + IndexedDB persistence.
+// Browser snapshot fetch + SHA-256-keyed IndexedDB persistence for pure-Rust `turso_core`.
 const IDB_NAME = "coda_physician_demo_sqlite", IDB_STORE = "snapshots";
-let sqlModule = null, db = null, seedBytes = null, snapshotKey = null, initPromise = null;
+const PERSIST_DEBOUNCE_MS = 200;
+
+let seedBytes = null, snapshotKey = null, seedPromise = null, exportBytesFn = null;
 let persistQueue = Promise.resolve();
 let persistTimer = null;
 let lifecycleHooked = false;
 
 function persistSnapshotNow() {
-  if (!db || !snapshotKey) return persistQueue;
-  const bytes = db.export(), key = snapshotKey;
-  persistQueue = persistQueue.then(() => idbOp("readwrite", (s) => s.put(bytes, key)));
+  if (!exportBytesFn || !snapshotKey) return persistQueue;
+  const bytes = exportBytesFn(), key = snapshotKey;
+  persistQueue = persistQueue
+    .then(() => idbOp("readwrite", (s) => s.put(bytes, key)))
+    .catch(() => false);
   return persistQueue;
 }
 
@@ -37,18 +41,6 @@ function assetUrl(path) {
   u.search = ""; u.hash = "";
   if (!u.pathname.endsWith("/")) u.pathname += "/";
   return new URL(path, u.href).href;
-}
-
-function loadSqlJs() {
-  if (typeof window.initSqlJs === "function") return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const cur = document.querySelector('script[data-coda-sqljs="1"]');
-    const el = cur || Object.assign(document.createElement("script"), { src: assetUrl("./sql-wasm.js?v=eda696d6406e") });
-    el.dataset.codaSqljs = "1";
-    el.addEventListener("load", () => resolve(), { once: true });
-    el.addEventListener("error", () => reject(new Error("failed to load sql-wasm.js")), { once: true });
-    if (!cur) document.head.appendChild(el);
-  });
 }
 
 async function digestKey(bytes) {
@@ -80,55 +72,43 @@ async function idbOp(mode, run) {
   } catch { return null; }
 }
 
-function schedulePersist() {
-  if (!db || !snapshotKey) return;
+export function schedulePersist() {
+  if (!exportBytesFn || !snapshotKey) return;
   if (persistTimer !== null) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     persistTimer = null;
     void persistSnapshotNow();
-  }, 200);
+  }, PERSIST_DEBOUNCE_MS);
 }
 
-export async function initDemoDb(dbPath) {
+export async function initDemoDb(dbPath, exportFn) {
   ensureLifecycleFlush();
-  if (db) return;
-  if (!initPromise) {
-    initPromise = (async () => {
-      await loadSqlJs();
-      sqlModule = await window.initSqlJs({ locateFile: (f) => assetUrl(`./${f}?v=eda696d6406e`) });
+  if (!seedPromise) {
+    seedPromise = (async () => {
       const res = await fetch(assetUrl(dbPath), dbPath.includes("?") ? undefined : { cache: "no-cache" });
       if (!res.ok) throw new Error(`failed to fetch ${dbPath}: HTTP ${res.status}`);
       seedBytes = new Uint8Array(await res.arrayBuffer());
       snapshotKey = await digestKey(seedBytes);
-      const saved = await idbOp("readonly", (s) => s.get(snapshotKey));
-      db = new sqlModule.Database(saved || seedBytes.slice());
-    })();
+    })().catch((err) => {
+      seedPromise = null;
+      throw err;
+    });
   }
-  await initPromise;
+  await seedPromise;
+  await flushPendingPersist();
+  await persistQueue;
+  exportBytesFn = exportFn;
+  const saved = await idbOp("readonly", (s) => s.get(snapshotKey));
+  return (saved && saved.byteLength > 0 ? saved : seedBytes).slice();
 }
-
-function runStmt(sql, paramsJson, collect) {
-  if (!db) throw new Error("demo SQLite database is not initialized");
-  const stmt = db.prepare(sql);
-  try {
-    stmt.bind(JSON.parse(paramsJson));
-    const rows = [];
-    while (stmt.step()) if (collect) rows.push(stmt.getAsObject());
-    return rows;
-  } finally { stmt.free(); }
-}
-
-export function querySql(sql, paramsJson) { return JSON.stringify(runStmt(sql, paramsJson, true)); }
-export function execSql(sql, paramsJson) { runStmt(sql, paramsJson, false); schedulePersist(); }
 
 export async function resetDemoDb() {
-  if (!sqlModule || !seedBytes) throw new Error("demo SQLite database is not initialized");
+  if (!seedBytes) throw new Error("demo SQLite database is not initialized");
   if (persistTimer !== null) {
     clearTimeout(persistTimer);
     persistTimer = null;
   }
   await persistQueue;
   if (snapshotKey) await idbOp("readwrite", (s) => s.delete(snapshotKey));
-  if (db) db.close();
-  db = new sqlModule.Database(seedBytes.slice());
+  return seedBytes.slice();
 }
