@@ -17,8 +17,11 @@ pub fn CommunityPolicyPage() -> impl IntoView {
                 <section class="mt-10 space-y-4 text-slate-300">
                     <h2 class="text-xl font-semibold text-white">"Current retention and disclosure limits"</h2>
                     <p>
-                        "The operator reports that community messages have already been retained "
-                        "outside Discord. Storage location, who has access, the retention period, "
+                        "The operator reports that all server messages are logged and community "
+                        "messages have been retained outside Discord. Logging is separate from "
+                        "public archive publication and the planned activity dashboard; logging alone "
+                        "is not permission for public posting or AI uses. Storage location, who has "
+                        "access, the retention period, "
                         "and any previous AI use are not yet documented in this notice. "
                         "This is not a complete data-handling disclosure."
                     </p>
@@ -111,8 +114,9 @@ pub fn CommunityPolicyPage() -> impl IntoView {
                         "policy does not establish that a listener is active or that dashboard consent "
                         "controls are implemented. Dashboard permission does not authorize publishing "
                         "message bodies, attachments, searchable conversation archives, tokens, private "
-                        "consent records, or backup material. The separately tracked searchable archive "
-                        "is not part of this dashboard authorization; this policy amendment alone does "
+                        "consent records, or backup material. Public dashboard snapshots will not "
+                        "include any of that material. Server message logging and the separately tracked "
+                        "searchable archive are not part of this dashboard authorization; this policy amendment alone does "
                         "not authorize posting chats."
                     </p>
                     <p>"Permissions remain separate for:"</p>
