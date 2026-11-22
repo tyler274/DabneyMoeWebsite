@@ -1,0 +1,66 @@
+name: Sync Coda from coda-rust
+# Regenerate public/coda/ and vendor/coda-rust/ from tyler274/coda-rust (without
+# touching private submodules), refresh Cargo.lock, and open a pull request so
+# CI validates the synced Coda public site and embedded harness before merge.
+on:
+  workflow_dispatch:
+    inputs:
+      coda_ref:
+        description: "coda-rust branch or commit SHA to sync"
+        required: false
+        default: "main"
+        type: string
+  repository_dispatch:
+    types: [coda-rust-updated]
+concurrency:
+  group: sync-coda-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  sync:
+    name: Sync Coda site & embedded harness crates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out DabneyMoeWebsite
+        uses: actions/checkout@v6
+      - name: Check out tyler274/coda-rust (no submodules)
+        uses: actions/checkout@v6
+        with:
+          repository: tyler274/coda-rust
+          ref: ${{ inputs.coda_ref || github.event.client_payload.sha || 'main' }}
+          submodules: false
+          path: .coda-rust-tmp
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - name: Wait for Nix to be ready
+        run: timeout 120 bash -c 'until nix store info 2>/dev/null; do sleep 1; done'
+      - name: Sync Coda static bundle and embedded crates
+        run: |
+          CODA_SHA=$(git -C .coda-rust-tmp rev-parse --short=10 HEAD)
+          echo "CODA_SHA=$CODA_SHA" >> "$GITHUB_ENV"
+          CODA_RUST_DIR="$PWD/.coda-rust-tmp" ./scripts/sync-coda-site.sh
+          rm -rf .coda-rust-tmp
+          nix develop -c cargo metadata --format-version 1 >/dev/null
+      - name: Open or update sync pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git add -A public/coda vendor/coda-rust Cargo.lock
+          if git diff --cached --quiet; then
+            echo "Already up to date with coda-rust@${CODA_SHA}."
+            exit 0
+          fi
+          BRANCH="sync/coda-${CODA_SHA}"
+          git checkout -B "$BRANCH"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Sync Coda site and embedded harness (${CODA_SHA})"
+          git push --force-with-lease origin "HEAD:refs/heads/${BRANCH}"
+          if ! gh pr view "$BRANCH" >/dev/null 2>&1; then
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "Sync Coda site and embedded harness (${CODA_SHA})" \
+              --body "Automated sync of \`public/coda/\`, \`vendor/coda-rust/\`, and \`Cargo.lock\` from \`tyler274/coda-rust@${CODA_SHA}\`."
+          fi

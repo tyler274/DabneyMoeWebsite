@@ -121,11 +121,34 @@ exclusive Leptos features, each is tested with its own feature set (see the
 `ci` runner in [`flake.nix`](flake.nix)).
 
 GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the
-gate plus web, desktop, and Android (APK) builds on every push/PR, then a
+same checks plus web, desktop, and Android (APK) builds on every push/PR, then a
 main-only deploy job that ships the web server to **Google Cloud Run** via a
-Nix-built container image and Terraform/OpenTofu (see [`terraform/`](terraform/)).
-The deploy no-ops until the `GCP_SA_KEY` / `GCP_PROJECT` secrets are set. Play
-Store publishing is still a placeholder pending Play Console account setup.
+Nix-built container image (infra is provisioned separately with
+Terraform/OpenTofu, see [`terraform/`](terraform/)). The deploy no-ops until the
+`DOPPLER_TOKEN` secret is set. Play Store publishing is still a placeholder
+pending Play Console account setup.
+
+How the workflow is laid out:
+
+- **Parallel jobs.** After a short scope and CI-image check, format, clippy,
+  tests, and every build (web, desktop, Android, server image) run side by
+  side. Deploy waits for format, clippy, tests, the web build, and the image
+  build, and is skipped if any of them fails, is cancelled, or is skipped.
+- **Rust build cache.** Clippy, tests, the web build, and the desktop build
+  restore `target/` from the Actions cache, keyed by job, `rustc` version, and
+  `Cargo.lock` + `flake.lock`. Only runs on `main` save it, after
+  [`scripts/ci-trim-target.sh`](scripts/ci-trim-target.sh) strips workspace
+  outputs so only dependency artifacts are stored. Pull requests read the
+  cache but never write it.
+- **Scope.** [`scripts/ci_scope.py`](scripts/ci_scope.py) skips all builds and
+  the deploy when a change only touches Markdown, `terraform/`, or `selfhost/`,
+  and skips the Android build unless its inputs changed. Manual runs build
+  everything.
+- **Concurrency.** A new commit cancels the previous run of the same pull
+  request only. Runs on `main` are never cancelled, and deploys run one at a
+  time.
+- **Deploy shell.** The deploy job uses the slim `nix develop .#deploy` shell
+  (`gcloud`, `skopeo`, `doppler`) instead of the full dev shell.
 
 ## Deployment (web)
 

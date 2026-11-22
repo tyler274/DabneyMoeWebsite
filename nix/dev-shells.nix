@@ -1,5 +1,5 @@
-# Developer shells: the default web/desktop shell and the Android cross-compile
-# / emulator shell. Each supplies its own Rust toolchain but shares the base
+# Developer shells: the default web/desktop shell, the slim CI deploy shell,
+# and the Android cross-compile / emulator shell. Each supplies its own Rust toolchain but shares the base
 # tooling and Tauri dependency closure.
 { pkgs
 , rustToolchain
@@ -60,6 +60,17 @@
       echo "  CI gate:     nix run .#ci"
       echo "  Android:     nix develop .#android"
     '';
+  };
+
+  # Deploy shell for CI: only the tools the `deploy` job runs. The default
+  # shell also carries them, but pulls the Rust toolchain and the whole Tauri
+  # library closure, which the deploy job never uses.
+  deploy = pkgs.mkShell {
+    packages = [
+      pkgs.skopeo
+      pkgs.google-cloud-sdk
+      pkgs.doppler
+    ];
   };
 
   # Android cross-compilation / emulator shell. Provides the declarative SDK +

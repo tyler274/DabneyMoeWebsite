@@ -17,8 +17,11 @@ pub fn CommunityPolicyPage() -> impl IntoView {
                 <section class="mt-10 space-y-4 text-slate-300">
                     <h2 class="text-xl font-semibold text-white">"Current retention and disclosure limits"</h2>
                     <p>
-                        "The operator reports that community messages have already been retained "
-                        "outside Discord. Storage location, who has access, the retention period, "
+                        "The operator reports that all server messages are logged and community "
+                        "messages have been retained outside Discord. Logging is separate from "
+                        "public archive publication and the planned activity dashboard; logging alone "
+                        "is not permission for public posting or AI uses. Storage location, who has "
+                        "access, the retention period, "
                         "and any previous AI use are not yet documented in this notice. "
                         "This is not a complete data-handling disclosure."
                     </p>
@@ -100,6 +103,111 @@ pub fn CommunityPolicyPage() -> impl IntoView {
                         "does not promise deletion from every copy, reversal of completed training, "
                         "or model unlearning. We cannot guarantee removal of copies downloaded "
                         "or cached by third parties or search engines."
+                    </p>
+                </section>
+
+                <section class="mt-10 space-y-4 text-slate-300">
+                    <h2 class="text-xl font-semibold text-white">"Community activity dashboard"</h2>
+                    <p>
+                        "The planned community activity dashboard will publish only limited Discord "
+                        "activity metadata for participants who authorize the applicable uses. This "
+                        "policy does not establish that a listener is active or that dashboard consent "
+                        "controls are implemented. Dashboard permission does not authorize publishing "
+                        "message bodies, attachments, searchable conversation archives, tokens, private "
+                        "consent records, or backup material. Public dashboard snapshots will not "
+                        "include any of that material. Server message logging and the separately tracked "
+                        "searchable archive are not part of this dashboard authorization; this policy amendment alone does "
+                        "not authorize posting chats."
+                    </p>
+                    <p>"Permissions remain separate for:"</p>
+                    <ul class="list-disc space-y-2 pl-6">
+                        <li>"Contributing to aggregate activity statistics."</li>
+                        <li>"Publishing identified message counts."</li>
+                        <li>"Collecting Discord-reported presence."</li>
+                        <li>"Publishing identified presence history."</li>
+                    </ul>
+                    <p>
+                        "Agreement to one scope does not authorize another. Joining the server, "
+                        "receiving a notice, remaining a member, or remaining silent does not grant "
+                        "permission. Participation in the community does not require opting in."
+                    </p>
+                    <p>
+                        "Before collecting or publishing activity under these scopes, we will explain "
+                        "the included information, identifying details, public recipients, and withdrawal "
+                        "controls. Public-sharing permission must explicitly cover persistent historical "
+                        "downloads and the published-history limits below. Permission given under an "
+                        "earlier, narrower explanation does not by itself authorize this expanded scope."
+                    </p>
+                </section>
+
+                <section class="mt-10 space-y-4 text-slate-300">
+                    <h2 class="text-xl font-semibold text-white">"Publication delay and dashboard visibility"</h2>
+                    <p>
+                        "We will not publish an individual's presence observation until at least one "
+                        "hour after that observation. This delay applies before public snapshot uploads "
+                        "to Git LFS as well as display on the dashboard."
+                    </p>
+                    <p>
+                        "The dashboard will show a rolling seven-day window of permitted presence and "
+                        "message-count activity. Seven days describes what appears on the current "
+                        "dashboard; it is not a promise to delete previously published data after seven days."
+                    </p>
+                    <p>
+                        "Presence describes what Discord reported. Disconnected, stale, or missing "
+                        "observations will appear as unknown, not as inferred inactivity. We will not "
+                        "reconstruct historical presence from message timestamps. We will suppress "
+                        "aggregates that could expose nonparticipants or unsafe small groups."
+                    </p>
+                </section>
+
+                <section class="mt-10 space-y-4 text-slate-300">
+                    <h2 class="text-xl font-semibold text-white">"Public snapshots and published history"</h2>
+                    <p>
+                        "Filtered activity snapshots are intended for publication using Git Large File "
+                        "Storage (Git LFS) in the public "
+                        <a href="https://github.com/tyler274/DabneyMoeWebsite">"DabneyMoeWebsite repository"</a>
+                        ". Publication makes this information available beyond the dashboard itself."
+                    </p>
+                    <p>
+                        "Older snapshots, repository history, LFS pointers, and LFS objects may remain "
+                        "accessible after information leaves the seven-day dashboard window. People may "
+                        "download or copy them. Removing a current file, repository reference, or dashboard "
+                        "entry does not reliably erase the underlying published objects or previously "
+                        "obtained copies."
+                    </p>
+                    <p>
+                        "Dashboard access checks, cache controls, and requests not to index the page "
+                        "(noindex) do not control historical downloads or prevent copying. There is no "
+                        "automatic seven-day purge of published history. We also do not guarantee that "
+                        "published history will remain available forever."
+                    </p>
+                </section>
+
+                <section class="mt-10 space-y-4 text-slate-300">
+                    <h2 class="text-xl font-semibold text-white">"Activity withdrawal and removal"</h2>
+                    <p>
+                        "You may withdraw any activity scope independently through its announced "
+                        "controls or by contacting server moderators privately. You do not need to "
+                        "repost sensitive information publicly."
+                    </p>
+                    <p>
+                        "Withdrawal stops the affected collection and excludes the affected data from "
+                        "future published snapshots. We will remove affected individual information "
+                        "from the current dashboard and invalidate its current serving caches. Restoring "
+                        "or replaying old data must not reinstate withdrawn permission or restore affected "
+                        "information to the current dashboard."
+                    </p>
+                    <p>
+                        "Withdrawal does not reliably erase snapshots already published, Git or LFS "
+                        "history, historical downloads, or third-party copies. Those copies may remain "
+                        "accessible after withdrawal. Moderators will explain what a request covers, "
+                        "what action can be taken, and these limits."
+                    </p>
+                    <p>
+                        "This dashboard permission does not authorize AI training, AI retrieval, "
+                        "impersonation, public conversations, or other uses covered separately by this "
+                        "policy. Material expansions require renewed affirmative permission before "
+                        "they take effect."
                     </p>
                 </section>
 

@@ -22,7 +22,7 @@ pub fn mount_coda_static<S>(router: axum::Router<S>, site_root: &str) -> axum::R
 where
     S: Clone + Send + Sync + 'static,
 {
-    mount_coda_routes(router, site_root, None)
+    mount_coda_routes_with_embedded(router, site_root, None, None)
 }
 
 #[cfg(feature = "ssr")]
@@ -30,6 +30,39 @@ pub fn mount_coda_routes<S>(
     router: axum::Router<S>,
     site_root: &str,
     api_proxy: Option<coda_proxy::CodaApiProxyConfig>,
+) -> axum::Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    mount_coda_routes_with_embedded(router, site_root, api_proxy, None)
+}
+
+#[cfg(feature = "ssr")]
+pub async fn build_embedded_coda_api(site_root: &str) -> Result<axum::Router, String> {
+    use std::path::PathBuf;
+    use tower_http::limit::RequestBodyLimitLayer;
+
+    let seed_path = PathBuf::from(site_root).join("coda/physician/demo.sqlite");
+    let seed_bytes = std::fs::read(&seed_path)
+        .map_err(|err| format!("failed to read {}: {err}", seed_path.display()))?;
+    let state = physician_demo_api::DemoApiState::from_env_with(seed_bytes, |key| {
+        if key == "CODA_DEMO_ALLOW_CORS" {
+            return Some(std::env::var(key).ok().unwrap_or_else(|| "0".to_string()));
+        }
+        std::env::var(key).ok()
+    })
+    .await?;
+    Ok(state
+        .into_router()
+        .layer(RequestBodyLimitLayer::new(8 * 1024 * 1024)))
+}
+
+#[cfg(feature = "ssr")]
+pub fn mount_coda_routes_with_embedded<S>(
+    router: axum::Router<S>,
+    site_root: &str,
+    api_proxy: Option<coda_proxy::CodaApiProxyConfig>,
+    embedded_api: Option<axum::Router>,
 ) -> axum::Router<S>
 where
     S: Clone + Send + Sync + 'static,
@@ -72,6 +105,8 @@ where
     let mut api_router = axum::Router::new();
     if let Some(cfg) = api_proxy {
         api_router = api_router.merge(coda_proxy::coda_nested_api_proxy_router(cfg));
+    } else if let Some(embedded) = embedded_api {
+        api_router = api_router.nest("/physician/api", embedded);
     } else {
         api_router = api_router.merge(coda_proxy::coda_nested_api_disabled_router());
     }
@@ -224,6 +259,53 @@ mod tests {
                     "We cannot guarantee removal",
                     "new uses require renewed permission",
                     "Silence is not agreement",
+                    "all server messages are logged",
+                    "logging alone is not permission for public posting or AI uses",
+                    "Community activity dashboard",
+                    "Public dashboard snapshots will not include any of that material",
+                    "Server message logging and the separately tracked searchable archive are not part",
+                    "planned community activity dashboard",
+                    "does not establish that a listener is active",
+                    "message bodies, attachments, searchable conversation archives, tokens",
+                    "private consent records, or backup material",
+                    "separately tracked searchable archive",
+                    "does not authorize posting chats",
+                    "Contributing to aggregate activity statistics",
+                    "Publishing identified message counts",
+                    "Collecting Discord-reported presence",
+                    "Publishing identified presence history",
+                    "Agreement to one scope does not authorize another",
+                    "Participation in the community does not require opting in",
+                    "Public-sharing permission must explicitly cover persistent historical downloads",
+                    "earlier, narrower explanation does not by itself authorize this expanded scope",
+                    "Publication delay and dashboard visibility",
+                    "at least one hour after that observation",
+                    "delay applies before public snapshot uploads to Git LFS",
+                    "rolling seven-day window",
+                    "not a promise to delete previously published data after seven days",
+                    "Presence describes what Discord reported",
+                    "unknown, not as inferred inactivity",
+                    "not reconstruct historical presence from message timestamps",
+                    "suppress aggregates that could expose nonparticipants or unsafe small groups",
+                    "Public snapshots and published history",
+                    "LFS pointers, and LFS objects may remain accessible",
+                    "does not reliably erase the underlying published objects",
+                    "(noindex) do not control historical downloads or prevent copying",
+                    "no automatic seven-day purge of published history",
+                    "do not guarantee that published history will remain available forever",
+                    "Activity withdrawal and removal",
+                    "withdraw any activity scope independently through its announced controls",
+                    "contacting server moderators privately",
+                    "Withdrawal stops the affected collection",
+                    "excludes the affected data from future published snapshots",
+                    "remove affected individual information from the current dashboard",
+                    "invalidate its current serving caches",
+                    "must not reinstate withdrawn permission",
+                    "Withdrawal does not reliably erase snapshots already published",
+                    "Those copies may remain accessible after withdrawal",
+                    "does not authorize AI training, AI retrieval, impersonation, public conversations",
+                    "Material expansions require renewed affirmative permission",
+                    "href=\"https://github.com/tyler274/DabneyMoeWebsite\"",
                 ] {
                     assert!(html.contains(text), "missing policy text: {text}");
                 }
@@ -473,5 +555,61 @@ mod tests {
         let sse_text = String::from_utf8_lossy(&sse_bytes);
         assert!(sse_text.contains("event: workspace_changed"));
         assert!(sse_text.contains("\"workspace_id\":\"pw-1\""));
+    }
+
+    #[tokio::test]
+    async fn embedded_coda_api_mints_demo_session_and_serves_today_and_health() {
+        let public_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../public");
+        let embedded = super::build_embedded_coda_api(public_root.to_str().unwrap())
+            .await
+            .expect("build embedded Coda physician demo API");
+        let app = super::mount_coda_routes_with_embedded(
+            Router::<()>::new(),
+            public_root.to_str().unwrap(),
+            None,
+            Some(embedded),
+        );
+
+        let health = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/coda/physician/api/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(health.status(), StatusCode::OK);
+
+        let session_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/coda/physician/api/auth/demo-session")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(session_resp.status(), StatusCode::OK);
+        let session_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(session_resp.into_body(), 64 * 1024).await.unwrap())
+                .unwrap();
+        let token = session_json["session"].as_str().expect("session token");
+
+        let today = app
+            .oneshot(
+                Request::builder()
+                    .uri("/coda/physician/api/today")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(today.status(), StatusCode::OK);
     }
 }

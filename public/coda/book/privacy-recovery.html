@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-df04c4d9.js";
+            window.path_to_searchindex_js = "searchindex-6556f8e8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4caaaa21.js"></script>
@@ -213,9 +213,14 @@ the independent inventory. Establish its provenance and completeness separately.
 then record deletion or withdrawal in the independent journal. Restore the older
 SQL into an isolated target and replay the newer inventory. Check the stored
 restriction and refusal through the product owner, including repeat replay and
-missing-journal refusal, before any claim that deleted data cannot return. The
-physician database has its own schema, principals and readback checks; it does
-not import Duet’s privacy types.</p>
+missing-journal refusal, before any claim that deleted data cannot return. When
+an account held a Connected Care mapping, <code>public.duet_deleted_identities</code> retains
+<code>front_door_account_id</code>, and both <a href="/crates/duet-api/src/bin/duet-privacy-replay.rs"><code>duet-privacy-replay</code></a>
+and startup reconciliation configure <code>FRONT_DOOR_DATABASE_URL</code> or <code>FRONT_DOOR_URL</code>
+with <code>FRONT_DOOR_OPERATOR_TOKEN</code> so <code>AccountDelete</code> replay idempotently ends
+front-door connections and scrubs front-door staging even when the front-door
+database was restored from an older backup. The physician database has its own
+schema, principals and readback checks; it does not import Duet’s privacy types.</p>
 <p><a href="gcp.html">GCP recovery</a> owns disposable cloud targets and operator approval. Record
 backup identity, target, replay evidence and validation results together. A
 successful SQL restore operation, a local file-journal test or a ready process

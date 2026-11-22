@@ -16,6 +16,7 @@ pub mod community_activity;
 pub mod community_policy;
 pub mod consent;
 pub mod data;
+pub mod koizetsu;
 pub mod portfolio;
 pub mod portfolio_chart;
 pub mod privacy;
@@ -103,6 +104,7 @@ pub fn App() -> impl IntoView {
                 <Routes fallback=|| view! { <HomePage /> }>
                     <Route path=StaticSegment("") view=HomePage />
                     <Route path=StaticSegment("privacy") view=PrivacyPage />
+                    <Route path=StaticSegment("koizetsu") view=koizetsu::KoizetsuPage />
                     <Route path=StaticSegment("community-policy") view=CommunityPolicyPage />
                     <Route path=StaticSegment("community-activity") view=community_activity::CommunityActivityPage ssr=leptos_router::SsrMode::Async />
                     <Route

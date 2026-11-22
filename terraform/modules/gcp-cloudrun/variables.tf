@@ -35,13 +35,13 @@ variable "container_port" {
 variable "cpu" {
   type        = string
   description = "CPU limit per instance."
-  default     = "1"
+  default     = "4"
 }
 
 variable "memory" {
   type        = string
   description = "Memory limit per instance."
-  default     = "512Mi"
+  default     = "4Gi"
 }
 
 variable "min_instances" {
