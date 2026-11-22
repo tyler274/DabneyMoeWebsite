@@ -172,6 +172,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn community_policy_is_server_rendered_and_linked_from_home() {
+        use leptos::prelude::LeptosOptions;
+        use leptos_axum::LeptosRoutes;
+
+        let options = LeptosOptions::builder().output_name("dabney").build();
+        let app = Router::new()
+            .leptos_routes(&options, generate_route_list(App), {
+                let options = options.clone();
+                move || ui::shell(options.clone())
+            })
+            .with_state(options);
+
+        for path in ["/community-policy", "/"] {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+            let html = String::from_utf8(body.to_vec()).unwrap();
+            assert!(html.contains("href=\"/community-policy\""), "{path}");
+            assert!(html.contains("Community policy"), "{path}");
+            if path == "/community-policy" {
+                for text in [
+                    "Community Data and Sharing Policy",
+                    "outside Discord",
+                    "any previous AI use are not yet documented",
+                    "not a complete data-handling disclosure",
+                    "AI model training or fine-tuning",
+                    "AI retrieval or reference, human training, and memorial preservation",
+                    "intended purposes, not a claim",
+                    "consent controls are implemented",
+                    "Joining or remaining in the server is not consent",
+                    "Permission to back up messages is not permission to publish",
+                    "impersonate a participant with AI",
+                    "each require separate, affirmative permission",
+                    "affirmative opt-in covering",
+                    "names, handles, or other identifying information",
+                    "public search and search-engine indexing",
+                    "Private community participation does not require",
+                    "does not retroactively authorize use or publication",
+                    "private health, legal, or contact",
+                    "Contact server moderators",
+                    "Deletion capabilities and timelines",
+                    "does not promise deletion from every copy",
+                    "model unlearning",
+                    "We cannot guarantee removal",
+                    "new uses require renewed permission",
+                    "Silence is not agreement",
+                ] {
+                    assert!(html.contains(text), "missing policy text: {text}");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn coda_subpath_serves_exported_site_demo_book_and_directory_redirects() {
         let public_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../public");
         let app = mount_coda_static(Router::<()>::new(), public_root.to_str().unwrap());

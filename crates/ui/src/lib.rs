@@ -9,6 +9,7 @@
 pub mod analytics;
 pub mod commissions;
 pub mod commissions_data;
+pub mod community_policy;
 pub mod consent;
 pub mod data;
 pub mod portfolio;
@@ -25,6 +26,7 @@ use leptos_router::StaticSegment;
 
 use analytics::{AnalyticsHead, AnalyticsRuntime};
 use commissions::{ArtworkPage, LapidaryPage, SongsPage};
+use community_policy::CommunityPolicyPage;
 use consent::{provide_consent_context, ConsentBanner};
 use privacy::PrivacyPage;
 use tools::InvestmentAccountPage;
@@ -97,6 +99,7 @@ pub fn App() -> impl IntoView {
                 <Routes fallback=|| view! { <HomePage /> }>
                     <Route path=StaticSegment("") view=HomePage />
                     <Route path=StaticSegment("privacy") view=PrivacyPage />
+                    <Route path=StaticSegment("community-policy") view=CommunityPolicyPage />
                     <Route
                         path=(StaticSegment("tools"), StaticSegment("investment-account"))
                         view=InvestmentAccountPage
