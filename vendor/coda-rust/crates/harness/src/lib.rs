@@ -1,10 +1,12 @@
-//! Product-neutral bounded execution and the existing skill catalog surface.
+//! Product-neutral bounded execution, memory, orchestration, control-plane, and skill surfaces.
 //!
 //! [`engine`] owns the provider/tool loop and ordered turn. [`engine::Product`] binds it
 //! to accepted work. [`responses`] owns the API wire protocol. Product hosts retain authority, effects,
 //! and persistence. The harness reconstructs recovery from their admitted records and messages.
 //! [`skills::Package`] holds the admitted skill catalog. A skill
-//! never authorizes a tool or a patient read. Spec:
+//! never authorizes a tool or a patient read. [`palace`] provides verbatim wing/room/drawer
+//! memory, [`swarm`] provides typed multi-agent orchestration, and [`acp`] provides a
+//! JSON-RPC / NDJSON control-plane bridge with fail-closed approvals. Spec:
 //! `intent/harness.md`.
 #![deny(missing_docs)]
 #![allow(
@@ -15,12 +17,14 @@
 #[cfg(test)]
 extern crate self as harness;
 
+pub mod acp;
 pub mod engine;
-
+pub mod palace;
 pub mod provider;
 pub mod responses;
 pub mod settings;
 pub mod skills;
+pub mod swarm;
 pub mod transport;
 
 /// Opaque provider cache partition for a product-owned conversation or job.

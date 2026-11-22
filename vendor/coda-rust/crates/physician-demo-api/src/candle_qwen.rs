@@ -16,22 +16,22 @@ use sha2::{Digest, Sha256};
 use tokenizers::Tokenizer;
 use tokio::sync::{OnceCell, Semaphore, mpsc};
 
-/// Official HuggingFace URL for `Qwen3-0.6B` Q8_0 GGUF weights.
+/// HuggingFace URL for `Qwen3-1.7B` Q4_K_M GGUF weights.
 pub const QWEN_GGUF_URL: &str =
-    "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf";
-/// Verified SHA-256 hex digest of `Qwen3-0.6B-Q8_0.gguf`.
+    "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf";
+/// Verified SHA-256 hex digest of `Qwen3-1.7B-Q4_K_M.gguf`.
 pub const QWEN_GGUF_SHA256: &str =
-    "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031";
-/// Official HuggingFace URL for `Qwen3-0.6B` `tokenizer.json`.
+    "b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897";
+/// Official HuggingFace URL for `Qwen3-1.7B` `tokenizer.json`.
 pub const QWEN_TOKENIZER_URL: &str =
-    "https://huggingface.co/Qwen/Qwen3-0.6B/resolve/main/tokenizer.json";
-/// Verified SHA-256 hex digest of `Qwen3-0.6B` `tokenizer.json`.
+    "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/main/tokenizer.json";
+/// Verified SHA-256 hex digest of `Qwen3-1.7B` `tokenizer.json`.
 pub const QWEN_TOKENIZER_SHA256: &str =
     "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4";
 
-const DEFAULT_CACHED_GGUF_FILENAME: &str = "Qwen3-0.6B-Q8_0.gguf";
+const DEFAULT_CACHED_GGUF_FILENAME: &str = "Qwen3-1.7B-Q4_K_M.gguf";
 const DEFAULT_CACHED_TOKENIZER_FILENAME: &str = "qwen3-tokenizer.json";
-const DEFAULT_MODEL_LABEL: &str = "qwen3-0.6b-q8_0";
+const DEFAULT_MODEL_LABEL: &str = "qwen3-1.7b-q4_k_m";
 
 /// Env var specifying pre-baked local GGUF model path (skips network download).
 pub const CODA_CANDLE_GGUF_PATH_ENV: &str = "CODA_CANDLE_GGUF_PATH";
@@ -284,7 +284,7 @@ impl CandleQwenRuntime {
         }
     }
 
-    /// Configured model label exposed before weights load (GGUF file stem or default `qwen3-0.6b-q8_0`).
+    /// Configured model label exposed before weights load (GGUF file stem or default `qwen3-1.7b-q4_k_m`).
     pub fn model_label(&self) -> &str {
         &self.model_label
     }
@@ -1512,5 +1512,29 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "chart_search");
         assert!(calls[0].arguments.contains("A1c"));
+    }
+
+    #[test]
+    fn default_config_targets_qwen3_1_7b_q4_k_m() {
+        let cfg = CandleQwenConfig::default();
+        assert_eq!(
+            cfg.gguf_url,
+            "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf"
+        );
+        assert_eq!(
+            cfg.gguf_sha256,
+            "b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897"
+        );
+        assert_eq!(
+            cfg.tokenizer_url,
+            "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/main/tokenizer.json"
+        );
+        assert_eq!(
+            cfg.tokenizer_sha256,
+            "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
+        );
+        assert_eq!(DEFAULT_CACHED_GGUF_FILENAME, "Qwen3-1.7B-Q4_K_M.gguf");
+        let rt = CandleQwenRuntime::new(cfg);
+        assert_eq!(rt.model_label(), "qwen3-1.7b-q4_k_m");
     }
 }
