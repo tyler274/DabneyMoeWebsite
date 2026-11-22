@@ -81,6 +81,8 @@ jobs:
     if: needs.scope.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      image: ${{ steps.check.outputs.image }}
     steps:
       - uses: actions/checkout@v6
       # The GHCR package is private, so the registry lookup below needs a login.
@@ -91,13 +93,18 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Fast-path: skip only when a local image actually runs `nix`. A stale tag
-      # (partial pull, old bootstrap) can exist without a working Nix install.
+      # Fast-path: skip when the image for this Cargo.lock + ci.Dockerfile is
+      # already in GHCR (or, under act, in the local Docker daemon and able to
+      # run `nix`; a stale tag can exist without a working Nix install).
       #
       # The tag is computed here, before the vendor dir exists, and reused when
       # pushing. Hashing `**/Cargo.lock` again after vendoring also picks up
       # lockfiles shipped inside vendored crates, so the pushed tag never
       # matched this lookup and the image was rebuilt on every run.
+      #
+      # Container jobs run the pinned tag from this job's `image` output, not
+      # `latest`: `latest` may have been pushed by a branch with another
+      # Cargo.lock, whose vendored crates would not satisfy an offline build.
       - name: Check if image already exists
         id: check
         env:
@@ -110,15 +117,19 @@ jobs:
             docker image inspect "$1" > /dev/null 2>&1 \
               && docker run --rm "$1" nix --version > /dev/null 2>&1
           }
-          if image_ready "${IMAGE}:latest"; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          elif image_ready "$TAG_HASH"; then
+          ref="$TAG_HASH"
+          if image_ready "$TAG_HASH"; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           elif docker manifest inspect "$TAG_HASH" > /dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "${ACT:-}" ] && image_ready "${IMAGE}:latest"; then
+            # Local runs reuse whatever working image is already loaded.
+            ref="${IMAGE}:latest"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
+          echo "image=${ref}" >> "$GITHUB_OUTPUT"
       # === Local act path =====================================================
       # Build an image with Nix pre-installed directly from the Docker daemon.
       # No Cargo vendoring (downstream jobs fetch as needed for local testing).
@@ -197,7 +208,7 @@ jobs:
       # act sometimes drops Dockerfile ENV; keep Nix on PATH.
       PATH: /nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     container:
-      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      image: ${{ needs.build-ci-image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -225,7 +236,7 @@ jobs:
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_DEV_DEBUG: '0'
     container:
-      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      image: ${{ needs.build-ci-image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -282,7 +293,7 @@ jobs:
       # act sometimes drops Dockerfile ENV; keep Nix on PATH.
       PATH: /nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     container:
-      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      image: ${{ needs.build-ci-image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -345,7 +356,7 @@ jobs:
       # act sometimes drops Dockerfile ENV; keep Nix on PATH.
       PATH: /nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     container:
-      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      image: ${{ needs.build-ci-image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -395,7 +406,7 @@ jobs:
       # act sometimes drops Dockerfile ENV; keep Nix on PATH.
       PATH: /nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     container:
-      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      image: ${{ needs.build-ci-image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -457,7 +468,7 @@ jobs:
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_DEV_DEBUG: '0'
     container:
-      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      image: ${{ needs.build-ci-image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -511,7 +522,7 @@ jobs:
       # act sometimes drops Dockerfile ENV; keep Nix on PATH.
       PATH: /nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     container:
-      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      image: ${{ needs.build-ci-image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
