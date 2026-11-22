@@ -139,8 +139,11 @@ How the workflow is laid out:
   job without the CI image and does not gate the deploy, so a newly published
   advisory cannot block shipping otherwise unchanged code.
 - **Rust build cache.** Clippy, tests, the web build, and the desktop build
-  restore `target/` from the Actions cache, keyed by job, `rustc` version, and
-  `Cargo.lock` + `flake.lock`. Only runs on `main` save it, after
+  restore `target/` from the Actions cache, keyed by job, `rustc` version,
+  `flake.lock`, and `Cargo.lock`. A changed `Cargo.lock` falls back to the
+  newest cache for the same `flake.lock`; a changed `flake.lock` starts cold,
+  because cached build scripts and proc macros link against the old pin's
+  glibc store path and cannot run under the new one. Only runs on `main` save it, after
   [`scripts/ci-trim-target.sh`](scripts/ci-trim-target.sh) strips workspace
   outputs so only dependency artifacts are stored. Pull requests read the
   cache but never write it.

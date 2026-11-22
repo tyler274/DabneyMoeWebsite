@@ -37,7 +37,9 @@ permissions:
 # test, build-web and build-image, so wall time is the slowest gate, not the sum.
 #
 # Rust build cache: clippy, test, build-web and build-desktop restore `target/`
-# keyed by job, rustc version and lockfiles. Crate sources are vendored in the
+# keyed by job, rustc version, flake.lock and Cargo.lock. The fallback key
+# keeps flake.lock: cached build scripts and proc macros link against the
+# pinned glibc store path and cannot run after a nixpkgs bump. Crate sources are vendored in the
 # CI image, so there is no registry to cache. Only runs on main save, after
 # scripts/ci-trim-target.sh strips workspace outputs, so pull requests read the
 # cache without filling the 10 GB repository limit. Cache steps never fail a
@@ -287,9 +289,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: target
-          key: rust-v1-clippy-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          key: rust-v1-clippy-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            rust-v1-clippy-${{ steps.rustc.outputs.version }}-
+            rust-v1-clippy-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-
       - name: "clippy: ui (ssr)"
         run: nix develop -c cargo clippy -p ui --features ssr -- -D warnings
       - name: "clippy: web (ssr)"
@@ -344,9 +346,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: target
-          key: rust-v1-build-web-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          key: rust-v1-build-web-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            rust-v1-build-web-${{ steps.rustc.outputs.version }}-
+            rust-v1-build-web-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-
       - name: cargo leptos build --release
         run: nix develop -c cargo leptos build --release
       # act's built-in artifact server doesn't speak the upload-artifact@v7
@@ -407,9 +409,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: target
-          key: rust-v1-build-desktop-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          key: rust-v1-build-desktop-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            rust-v1-build-desktop-${{ steps.rustc.outputs.version }}-
+            rust-v1-build-desktop-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-
       - name: cargo tauri build --no-bundle
         run: nix develop -c cargo tauri build --no-bundle
       - name: Prepare Rust cache payload
@@ -519,9 +521,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: target
-          key: rust-v1-test-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          key: rust-v1-test-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            rust-v1-test-${{ steps.rustc.outputs.version }}-
+            rust-v1-test-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-
       - name: "test: ui (data + ssr render)"
         run: nix develop -c cargo test -p ui --features ssr
       - name: "test: web (ssr route list)"
