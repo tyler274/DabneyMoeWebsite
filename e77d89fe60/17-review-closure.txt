@@ -1,0 +1,11 @@
+**The visibility evidence gap is closed by the recorded browser assertion.** The prior assessment of no blocking code defects stands.
+
+Verified revision `e77d89fe60f628654a8c84e4866f57e7d4a2749f`, a clean working tree, and the unchanged cumulative diff hash.
+
+The new [visibility assertion](/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets/target/verification/cookie-visible.json) records one visible dialog at `/`, containing “Cookie preferences,” “Save preferences,” and “Cancel,” with positive dimensions fully inside the viewport.
+
+The replacement screenshot is still unusable as visual proof: it is only **2165 × 16 pixels** and does not show the dialog. This does not keep the gap open because the recorded visibility assertion supplies the alternative evidence requested.
+
+Ready for PR review with the remaining limits explicit: glibc image build/runtime and full-workspace formatting remain unverified; Tauri runtime, production correction, and cross-revision rollout behavior are not established. The local browser evidence uses legacy cache fixtures rather than exact historical production bytes.
+
+No source changes or broader review were performed.

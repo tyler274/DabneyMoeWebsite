@@ -1,0 +1,66 @@
+{
+  "package": "/nix/store/arn2ylpdqdnr700m2dsdh9h028gmi6l4-dabney-web-static-0.1.0",
+  "manifest": {
+    "js": "8iehPB-74NPwP8DuueboQQ",
+    "wasm": "FG_Ck8hNm-MKn7tzSHtxqQ",
+    "css": "jRAXAZLp8BeRMH7-RV-JGg"
+  },
+  "pages": [
+    {
+      "path": "/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "connection": "close",
+        "transfer-encoding": "chunked",
+        "date": "Sun, 22 Nov 2026 15:21:58 GMT"
+      },
+      "assets": [
+        {
+          "url": "/pkg/dabney.8iehPB-74NPwP8DuueboQQ.js",
+          "status": 200,
+          "bytes": 26866
+        },
+        {
+          "url": "/pkg/dabney.FG_Ck8hNm-MKn7tzSHtxqQ.wasm",
+          "status": 200,
+          "bytes": 1410973
+        },
+        {
+          "url": "/pkg/dabney.jRAXAZLp8BeRMH7-RV-JGg.css",
+          "status": 200,
+          "bytes": 21196
+        }
+      ]
+    },
+    {
+      "path": "/community-activity",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "private, no-store",
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "connection": "close",
+        "transfer-encoding": "chunked",
+        "date": "Sun, 22 Nov 2026 15:21:58 GMT"
+      },
+      "assets": [
+        {
+          "url": "/pkg/dabney.8iehPB-74NPwP8DuueboQQ.js",
+          "status": 200,
+          "bytes": 26866
+        },
+        {
+          "url": "/pkg/dabney.FG_Ck8hNm-MKn7tzSHtxqQ.wasm",
+          "status": 200,
+          "bytes": 1410973
+        },
+        {
+          "url": "/pkg/dabney.jRAXAZLp8BeRMH7-RV-JGg.css",
+          "status": 200,
+          "bytes": 21196
+        }
+      ]
+    }
+  ]
+}

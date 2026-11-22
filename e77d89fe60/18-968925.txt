@@ -1,0 +1,36 @@
+---
+pid: 230381
+cwd: "/home/luluco/code/DabneyMoeWebsite-hydration-assets"
+command: "nix develop --command bash -c 'git rev-parse HEAD; git status --short; test -L target && readlink target; test -f target/verification/proof/website-hydration-assets/manifest.json && .githooks/pre-push'"
+title: "Verify preserved worktree and hook regression resolution without patch changes no unnecessary verbosity"
+status: succeeded
+started_at: 2026-11-22T15:30:03.970Z
+running_for_ms: 8080     
+---
+dabney.moe dev shell
+  rustc 1.96.0 (ac68faa20 2026-05-25)
+  cargo-leptos 0.3.11
+  trunk 0.21.14
+  tauri 2.12.6
+  bun 1.4.4
+  python 3.14.10
+  gcloud 593.0.0
+  doppler v3.77.1
+
+  web (SSR):   cargo leptos watch
+  app (Tauri): cargo tauri dev
+  CI gate:     nix run .#ci
+  Android:     nix develop .#android
+e77d89fe60f628654a8c84e4866f57e7d4a2749f
+/home/luluco/.cache/coda-build/wt/website-hydration-assets
+==> nixpkgs-fmt (--check)
+0 / 11 would have been reformatted
+==> rustfmt (--check)
+==> yamlfmt (-lint)
+==> format checks passed
+
+---
+exit_code: 0
+elapsed_ms: 8080
+ended_at: 2026-11-22T15:30:12.050Z
+---

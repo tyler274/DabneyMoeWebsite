@@ -1,0 +1,282 @@
+{
+  "branch": "website-hydration-assets",
+  "entries": [
+    {
+      "id": 1,
+      "claim": "AC1",
+      "label": "Release build with hashed assets",
+      "kind": "file",
+      "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+      "dirty": false,
+      "recorded": "2026-11-22T15:21:57+00:00",
+      "files": [
+        "01-895310.txt"
+      ],
+      "source": "/home/luluco/.cursor/projects/home-luluco-code-coda-coda-rust/terminals/895310.txt",
+      "ok": true
+    },
+    {
+      "id": 2,
+      "claim": "AC2",
+      "label": "Production Nix image build",
+      "kind": "file",
+      "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+      "dirty": false,
+      "recorded": "2026-11-22T15:21:58+00:00",
+      "files": [
+        "02-895313.txt"
+      ],
+      "source": "/home/luluco/.cursor/projects/home-luluco-code-coda-coda-rust/terminals/895313.txt",
+      "ok": true
+    },
+    {
+      "id": 3,
+      "claim": "AC2",
+      "label": "Packaged SSR and asset HTTP proof",
+      "kind": "run",
+      "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+      "dirty": false,
+      "recorded": "2026-11-22T15:21:58+00:00",
+      "command": [
+        "python",
+        "target/verification/check_package.py"
+      ],
+      "expect": null,
+      "expect_fail": false,
+      "files": [
+        "03-Packaged-SSR-and-asset-HTTP-proof.log"
+      ],
+      "seconds": 0.1,
+      "exit": 0,
+      "ok": true
+    },
+    {
+      "id": 4,
+      "claim": "AC3",
+      "label": "Legacy cache navigation proof",
+      "kind": "file",
+      "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+      "dirty": false,
+      "recorded": "2026-11-22T15:21:58+00:00",
+      "files": [
+        "04-browser-proof.json"
+      ],
+      "source": "target/verification/browser-proof.json",
+      "ok": true,
+      "superseded": "Final navigation corrects proxy evidence; cookie screenshots unusable, raw visibility assertion is evidence"
+    },
+    {
+      "id": 5,
+      "claim": "AC3",
+      "label": "Dashboard after homepage click",
+      "kind": "screenshot",
+      "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+      "dirty": false,
+      "recorded": "2026-11-22T15:21:58+00:00",
+      "files": [
+        "05-hydration-fixed-dashboard-20261122.png"
+      ],
+      "source": "/tmp/cursor/screenshots/hydration-fixed-dashboard-20261122.png",
+      "ok": true
+    },
+    {
+      "id": 6,
+      "claim": "AC3",
+      "label": "Independent Cookie preferences",
+      "kind": "screenshot",
+      "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+      "dirty": false,
+      "recorded": "2026-11-22T15:21:58+00:00",
+      "files": [
+        "06-hydration-fixed-cookie-preferences-20261122.png"
+      ],
+      "source": "/tmp/cursor/screenshots/hydration-fixed-cookie-preferences-20261122.png",
+      "ok": true,
+      "superseded": "Reviewer found original viewport screenshot missed dialog; replaced with visibility assertion and element screenshot"
+    },
+    {
+      "id": 7,
+      "claim": "AC4",
+      "label": "Server and UI tests",
+      "kind": "file",
+      "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+      "dirty": false,
+      "recorded": "2026-11-22T15:21:58+00:00",
+      "files": [
+        "07-895314.txt"
+      ],
+      "source": "/home/luluco/.cursor/projects/home-luluco-code-coda-coda-rust/terminals/895314.txt",
+      "ok": true
+    },
+    {
+      "id": 8,
+      "claim": "AC4",
+      "label": "Clippy and CSR compile",
+      "kind": "file",
+      "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+      "dirty": false,
+      "recorded": "2026-11-22T15:21:58+00:00",
+      "files": [
+        "08-895315.txt"
+      ],
+      "source": "/home/luluco/.cursor/projects/home-luluco-code-coda-coda-rust/terminals/895315.txt",
+      "ok": true
+    },
+    {
+      "id": 9,
+      "claim": "AC1",
+      "label": "Before fix CSS regression failure",
+      "kind": "file",
+      "revision": "c2d157b94c1e8135e71267850f052816fb46cd6a",
+      "dirty": false,
+      "recorded": "2026-11-22T15:22:32+00:00",
+      "files": [
+        "09-895308.txt"
+      ],
+      "source": "/home/luluco/.cursor/projects/home-luluco-code-coda-coda-rust/terminals/895308.txt",
+      "ok": true,
+      "kept": {
+        "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+        "reason": "Intentional pre-fix failure; test added before implementation and failed on missing hashed CSS"
+      }
+    },
+    {
+      "id": 10,
+      "claim": "AC3",
+      "label": "Local cache test fixture",
+      "kind": "file",
+      "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+      "dirty": false,
+      "recorded": "2026-11-22T15:22:33+00:00",
+      "files": [
+        "10-cache_fixture.py"
+      ],
+      "source": "target/verification/cache_fixture.py",
+      "ok": true
+    },
+    {
+      "id": 11,
+      "claim": "AC4",
+      "label": "Acceptance and type ownership plan",
+      "kind": "file",
+      "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+      "dirty": false,
+      "recorded": "2026-11-22T15:22:33+00:00",
+      "files": [
+        "11-hydration-plan.txt"
+      ],
+      "source": "target/verification/hydration-plan.txt",
+      "ok": true
+    },
+    {
+      "id": 12,
+      "claim": "AC4",
+      "label": "Focused formatting",
+      "kind": "run",
+      "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+      "dirty": false,
+      "recorded": "2026-11-22T15:22:46+00:00",
+      "command": [
+        "rustfmt",
+        "--edition",
+        "2021",
+        "--check",
+        "crates/ui/src/lib.rs",
+        "crates/web/tests/hydration_assets.rs"
+      ],
+      "expect": null,
+      "expect_fail": false,
+      "files": [
+        "12-Focused-formatting.log"
+      ],
+      "seconds": 0.1,
+      "exit": 0,
+      "ok": true
+    },
+    {
+      "id": 13,
+      "claim": "AC3",
+      "label": "Raw cookie dialog visibility assertion",
+      "kind": "file",
+      "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+      "dirty": false,
+      "recorded": "2026-11-22T15:25:02+00:00",
+      "files": [
+        "13-cookie-visible.json"
+      ],
+      "source": "target/verification/cookie-visible.json",
+      "ok": true
+    },
+    {
+      "id": 14,
+      "claim": "AC3",
+      "label": "Visible cookie dialog",
+      "kind": "screenshot",
+      "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+      "dirty": false,
+      "recorded": "2026-11-22T15:25:02+00:00",
+      "files": [
+        "14-hydration-fixed-cookie-visible-20261122.png"
+      ],
+      "source": "/tmp/cursor/screenshots/hydration-fixed-cookie-visible-20261122.png",
+      "ok": true,
+      "superseded": "Final navigation corrects proxy evidence; cookie screenshots unusable, raw visibility assertion is evidence"
+    },
+    {
+      "id": 15,
+      "claim": "AC3",
+      "label": "Final navigation with API success",
+      "kind": "file",
+      "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+      "dirty": false,
+      "recorded": "2026-11-22T15:27:09+00:00",
+      "files": [
+        "15-browser-proof.json"
+      ],
+      "source": "target/verification/browser-proof.json",
+      "ok": true
+    },
+    {
+      "id": 16,
+      "claim": "AC4",
+      "label": "Independent read only review",
+      "kind": "file",
+      "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+      "dirty": false,
+      "recorded": "2026-11-22T15:27:09+00:00",
+      "files": [
+        "16-review-final.txt"
+      ],
+      "source": "target/verification/review-final.txt",
+      "ok": true
+    },
+    {
+      "id": 17,
+      "claim": "AC4",
+      "label": "Reviewer evidence closure",
+      "kind": "file",
+      "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+      "dirty": false,
+      "recorded": "2026-11-22T15:27:09+00:00",
+      "files": [
+        "17-review-closure.txt"
+      ],
+      "source": "target/verification/review-closure.txt",
+      "ok": true
+    },
+    {
+      "id": 18,
+      "claim": "AC4",
+      "label": "Full unchanged pre push hook after layout correction",
+      "kind": "file",
+      "revision": "e77d89fe60f628654a8c84e4866f57e7d4a2749f",
+      "dirty": false,
+      "recorded": "2026-11-22T15:30:58+00:00",
+      "files": [
+        "18-968925.txt"
+      ],
+      "source": "/home/luluco/.cursor/projects/home-luluco-code-coda-coda-rust/terminals/968925.txt",
+      "ok": true
+    }
+  ]
+}

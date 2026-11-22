@@ -1,0 +1,208 @@
+---
+pid: 25141
+cwd: "/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets"
+command: "nix develop --command bash -c 'rustfmt --edition 2021 crates/web/tests/hydration_assets.rs && cargo test -p web --features ssr && cargo test -p ui --no-default-features --features ssr'"
+title: "Run affected server and UI tests }"
+status: succeeded
+started_at: 2026-11-22T15:12:17.306Z
+running_for_ms: 114353   
+---
+warning: Git tree '/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets' is dirty
+dabney.moe dev shell
+  rustc 1.96.0 (ac68faa20 2026-05-25)
+  cargo-leptos 0.3.11
+  trunk 0.21.14
+  tauri 2.12.6
+  bun 1.4.4
+  python 3.14.10
+  gcloud 593.0.0
+  doppler v3.77.1
+
+  web (SSR):   cargo leptos watch
+  app (Tauri): cargo tauri dev
+  CI gate:     nix run .#ci
+  Android:     nix develop .#android
+   Compiling ui v0.1.0 (/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets/crates/ui)
+   Compiling web v0.1.0 (/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets/crates/web)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 20s
+     Running unittests src/lib.rs (target/debug/deps/web-1949f39f84dab621)
+
+running 7 tests
+test community_activity::tests::headers_cover_page_api_and_errors_without_affecting_home ... ok
+test tests::app_exposes_at_least_one_route ... ok
+test tests::coda_subpath_serves_exported_site_demo_book_and_directory_redirects ... ok
+test tests::community_policy_is_server_rendered_and_linked_from_home ... ok
+test community_activity::tests::dashboard_ssr_is_honest_and_not_indexed ... ok
+test tests::coda_api_proxy_streams_sse_enforces_origin_and_strips_cookies ... ok
+test tests::embedded_coda_api_mints_demo_session_and_serves_today_and_health ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running unittests src/main.rs (target/debug/deps/web-1bd2b296e41319be)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/hydration_assets.rs (target/debug/deps/hydration_assets-1adbf3c349cd9e3a)
+
+running 1 test
+test shell_resolves_every_asset_from_the_build_manifest ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests web
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling semver v1.0.28
+   Compiling serde_core v1.0.229
+   Compiling serde v1.0.229
+   Compiling stable_deref_trait v1.2.1
+   Compiling smallvec v1.16.6
+   Compiling writeable v0.6.4
+   Compiling litemap v0.8.3
+   Compiling generic-array v0.14.7
+   Compiling serde_json v1.0.154
+   Compiling either v1.19.0
+   Compiling syn v2.0.119
+   Compiling libc v0.2.191
+   Compiling form_urlencoded v1.2.3
+   Compiling zerofrom v0.1.8
+   Compiling cpufeatures v0.2.17
+   Compiling regex-automata v0.4.19
+   Compiling num-traits v0.2.19
+   Compiling tokio v1.54.1
+   Compiling any_spawner v0.3.0
+   Compiling yoke v0.8.4
+   Compiling itertools v0.14.0
+   Compiling proc-macro-utils v0.10.0
+   Compiling rustc_version v0.4.1
+   Compiling zerovec v0.11.9
+   Compiling zerotrie v0.2.5
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling server_fn_macro v0.8.12
+   Compiling reactive_graph v0.2.16
+   Compiling tachys v0.2.19
+   Compiling server_fn v0.8.13
+   Compiling leptos_macro v0.8.20
+   Compiling leptos v0.8.23
+   Compiling leptos_router v0.8.17
+   Compiling digest v0.10.7
+   Compiling quote-use-macros v0.9.0
+   Compiling manyhow-macros v0.14.1
+   Compiling sha2 v0.10.9
+   Compiling tinystr v0.8.5
+   Compiling potential_utf v0.1.6
+   Compiling icu_collections v2.4.0
+   Compiling icu_locale_core v2.4.0
+   Compiling chrono v0.4.45
+   Compiling quote-use v0.9.0
+   Compiling manyhow v0.14.1
+   Compiling getrandom v0.4.3
+   Compiling uuid v1.29.3
+   Compiling icu_provider v2.4.0
+   Compiling attribute-derive-macro v0.11.0
+   Compiling icu_normalizer v2.4.0
+   Compiling icu_properties v2.4.0
+   Compiling regex v1.13.2
+   Compiling config v0.15.27
+   Compiling csv v1.4.0
+   Compiling server_fn_macro_default v0.8.6
+   Compiling hydration_context v0.3.2
+   Compiling oco_ref v0.2.1
+   Compiling serde_qs v0.15.0
+   Compiling leptos_hot_reload v0.8.7
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling gloo-utils v0.2.0
+   Compiling codee v0.3.5
+   Compiling url v2.5.9
+   Compiling attribute-derive v0.11.0
+   Compiling reactive_stores_macro v0.4.4
+   Compiling thiserror-impl v1.0.69
+   Compiling typed-builder-macro v0.23.2
+   Compiling wasm_split_macros v0.2.2
+   Compiling leptos_router_macro v0.8.7
+   Compiling wasm_split_helpers v0.2.3
+   Compiling thiserror v1.0.69
+   Compiling gloo-net v0.6.0
+   Compiling reactive_stores v0.4.4
+   Compiling typed-builder v0.23.2
+   Compiling leptos_config v0.8.10
+   Compiling leptos_server v0.8.8
+   Compiling leptos_dom v0.8.8
+   Compiling leptos_meta v0.8.7
+   Compiling ui v0.1.0 (/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets/crates/ui)
+    Finished `test` profile [optimized + debuginfo] target(s) in 26.62s
+     Running unittests src/lib.rs (target/debug/deps/ui-c73c91829ef36a95)
+
+running 50 tests
+test activity_source::tests::aggregate_excludes_identified_operator_and_zero_padding ... ok
+test activity_source::tests::future_authority_and_missing_retention_scope_fail_closed ... ok
+test activity_source::tests::omission_and_expiry_remove_individuals ... ok
+test activity_source::tests::operator_withdrawal_sequence_keeps_aggregate_stable ... ok
+test activity_source::tests::mismatched_operator_identity_rejects_document ... ok
+test activity_source::tests::stale_future_and_expired_authority_fail_closed ... ok
+test activity_source::tests::synthetic_boundaries_and_unknown_gap ... ok
+test activity_source::tests::operator_series_withdrawal_does_not_change_published_aggregate ... ok
+test activity_source::tests::withdrawal_rechecks_authority_not_snapshot_membership ... ok
+test activity_source::tests::unknown_versions_and_content_fields_are_rejected ... ok
+test activity_source::tests::withdrawal_suppresses_whole_hour_even_above_threshold ... ok
+test activity_source::tests::withdrawal_sequence_removes_hour_then_stale_authority_closes_all_output ... ok
+test consent::tests::parse_accepted_consent ... ok
+test consent::tests::parse_invalid_returns_none ... ok
+test community_activity::tests::synthetic_chart_has_accessible_values_and_unknown_gaps ... ok
+test consent::tests::parse_rejected_consent ... ok
+test consent::tests::roundtrip_serialization ... ok
+test data::tests::about_copy_is_present ... ok
+test data::tests::experience_is_well_formed ... ok
+test data::tests::expertise_is_well_formed ... ok
+test data::tests::projects_are_well_formed ... ok
+test data::tests::services_are_well_formed ... ok
+test data::tests::skills_are_well_formed ... ok
+test data::tests::taglines_are_present ... ok
+test portfolio::allocate::tests::weighted_allocation_respects_custom_weights ... ok
+test portfolio::tests::parse::parse_dollar_matches_python ... ok
+test portfolio::tests::parse::load_portfolio_reads_raymond_james_exports ... ok
+test portfolio::tests::parse::load_portfolio_strips_utf8_bom ... ok
+test portfolio::tests::parse::parse_quantity_matches_python ... ok
+test portfolio::tests::parse::parse_withdrawal_matches_python_main ... ok
+test portfolio::tests::buy::buy_plan_matches_sell_plan_for_same_amounts ... ok
+test portfolio::tests::rebalance::analyze_rebalance_reads_target_portfolio_csv ... ok
+test portfolio::tests::rebalance::rebalance_deploys_cash_to_preserve_portfolio_weights ... ok
+test portfolio::tests::sell::compute_sell_plan_rejects_zero_fund_value ... ok
+test portfolio::tests::rebalance::rebalance_with_no_cash_is_all_holds ... ok
+test portfolio::tests::rebalance::target_weights_from_portfolio_csv ... ok
+test portfolio::tests::sell::rejects_empty_fund_holdings ... ok
+test portfolio::tests::sell::rejects_withdrawal_above_fund_value ... ok
+test portfolio::withholding::tests::ny_default_gross_from_net ... ok
+test portfolio::withholding::tests::rejects_withholding_at_or_above_100_percent ... ok
+test sections::render_tests::about_renders_copy_and_photo ... ok
+test sections::render_tests::contact_renders_links ... ok
+test sections::render_tests::hero_renders_profile_photo ... ok
+test sections::render_tests::hero_renders_tagline_and_summary ... ok
+test sections::render_tests::expertise_renders_every_area ... ok
+test sections::render_tests::experience_renders_every_role ... ok
+test sections::render_tests::services_render_every_entry ... ok
+test portfolio::tests::sell::sell_plan_matches_python_reference_for_all_portfolios ... ok
+test sections::render_tests::skills_render_every_group ... ok
+test sections::render_tests::projects_render_every_entry ... ok
+
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests ui
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+---
+exit_code: 0
+elapsed_ms: 114352
+ended_at: 2026-11-22T15:14:11.658Z
+---

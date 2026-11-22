@@ -1,0 +1,8 @@
+Scope: fix stale hydration JS/WASM cached across releases. No router, consent, policy, listener, production settings, infra or DNS changes.
+Base: c2d157b (current main when isolated worktree created); no active PR or branch owns hydration fix. PR 11 model image work merged before this base.
+AC1: Production build uses cargo-leptos supported hash-files configuration; SSR resolves matching JS/WASM and CSS from the generated manifest.
+AC2: Nix copies the manifest beside each server binary and enables hash resolution at runtime, for musl and glibc variants.
+AC3: Browser with cached legacy asset URLs loads new versioned assets, follows homepage Community activity link, and opens Cookie preferences only via its own button.
+AC4: Existing UI SSR/web tests and affected formatting/lint pass; independent read-only review reconciled before PR readiness.
+Type model: no new domain state or error path. Keep build identity in framework LeptosOptions and generated manifest rather than implementing custom URL strings/hash parsers. Build and runtime must share one manifest. CSS must move to framework HashedStylesheet in SSR shell; CSR/Tauri keeps existing stylesheet.
+Proof limits: local production-shaped output and old-cache browser exercise do not prove deployed correction or live Discord ingestion. Do not merge/deploy.

@@ -1,0 +1,19 @@
+The change implements the requested minimal correction. **No blocking code defects found.** Readiness remains conditional on the proof limits below.
+
+Reviewed the complete five-file change from `c2d157b94c1e` to `e77d89fe60f6`. It was committed during review; the cumulative diff remained unchanged and matches the browser record’s SHA-256.
+
+- [Cargo.toml](/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets/Cargo.toml:49) enables supported hashing. [The SSR shell](/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets/crates/ui/src/lib.rs:55) resolves CSS through `HashedStylesheet`; hydration scripts resolve JS/WASM from the same manifest. CSR retains its existing stylesheet behavior.
+- [Nix packaging](/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets/nix/web-server.nix:95) copies the manifest beside either binary and enables hashing in both images. These paths agree with [cargo-leptos 0.3.11’s manifest placement](https://raw.githubusercontent.com/leptos-rs/cargo-leptos/v0.3.11/src/config/hash_file.rs).
+- [The regression test](/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets/crates/web/tests/hydration_assets.rs:10) checks both routes and rejects unversioned JS/WASM/CSS references. The earlier failure specifically demonstrates the CSS regression.
+
+I inspected passing test, lint, CSR, release-build, and musl-image logs. The packaged HTTP proof verifies both pages reference assets whose served bytes match the installed package. Independently run diff, focused Rust formatting, and Nix formatting checks passed.
+
+Remaining proof limits:
+
+- **Glibc packaging:** source paths are consistent, but no glibc image build/runtime proof was available.
+- **Browser acceptance:** the matching [browser record](/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets/target/verification/browser-proof.json) reports cached legacy assets, successful navigation, and independent Cookie preferences behavior. However, its Cookie preferences screenshot does **not visibly show the dialog**. A visible capture or raw browser assertion would close that evidence gap; this is not an established product failure.
+- Full workspace formatting remains unverified under the reported nested-worktree limitation. Tauri runtime and production deployment were not exercised.
+
+Hashing protects newly served HTML from reusing stale unversioned assets. It does not refresh already-open pages or establish cross-revision asset availability during rollout.
+
+No source edits, publication, production changes, or private Discord inspection were performed.

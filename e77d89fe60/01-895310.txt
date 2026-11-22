@@ -1,0 +1,46 @@
+---
+pid: 12780
+cwd: "/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets"
+command: "nix develop --command cargo leptos build --release --cargo-locked"
+title: "Build versioned production bundle"
+status: succeeded
+started_at: 2026-11-22T15:11:10.850Z
+running_for_ms: 317302   
+---
+warning: Git tree '/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets' is dirty
+evaluation warning: stdenv.isLinux is deprecated, use stdenv.hostPlatform.isLinux instead
+evaluation warning: stdenv.isDarwin is deprecated, use stdenv.hostPlatform.isDarwin instead
+dabney.moe dev shell
+  rustc 1.96.0 (ac68faa20 2026-05-25)
+  cargo-leptos 0.3.11
+  trunk 0.21.14
+  tauri 2.12.6
+  bun 1.4.4
+  python 3.14.10
+  gcloud 593.0.0
+  doppler v3.77.1
+
+  web (SSR):   cargo leptos watch
+  app (Tauri): cargo tauri dev
+  CI gate:     nix run .#ci
+  Android:     nix develop .#android
+[38;5;77m  JavaScript[0m config files are no longer required in Tailwind CSS v4. If you still need to use a JS config file, refer to the docs here: https://tailwindcss.com/docs/upgrade-guide#using-a-javascript-config-file.
+[38;5;214m        Path[0m 'node_modules' folder not found, please install the required packages first
+[38;5;214m        Path[0m continuing without using 'node_modules'
+   Compiling ui v0.1.0 (/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets/crates/ui)
+[38;5;77m    Tailwind[0m finished [38;5;241mtailwindcss --input style/input.css --output /home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets/target/tmp/tailwind.css --minify[0m
+   Compiling web v0.1.0 (/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets/crates/web)
+    Finished `wasm-release` profile [optimized] target(s) in 18.36s
+[38;5;77m       Cargo[0m finished [38;5;241mcargo build --package=web --lib --target-dir=/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets/target/front --target=wasm32-unknown-unknown --no-default-features --features=hydrate --locked --profile=wasm-release[0m
+[38;5;77m       Front[0m generating JS/WASM with wasm-bindgen
+[38;5;77m    Finished[0m generating JS/WASM for front in 1.050099448s
+   Compiling ui v0.1.0 (/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets/crates/ui)
+   Compiling web v0.1.0 (/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets/crates/web)
+    Finished `release` profile [optimized] target(s) in 4m 49s
+[38;5;77m       Cargo[0m finished [38;5;241mcargo build --package=web --bin=web --no-default-features --features=ssr --locked --release[0m
+
+---
+exit_code: 0
+elapsed_ms: 317302
+ended_at: 2026-11-22T15:16:28.152Z
+---

@@ -1,0 +1,52 @@
+---
+pid: 18217
+cwd: "/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets"
+command: "nix develop --command nix build .#serverImage --no-link"
+title: "Build packaged production image"
+status: succeeded
+started_at: 2026-11-22T15:11:48.783Z
+running_for_ms: 436658   
+---
+warning: Git tree '/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets' is dirty
+dabney.moe dev shell
+  rustc 1.96.0 (ac68faa20 2026-05-25)
+  cargo-leptos 0.3.11
+  trunk 0.21.14
+  tauri 2.12.6
+  bun 1.4.4
+  python 3.14.10
+  gcloud 593.0.0
+  doppler v3.77.1
+
+  web (SSR):   cargo leptos watch
+  app (Tauri): cargo tauri dev
+  CI gate:     nix run .#ci
+  Android:     nix develop .#android
+warning: Git tree '/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets' is dirty
+evaluation warning: stdenv.isLinux is deprecated, use stdenv.hostPlatform.isLinux instead
+evaluation warning: stdenv.isDarwin is deprecated, use stdenv.hostPlatform.isDarwin instead
+these 9 derivations will be built:
+  /nix/store/swiy20c6il6axffazggm5yvcyyvzibvl-dabney-web-static-0.1.0.drv
+  /nix/store/70fw8zicycpkxjb42zf3xfc7kgiv5jr7-dabney-web-customisation-layer.drv
+  /nix/store/v4jvkl4zzrxixkpf73zng8kp9faf33d6-Qwen3-1.7B-Q4_K_M.gguf.drv
+  /nix/store/l5lxsqbaxqdhsihqkgkxdq733l210l9m-dabney-web-base.json.drv
+  /nix/store/jfsv6h4clb6qcqv5njvf5h96kkrnq1n4-excludePaths.drv
+  /nix/store/wia1c215pbai48vz3q5cdxqhah32ahm4-layers.json.drv
+  /nix/store/v5s5c71dyvs9lp9c7hag23kywzh0lvc1-dabney-web-conf.json.drv
+  /nix/store/1qrarn2h2wa0ajw6m1yp9kwh4k9jkqa5-stream-dabney-web.drv
+  /nix/store/z8y2si4qnwyc8yj2b3qpvbdc5v5m91jp-dabney-web.tar.gz.drv
+building '/nix/store/v4jvkl4zzrxixkpf73zng8kp9faf33d6-Qwen3-1.7B-Q4_K_M.gguf.drv'...
+building '/nix/store/swiy20c6il6axffazggm5yvcyyvzibvl-dabney-web-static-0.1.0.drv'...
+building '/nix/store/l5lxsqbaxqdhsihqkgkxdq733l210l9m-dabney-web-base.json.drv'...
+building '/nix/store/70fw8zicycpkxjb42zf3xfc7kgiv5jr7-dabney-web-customisation-layer.drv'...
+building '/nix/store/jfsv6h4clb6qcqv5njvf5h96kkrnq1n4-excludePaths.drv'...
+building '/nix/store/wia1c215pbai48vz3q5cdxqhah32ahm4-layers.json.drv'...
+building '/nix/store/v5s5c71dyvs9lp9c7hag23kywzh0lvc1-dabney-web-conf.json.drv'...
+building '/nix/store/1qrarn2h2wa0ajw6m1yp9kwh4k9jkqa5-stream-dabney-web.drv'...
+building '/nix/store/z8y2si4qnwyc8yj2b3qpvbdc5v5m91jp-dabney-web.tar.gz.drv'...
+
+---
+exit_code: 0
+elapsed_ms: 436657
+ended_at: 2026-11-22T15:19:05.440Z
+---

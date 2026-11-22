@@ -1,0 +1,13 @@
+{
+  "base": "c2d157b",
+  "diff_sha256": "9e4ec455aad7c112a0ba8e42170923a5f7ea8bac8f80d50a7bda408e36ab820f",
+  "url": "http://127.0.0.1:3050/",
+  "fixture": "cache_fixture.py: local proxy to release server 3049, primes legacy unversioned assets from prior worktree; not exact historical production cached bytes",
+  "cached_legacy_assets": [{"url":"/pkg/dabney.js","bytes":60815,"transferSize":0},{"url":"/pkg/dabney.wasm","bytes":3485392,"transferSize":0}],
+  "loaded_assets": [{"url":"/pkg/dabney.8iehPB-74NPwP8DuueboQQ.js","bytes":26866,"transferSize":27166},{"url":"/pkg/dabney.Era-6-KEOu5QAV2WOLO5XA.wasm","bytes":1404389,"transferSize":1404689},{"url":"/pkg/dabney.jRAXAZLp8BeRMH7-RV-JGg.css","bytes":21196,"transferSize":21496}],
+  "dashboard_click": {"path":"/community-activity","title":"Community activity | dabney.moe","marker":"same-document","dialogs":0,"status":"No publishable data. Source or current authorization is missing, stale, invalid, or unavailable; activity is unknown."},
+  "cookie_preferences_click": {"path":"/","heading":"Cookie preferences","buttons":["Save preferences","Cancel"],"result":"opens independently after returning Home"},
+  "screenshots": ["/tmp/cursor/screenshots/hydration-fixed-dashboard-20261122.png","/tmp/cursor/screenshots/hydration-fixed-cookie-preferences-20261122.png"],
+  "fixture_correction": "Initial proxy lacked POST forwarding causing loading status; corrected proxy, returned Home, clicked dashboard again, observed final unavailable state. Product unchanged.",
+  "limitations": ["No production deployment or changes", "No live Discord qualification", "Local CSR compile only, not Tauri runtime"]
+}

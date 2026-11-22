@@ -1,0 +1,51 @@
+---
+pid: 4189718
+cwd: "/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets"
+command: "nix develop --command cargo test -p web --features ssr --test hydration_assets"
+title: "Check manifest regression assertion"
+status: failed   
+started_at: 2026-11-22T15:09:12.668Z
+running_for_ms: 36134    
+---
+dabney.moe dev shell
+  rustc 1.96.0 (ac68faa20 2026-05-25)
+  cargo-leptos 0.3.11
+  trunk 0.21.14
+  tauri 2.12.6
+  bun 1.4.4
+  python 3.14.10
+  gcloud 593.0.0
+  doppler v3.77.1
+
+  web (SSR):   cargo leptos watch
+  app (Tauri): cargo tauri dev
+  CI gate:     nix run .#ci
+  Android:     nix develop .#android
+   Compiling web v0.1.0 (/home/luluco/code/DabneyMoeWebsite/.worktrees/website-hydration-assets/crates/web)
+    Finished `test` profile [optimized + debuginfo] target(s) in 30.67s
+     Running tests/hydration_assets.rs (target/debug/deps/hydration_assets-1adbf3c349cd9e3a)
+error: test failed, to rerun pass `-p web --test hydration_assets`
+
+running 1 test
+test shell_resolves_every_asset_from_the_build_manifest ... FAILED
+
+failures:
+
+---- shell_resolves_every_asset_from_the_build_manifest stdout ----
+
+thread 'shell_resolves_every_asset_from_the_build_manifest' (782) panicked at crates/web/tests/hydration_assets.rs:42:13:
+/ must reference /pkg/dabney.build-css.css
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    shell_resolves_every_asset_from_the_build_manifest
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+---
+exit_code: 101
+elapsed_ms: 36134
+ended_at: 2026-11-22T15:09:48.802Z
+---
