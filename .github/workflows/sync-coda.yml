@@ -1,7 +1,7 @@
 name: Sync Coda from coda-rust
 # Regenerate public/coda/ and vendor/coda-rust/ from tyler274/coda-rust (without
-# touching private submodules), refresh Cargo.lock, and push to main so the CI +
-# Cloud Run pipeline deploys the updated Coda public site and embedded harness.
+# touching private submodules), refresh Cargo.lock, and open a pull request so
+# CI validates the synced Coda public site and embedded harness before merge.
 on:
   workflow_dispatch:
     inputs:
@@ -17,6 +17,7 @@ concurrency:
   cancel-in-progress: true
 permissions:
   contents: write
+  pull-requests: write
 jobs:
   sync:
     name: Sync Coda site & embedded harness crates
@@ -41,14 +42,25 @@ jobs:
           CODA_RUST_DIR="$PWD/.coda-rust-tmp" ./scripts/sync-coda-site.sh
           rm -rf .coda-rust-tmp
           nix develop -c cargo metadata --format-version 1 >/dev/null
-      - name: Commit and push if changed
+      - name: Open or update sync pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git add -A public/coda vendor/coda-rust Cargo.lock
           if git diff --cached --quiet; then
             echo "Already up to date with coda-rust@${CODA_SHA}."
             exit 0
           fi
+          BRANCH="sync/coda-${CODA_SHA}"
+          git checkout -B "$BRANCH"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Sync Coda site and embedded harness (${CODA_SHA})"
-          git push origin HEAD:main
+          git push --force-with-lease origin "HEAD:refs/heads/${BRANCH}"
+          if ! gh pr view "$BRANCH" >/dev/null 2>&1; then
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "Sync Coda site and embedded harness (${CODA_SHA})" \
+              --body "Automated sync of \`public/coda/\`, \`vendor/coda-rust/\`, and \`Cargo.lock\` from \`tyler274/coda-rust@${CODA_SHA}\`."
+          fi
