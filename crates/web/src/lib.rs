@@ -7,6 +7,8 @@
 
 #[cfg(feature = "ssr")]
 pub mod coda_proxy;
+#[cfg(feature = "ssr")]
+pub mod community_activity;
 
 #[cfg(feature = "hydrate")]
 #[wasm_bindgen::prelude::wasm_bindgen]

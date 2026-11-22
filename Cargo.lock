@@ -5633,12 +5633,15 @@ dependencies = [
 name = "ui"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "csv",
  "js-sys",
  "leptos",
  "leptos_meta",
  "leptos_router",
+ "serde",
  "serde_json",
+ "tokio",
  "wasm-bindgen",
  "web-sys",
 ]

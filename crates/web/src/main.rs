@@ -61,6 +61,9 @@ async fn main() {
 
     let app = web::mount_coda_routes(Router::new(), &leptos_options.site_root, coda_api_proxy)
         .merge(site_routes)
+        .layer(axum::middleware::from_fn(
+            web::community_activity::privacy_headers,
+        ))
         .layer(SetRequestIdLayer::new(
             HeaderName::from_static("x-request-id"),
             MakeRequestUuid,
