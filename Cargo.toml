@@ -46,6 +46,7 @@ lib-package = "web"
 
 # Output bundle name (target/site/pkg/dabney.{js,wasm}).
 output-name = "dabney"
+hash-files = true
 site-root = "target/site"
 site-pkg-dir = "pkg"
 

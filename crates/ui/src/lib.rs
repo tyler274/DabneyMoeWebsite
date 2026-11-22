@@ -24,7 +24,9 @@ pub mod sections;
 pub mod tools;
 
 use leptos::prelude::*;
-use leptos_meta::{provide_meta_context, Link, Meta, MetaTags, Stylesheet, Title};
+#[cfg(feature = "csr")]
+use leptos_meta::Stylesheet;
+use leptos_meta::{provide_meta_context, HashedStylesheet, Link, Meta, MetaTags, Title};
 use leptos_router::components::{Route, Router, Routes};
 use leptos_router::hooks::use_location;
 use leptos_router::StaticSegment;
@@ -50,6 +52,7 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <meta charset="utf-8" />
                 <meta name="viewport" content="width=device-width, initial-scale=1" />
                 <AutoReload options=options.clone() />
+                <HashedStylesheet options=options.clone() id="leptos" />
                 <HydrationScripts options />
                 <MetaTags />
                 <AnalyticsHead />
@@ -68,7 +71,7 @@ pub fn App() -> impl IntoView {
     provide_consent_context();
 
     view! {
-        <Stylesheet id="leptos" href="/pkg/dabney.css" />
+        {#[cfg(feature = "csr")] { view! { <Stylesheet id="leptos" href="/pkg/dabney.css" /> } }}
         <Title text="Tyler Port - Freelance Software Engineer" />
         <Meta
             name="description"

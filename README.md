@@ -67,8 +67,11 @@ cargo leptos build --release
 
 Serving the release build: run `target/release/web` with the `LEPTOS_*`
 environment variables (see `[[workspace.metadata.leptos]]` in `Cargo.toml`), e.g.
-`LEPTOS_OUTPUT_NAME=dabney LEPTOS_SITE_ROOT=target/site LEPTOS_SITE_PKG_DIR=pkg
-LEPTOS_SITE_ADDR=0.0.0.0:3039 ./target/release/web`.
+`LEPTOS_OUTPUT_NAME=dabney LEPTOS_HASH_FILES=true LEPTOS_SITE_ROOT=target/site
+LEPTOS_SITE_PKG_DIR=pkg LEPTOS_SITE_ADDR=0.0.0.0:3039 ./target/release/web`.
+Keep the generated `hash.txt` beside the server executable: the SSR shell uses it
+to resolve the matching content-hashed JS, WASM, and CSS filenames. The Nix images
+package this manifest and enable hash resolution automatically.
 
 ## Apps (Tauri)
 
