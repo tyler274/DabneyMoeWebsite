@@ -8,15 +8,14 @@ use crate::schema::{
 use physician_wire::{
     AnswerState, AttemptId, ChatSnapshot, ChatSnapshotResponse, CitationOrigin, CitationTargetKind,
     CitedFieldWire, CitedSourceWire, CitedTextPartWire, DateRole, Exchange, ExchangeSteps, Found,
-    HealthCapabilities, HealthResponse, HistoryWorkOutcome, MemoryEditTarget, MessageKey,
-    MessageSegment, PatientSearchResponse, PatientSearchRow, PatientWorkspaceResponse,
-    PatientWorkspaceSummary, PatientWorkspacesResponse, PhysicianDraft, PhysicianMessage,
-    PracticeAccountSummary, PracticeDayResponse, PracticeSourceState, RecentConversation,
-    RecentConversationsResponse, RecordAbout, RecordDate, RecordGroup, RecordRead, ReplyDraftWire,
-    ResponseFeedback, ResponseId, SaveFeedback, SavePhysicianMemoryEditRequest, SavedAt,
-    SearchPage, SnapshotFeedback, SourceVersion, Step, StepState, TodayConnection,
-    TodayListResponse, TodayRow, UpdatesResponse, WhoamiResponse, WorkItemId, WorkResumeTarget,
-    WorkspaceChat, WorkspacePlanItem,
+    HealthCapabilities, HealthResponse, HistoryWorkOutcome, MessageKey, MessageSegment,
+    PatientSearchResponse, PatientSearchRow, PatientWorkspaceResponse, PatientWorkspaceSummary,
+    PatientWorkspacesResponse, PhysicianDraft, PhysicianMessage, PracticeAccountSummary,
+    PracticeDayResponse, PracticeSourceState, RecentConversation, RecentConversationsResponse,
+    RecordAbout, RecordDate, RecordGroup, RecordRead, ReplyDraftWire, ResponseFeedback, ResponseId,
+    SaveFeedback, SavedAt, SearchPage, SnapshotFeedback, SourceVersion, Step, StepState,
+    TodayConnection, TodayListResponse, TodayRow, UpdatesResponse, WhoamiResponse, WorkItemId,
+    WorkResumeTarget, WorkspaceChat, WorkspacePlanItem,
     today_updates::{EarlierDayUpdatesWire, ItemCitationWire, SeenStandingWire, UpdateItemWire},
 };
 use sea_query::{Cond, Expr, ExprTrait, OnConflict, Order, Query, SelectStatement};
@@ -754,33 +753,10 @@ impl DemoStore {
         ws_id: &str,
         note: &str,
     ) -> Result<bool, DbError> {
-        let note = note.trim();
-        if note.is_empty() {
+        if note.trim().is_empty() {
             return Ok(false);
         }
-        let current = self.patient_memory(ws_id).await?;
-        let prior = current
-            .direction
-            .as_ref()
-            .map(|doc| doc.markdown.trim())
-            .filter(|text| !text.is_empty())
-            .unwrap_or("");
-        let updated = if prior.is_empty() {
-            note.to_owned()
-        } else if prior.contains(note) {
-            prior.to_owned()
-        } else {
-            format!("{prior}\n\n- {note}")
-        };
-        self.save_patient_memory_edit(
-            ws_id,
-            &SavePhysicianMemoryEditRequest {
-                target: MemoryEditTarget::Direction,
-                text: updated,
-                idempotency_key: format!("mem-note-{}", next_seq()),
-            },
-        )
-        .await?;
+        self.save_patient_memory(ws_id, note).await?;
         Ok(true)
     }
 
@@ -1654,7 +1630,8 @@ fn mark_running_steps_stopped(steps: &mut ExchangeSteps) {
             }
             Step::ReadConversation { state }
             | Step::SavedMemoryNote { state }
-            | Step::EditedMemory { state } => {
+            | Step::EditedMemory { state }
+            | Step::CreatedFollowUp { state } => {
                 if matches!(state, StepState::Running) {
                     *state = StepState::Stopped;
                 }

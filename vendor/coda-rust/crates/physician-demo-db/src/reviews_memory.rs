@@ -228,6 +228,44 @@ impl DemoStore {
         })
     }
 
+    /// Appends a non-empty physician note to `direction.md` for `workspace_id` without
+    /// overwriting prior notes.
+    pub async fn save_patient_memory(
+        &self,
+        workspace_id: &str,
+        note: &str,
+    ) -> Result<SavePhysicianMemoryEditResponse, DbError> {
+        let trimmed = note.trim();
+        if trimmed.is_empty() {
+            return Err(DbError::InvalidCommand(
+                "Memory note text cannot be empty.".into(),
+            ));
+        }
+        let current = self.patient_memory(workspace_id).await?;
+        let prior = current
+            .direction
+            .as_ref()
+            .map(|doc| doc.markdown.trim())
+            .filter(|text| !text.is_empty())
+            .unwrap_or("");
+        let updated = if prior.is_empty() {
+            trimmed.to_owned()
+        } else if prior.contains(trimmed) {
+            prior.to_owned()
+        } else {
+            format!("{prior}\n\n- {trimmed}")
+        };
+        self.save_patient_memory_edit(
+            workspace_id,
+            &SavePhysicianMemoryEditRequest {
+                target: MemoryEditTarget::Direction,
+                text: updated,
+                idempotency_key: format!("mem-note-{}", next_seq()),
+            },
+        )
+        .await
+    }
+
     /// Saves a physician's edit to `summary.md` or `direction.md` and appends a log note.
     pub async fn save_patient_memory_edit(
         &self,
