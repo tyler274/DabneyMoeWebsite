@@ -91,6 +91,8 @@ let
         installPhase = ''
           runHook preInstall
           install -Dm755 ${binPath} "$out/bin/web"
+          # Leptos resolves its asset manifest relative to current_exe().
+          install -Dm644 ${builtins.dirOf binPath}/hash.txt "$out/bin/hash.txt"
           mkdir -p "$out/share"
           cp -r target/site "$out/share/site"
           if [ -d vendor/coda-rust/skills ]; then
@@ -173,6 +175,7 @@ let
         User = "65534:65534";
         Env = [
           "LEPTOS_OUTPUT_NAME=dabney"
+          "LEPTOS_HASH_FILES=true"
           "LEPTOS_SITE_ROOT=${server}/share/site"
           "LEPTOS_SITE_PKG_DIR=pkg"
           "LEPTOS_SITE_ADDR=0.0.0.0:8080"
