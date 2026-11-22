@@ -111,7 +111,7 @@ iOS still needs Xcode (macOS only): `cargo tauri ios init && cargo tauri ios dev
 
 ```bash
 # Run the full gate locally (exactly what CI runs):
-nix run .#ci          # rustfmt --check, clippy (-D warnings), and all tests
+nix run .#ci          # rustfmt --check, cargo-deny, clippy (-D warnings), and all tests
 ```
 
 Tests live next to the code: data-table invariants and SSR render assertions in
@@ -134,6 +134,10 @@ How the workflow is laid out:
   tests, and every build (web, desktop, Android, server image) run side by
   side. Deploy waits for format, clippy, tests, the web build, and the image
   build, and is skipped if any of them fails, is cancelled, or is skipped.
+- **Dependency guardrails.** `cargo deny` checks RustSec advisories, licences,
+  bans, and crate sources against [`deny.toml`](deny.toml). It runs in its own
+  job without the CI image and does not gate the deploy, so a newly published
+  advisory cannot block shipping otherwise unchanged code.
 - **Rust build cache.** Clippy, tests, the web build, and the desktop build
   restore `target/` from the Actions cache, keyed by job, `rustc` version, and
   `Cargo.lock` + `flake.lock`. Only runs on `main` save it, after
@@ -208,7 +212,7 @@ cargo tauri icon src-tauri/icons/source.png
 
 ## Notes
 
-- `wasm-bindgen` is pinned (`=0.2.121`) to match the `wasm-bindgen-cli` shipped
+- `wasm-bindgen` is pinned (`=0.2.130`) to match the `wasm-bindgen-cli` shipped
   by the Nix dev shell. If you bump nixpkgs, keep the two in sync.
 - Don't run a bare `cargo build --workspace`: the `web` (ssr/hydrate) and
   `tauri-ui` (csr) crates select mutually exclusive Leptos features. Use the

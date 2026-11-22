@@ -1,0 +1,64 @@
+# cargo-deny guardrails.
+# Run: cargo deny --all-features check advisories bans licenses sources
+# Local gate: `nix run .#ci`. CI: the `cargo-deny` job in .github/workflows/ci.yml.
+#
+# Vulnerabilities, unlisted licences and unknown sources fail. Duplicate
+# versions and wildcard path dependencies are warnings to work down.
+
+[graph]
+# Check every feature and target so a Windows-, Android- or wasm-only advisory
+# still trips.
+all-features = true
+
+[licenses]
+version = 2
+# Workspace crates are unpublished; the policy covers what they depend on.
+private = { ignore = true }
+# Permissive licences only; anything copyleft needs an explicit entry.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "MPL-2.0",
+    # xxhash-rust, via server_fn (Leptos server functions).
+    "BSL-1.0",
+]
+# Confidence threshold for licence detection inside files.
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions = "warn"
+# Workspace path dependencies are declared without versions by convention.
+wildcards = "warn"
+deny = []
+
+[advisories]
+version = 2
+# Advisories fail unless excepted below, one entry per advisory with its reason.
+# Every entry below is an "unmaintained" notice with no safe upgrade listed, on
+# a crate this workspace only reaches through a third party. None is a
+# vulnerability. Remove an entry as soon as its path drops the crate.
+ignore = [
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error is unmaintained; build-time proc macro via glib-macros/gtk3-macros 0.18 (gtk-rs GTK3 bindings) under tauri/wry on Linux; goes away when Tauri leaves the GTK3 bindings" },
+    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; build-time proc macro via leptos (either_of, reactive_graph, tachys) and the candle stack (gemm, pulp, tokenizers); no fixed release, upstreams have not moved to pastey" },
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is unmaintained; via serde_yaml 0.9 in vendor/coda-rust agent-skills, which parses skill front matter; that crate is synced from upstream coda-rust (scripts/sync-coda-site.sh), so the replacement has to land there" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant was merged into zbus 6; via zbus 5 under tauri-plugin-opener (desktop app only), which has not moved to zbus 6" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names was merged into zbus 6; via zbus 5 under tauri-plugin-opener (desktop app only), which has not moved to zbus 6" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive was merged into zbus 6; via zbus 5 under tauri-plugin-opener (desktop app only), which has not moved to zbus 6" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained, all versions affected; via turso_core/turso_ext under vendor/coda-rust physician-demo-db; 0.8.4 is the latest stable turso and still depends on chrono" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

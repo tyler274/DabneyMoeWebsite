@@ -22,6 +22,9 @@ pkgs.writeShellApplication {
     echo "==> rustfmt (--check)"
     cargo fmt --all --check
 
+    echo "==> cargo-deny (advisories, bans, licenses, sources)"
+    cargo deny --all-features check advisories bans licenses sources
+
     echo "==> clippy: ui (ssr)"
     cargo clippy -p ui --features ssr -- -D warnings
     echo "==> clippy: web (ssr)"

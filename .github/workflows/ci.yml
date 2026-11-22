@@ -221,6 +221,36 @@ jobs:
         run: nix develop -c nixpkgs-fmt --check flake.nix nix/
       - name: Check rustfmt
         run: nix develop -c cargo fmt --all --check
+  # RustSec advisories, licence allow-list, bans and source checks. deny.toml is
+  # the single policy file; the dev shell carries cargo-deny too, so
+  # `nix develop -c cargo deny --all-features check` and `nix run .#ci` match
+  # this job. It needs neither the CI image nor a build, so it runs beside the
+  # image bootstrap. Deliberately not in `deploy.needs`: a newly published
+  # advisory must not block a deploy of otherwise unchanged code.
+  cargo-deny:
+    name: Dependency guardrails (cargo-deny)
+    needs: [scope]
+    if: needs.scope.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Read the pinned Rust version
+        id: toolchain
+        run: python3 -c 'import tomllib; print("channel=" + tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])' >> "$GITHUB_OUTPUT"
+      - name: Check dependency guardrails
+        uses: EmbarkStudios/cargo-deny-action@v2
+        # The action's image ships an older Rust. Install the pin minimally and
+        # use it instead of letting rustup pull the full toolchain file profile.
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.channel }}
+        with:
+          rust-version: ${{ steps.toolchain.outputs.channel }}
+          command: check
+          # `arguments` is the argv head (before `check`); `command-arguments`
+          # land after it. `--all-features` must come before `check`.
+          arguments: --all-features
+          command-arguments: advisories bans licenses sources
   # Clippy lint gate.
   clippy:
     name: Clippy
