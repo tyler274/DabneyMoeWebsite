@@ -20,7 +20,8 @@ pub fn CommunityPolicyPage() -> impl IntoView {
                         "The operator reports that all server messages are logged and community "
                         "messages have been retained outside Discord. Logging is separate from "
                         "public archive publication and the planned activity dashboard; logging alone "
-                        "is not permission for public posting or AI uses. Storage location, who has "
+                        "is not permission for public posting or AI uses. Public posting rests on "
+                        "acceptance of the server rules, described below. Storage location, who has "
                         "access, the retention period, "
                         "and any previous AI use are not yet documented in this notice. "
                         "This is not a complete data-handling disclosure."
@@ -32,22 +33,24 @@ pub fn CommunityPolicyPage() -> impl IntoView {
                         "listed use has already happened, nor evidence of permission for those uses."
                     </p>
                     <p>
-                        "This page sets commitments for future use and sharing of Discord community "
-                        "content. It does not publish conversations or establish that a public archive "
-                        "or consent controls are implemented."
+                        "This page sets commitments for use and sharing of Discord community "
+                        "content. It does not itself publish conversations or establish that a public "
+                        "archive or consent controls are implemented."
                     </p>
                 </section>
 
                 <section class="mt-10 space-y-4 text-slate-300">
                     <h2 class="text-xl font-semibold text-white">"Separate permissions"</h2>
                     <p>
-                        "Joining or remaining in the server is not consent to public sharing. "
-                        "Permission to back up messages is not permission to publish them, use them "
-                        "for AI, or impersonate a participant with AI."
+                        "Accepting the server rules is permission to archive and publicly publish "
+                        "your messages, as described below. Remaining in the server without accepting "
+                        "the rules is not consent to public sharing. Permission to archive and publish "
+                        "messages is not permission to use them for AI or to impersonate a participant "
+                        "with AI."
                     </p>
                     <p>
-                        "AI model training or fine-tuning, AI retrieval or reference, human training, "
-                        "and a public memorial each require separate, affirmative permission from "
+                        "AI model training or fine-tuning, AI retrieval or reference, and human training "
+                        "each require separate, affirmative permission from "
                         "the affected participants before that use. Agreement to one does not "
                         "authorize the others. We will explain the intended use, recipients, and "
                         "any external AI service before seeking permission."
@@ -55,27 +58,32 @@ pub fn CommunityPolicyPage() -> impl IntoView {
                 </section>
 
                 <section class="mt-10 space-y-4 text-slate-300">
-                    <h2 class="text-xl font-semibold text-white">"Public sharing is opt-in"</h2>
-                    <p>"Before any public sharing, we will explain and seek affirmative opt-in covering:"</p>
+                    <h2 class="text-xl font-semibold text-white">"Public sharing by accepting the server rules"</h2>
+                    <p>
+                        "Since November 22, 2026, the server rules state that accepting them gives "
+                        "permission for your messages in the server to be archived and published "
+                        "publicly. A published archive may include:"
+                    </p>
                     <ul class="list-disc space-y-2 pl-6">
-                        <li>"Which messages, channels, attachments, and timestamps would be included."</li>
-                        <li>"Whether names, handles, or other identifying information would appear."</li>
-                        <li>"How public search and search-engine indexing would work."</li>
-                        <li>"How to decline, withdraw permission, or request removal."</li>
+                        <li>"The text of your messages, with the channel and timestamp of each."</li>
+                        <li>"Your Discord display name and user ID."</li>
+                        <li>"A public search over those messages, which search engines may also index."</li>
                     </ul>
                     <p>
-                        "Private community participation does not require opting in to public sharing. "
-                        "Consent to an AI or training use is not consent to public publication."
+                        "Only messages from authors who have accepted the rules are published. "
+                        "To decline, do not accept the rules. To withdraw later, see removal and "
+                        "withdrawal below. Consent to an AI or training use is not consent to public "
+                        "publication, and consent to publication is not consent to an AI or training use."
                     </p>
                 </section>
 
                 <section class="mt-10 space-y-4 text-slate-300">
                     <h2 class="text-xl font-semibold text-white">"Earlier conversations"</h2>
                     <p>
-                        "This policy does not retroactively authorize use or publication of earlier "
-                        "messages. Earlier messages require separate permission covering the specific "
-                        "messages and intended use from the affected participants. A new notice, "
-                        "continued membership, or silence is not retroactive consent."
+                        "Accepting the rules covers messages you posted before accepting, as well as "
+                        "later ones. Members who joined before this wording are asked to accept it by "
+                        "reacting to the rules message. Until a member accepts, their earlier messages "
+                        "are not covered. A new notice, continued membership, or silence is not acceptance."
                     </p>
                 </section>
 
