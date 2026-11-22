@@ -33,6 +33,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      # Compute the tag before the vendor dir exists: vendored crates ship their
+      # own Cargo.lock files, which a later `**/Cargo.lock` hash would include.
+      # Must match the tag the bootstrap job in ci.yml looks up.
+      - name: Compute image tag
+        id: tag
+        env:
+          TAG: ${{ hashFiles('Cargo.lock', 'ci.Dockerfile') }}
+        run: echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
       - uses: DeterminateSystems/nix-installer-action@v22
       # Readiness probe via Nix's own `store info` rather than a hardcoded
       # daemon-socket path. Determinate Nix doesn't expose the legacy socket at
@@ -71,11 +79,11 @@ jobs:
           context: .
           file: ci.Dockerfile
           push: true
-          # Tag with the Cargo.lock hash so jobs can pin to a reproducible image
+          # Tag with the Cargo.lock + ci.Dockerfile hash so jobs can pin to a reproducible image
           # and with `latest` for convenience.
           tags: |
             ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
-            ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:${{ hashFiles('**/Cargo.lock') }}
+            ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:${{ steps.tag.outputs.tag }}
           # Layer caching: reuse layers from the previous push when only the
           # vendor dir changed (common case: a small Cargo.lock bump).
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest

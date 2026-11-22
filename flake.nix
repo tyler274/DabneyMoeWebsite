@@ -96,6 +96,7 @@
       in
       {
         devShells.default = shells.default;
+        devShells.deploy = shells.deploy;
         devShells.android = shells.android;
 
         packages.ci = ci;

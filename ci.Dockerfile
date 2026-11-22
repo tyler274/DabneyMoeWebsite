@@ -13,6 +13,8 @@ FROM ubuntu:22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
+# `zstd` is for actions/cache: without it the Rust build cache falls back to
+# gzip, which is much slower on a multi-gigabyte `target/`.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       bash \
@@ -21,6 +23,7 @@ RUN apt-get update \
       git \
       sudo \
       xz-utils \
+      zstd \
  && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
  && apt-get install -y nodejs \
  && rm -rf /var/lib/apt/lists/*
