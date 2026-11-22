@@ -20,7 +20,7 @@ pub fn mount_coda_static<S>(router: axum::Router<S>, site_root: &str) -> axum::R
 where
     S: Clone + Send + Sync + 'static,
 {
-    mount_coda_routes(router, site_root, None)
+    mount_coda_routes_with_embedded(router, site_root, None, None)
 }
 
 #[cfg(feature = "ssr")]
@@ -28,6 +28,39 @@ pub fn mount_coda_routes<S>(
     router: axum::Router<S>,
     site_root: &str,
     api_proxy: Option<coda_proxy::CodaApiProxyConfig>,
+) -> axum::Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    mount_coda_routes_with_embedded(router, site_root, api_proxy, None)
+}
+
+#[cfg(feature = "ssr")]
+pub async fn build_embedded_coda_api(site_root: &str) -> Result<axum::Router, String> {
+    use std::path::PathBuf;
+    use tower_http::limit::RequestBodyLimitLayer;
+
+    let seed_path = PathBuf::from(site_root).join("coda/physician/demo.sqlite");
+    let seed_bytes = std::fs::read(&seed_path)
+        .map_err(|err| format!("failed to read {}: {err}", seed_path.display()))?;
+    let state = physician_demo_api::DemoApiState::from_env_with(seed_bytes, |key| {
+        if key == "CODA_DEMO_ALLOW_CORS" {
+            return Some(std::env::var(key).ok().unwrap_or_else(|| "0".to_string()));
+        }
+        std::env::var(key).ok()
+    })
+    .await?;
+    Ok(state
+        .into_router()
+        .layer(RequestBodyLimitLayer::new(8 * 1024 * 1024)))
+}
+
+#[cfg(feature = "ssr")]
+pub fn mount_coda_routes_with_embedded<S>(
+    router: axum::Router<S>,
+    site_root: &str,
+    api_proxy: Option<coda_proxy::CodaApiProxyConfig>,
+    embedded_api: Option<axum::Router>,
 ) -> axum::Router<S>
 where
     S: Clone + Send + Sync + 'static,
@@ -70,6 +103,8 @@ where
     let mut api_router = axum::Router::new();
     if let Some(cfg) = api_proxy {
         api_router = api_router.merge(coda_proxy::coda_nested_api_proxy_router(cfg));
+    } else if let Some(embedded) = embedded_api {
+        api_router = api_router.nest("/physician/api", embedded);
     } else {
         api_router = api_router.merge(coda_proxy::coda_nested_api_disabled_router());
     }
@@ -518,5 +553,61 @@ mod tests {
         let sse_text = String::from_utf8_lossy(&sse_bytes);
         assert!(sse_text.contains("event: workspace_changed"));
         assert!(sse_text.contains("\"workspace_id\":\"pw-1\""));
+    }
+
+    #[tokio::test]
+    async fn embedded_coda_api_mints_demo_session_and_serves_today_and_health() {
+        let public_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../public");
+        let embedded = super::build_embedded_coda_api(public_root.to_str().unwrap())
+            .await
+            .expect("build embedded Coda physician demo API");
+        let app = super::mount_coda_routes_with_embedded(
+            Router::<()>::new(),
+            public_root.to_str().unwrap(),
+            None,
+            Some(embedded),
+        );
+
+        let health = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/coda/physician/api/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(health.status(), StatusCode::OK);
+
+        let session_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/coda/physician/api/auth/demo-session")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(session_resp.status(), StatusCode::OK);
+        let session_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(session_resp.into_body(), 64 * 1024).await.unwrap())
+                .unwrap();
+        let token = session_json["session"].as_str().expect("session token");
+
+        let today = app
+            .oneshot(
+                Request::builder()
+                    .uri("/coda/physician/api/today")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(today.status(), StatusCode::OK);
     }
 }

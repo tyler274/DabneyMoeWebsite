@@ -623,7 +623,7 @@ jobs:
             skopeo --insecure-policy copy --dest-creds "oauth2accesstoken:$TOKEN" docker-archive:server-image.tar.gz "docker://$IMAGE"
             skopeo --insecure-policy copy --dest-creds "oauth2accesstoken:$TOKEN" docker-archive:server-image.tar.gz "docker://$REPO/web:latest"
 
-            gcloud run deploy dabney-web --image "$IMAGE" --region "$GCP_REGION" --quiet
+            gcloud run deploy dabney-web --image "$IMAGE" --region "$GCP_REGION" --cpu 2 --memory 2Gi --quiet
           '
       - name: Publish app
         run: |

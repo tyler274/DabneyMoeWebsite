@@ -93,6 +93,9 @@ let
           install -Dm755 ${binPath} "$out/bin/web"
           mkdir -p "$out/share"
           cp -r target/site "$out/share/site"
+          if [ -d vendor/coda-rust/skills ]; then
+            cp -r vendor/coda-rust/skills "$out/share/coda-skills"
+          fi
           runHook postInstall
         '';
 
@@ -129,6 +132,18 @@ let
   webServerStatic = mkWebServer { staticMusl = true; }; # hardened default
   webServer = mkWebServer { }; # glibc fallback
 
+  # Pre-baked Qwen3-0.6B Q8_0 GGUF weights + tokenizer for the embedded
+  # pure-Rust `candle-transformers` (`quantized_qwen3`) physician harness API,
+  # so Cloud Run cold starts load directly from `/nix/store` with zero network I/O.
+  qwenGguf = pkgs.fetchurl {
+    url = "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf";
+    sha256 = "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031";
+  };
+  qwenTokenizer = pkgs.fetchurl {
+    url = "https://huggingface.co/Qwen/Qwen3-0.6B/resolve/main/tokenizer.json";
+    sha256 = "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4";
+  };
+
   # OCI image factory: copies the server + assets in, sets the LEPTOS_* runtime
   # env, and listens on 0.0.0.0:8080 (the port every cloud module wires its
   # ingress to). Build with `nix build .#serverImage` -> result is a tarball
@@ -163,6 +178,10 @@ let
           "LEPTOS_SITE_ADDR=0.0.0.0:8080"
           "LEPTOS_ENV=PROD"
           "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+          "CODA_CANDLE_GGUF_PATH=${qwenGguf}"
+          "CODA_CANDLE_TOKENIZER_PATH=${qwenTokenizer}"
+          "CODA_DEMO_SKILLS_DIR=${server}/share/coda-skills"
+          "CODA_DEMO_ALLOW_CORS=0"
         ];
         ExposedPorts = {
           "8080/tcp" = { };
