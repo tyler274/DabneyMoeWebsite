@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-df04c4d9.js";
+            window.path_to_searchindex_js = "searchindex-6556f8e8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4caaaa21.js"></script>
@@ -224,6 +224,8 @@
 <tr><td><code>physician-wire</code></td><td><a href="/crates/physician-wire/src/lib.rs"><code>src/lib.rs</code></a></td><td>The physician read types, following coda-agents’ <a href="/submodules/coda-agents/src/server/apiTypes%2Ets"><code>apiTypes.ts</code></a></td><td><a href="physician-site.html">Physician site</a></td></tr>
 <tr><td><code>physician-client</code></td><td><a href="/crates/physician-client/src/lib.rs"><code>src/lib.rs</code></a></td><td>The caller for the Node <code>CodaServer</code> and the sample server</td><td><a href="physician-site.html">Physician site</a></td></tr>
 <tr><td><code>physician-sample</code></td><td><a href="/crates/physician-sample/src/lib.rs"><code>src/lib.rs</code></a>, <a href="/crates/physician-sample/src/main.rs"><code>src/main.rs</code></a></td><td>Serves the page and the synthetic practice, plus auth and live chat routes; the <code>physician-migrate</code> binary runs the physician schema migrations</td><td><a href="physician-site.html">Physician site</a></td></tr>
+<tr><td><code>physician-demo-db</code></td><td><a href="/crates/physician-demo-db/src/lib.rs"><code>src/lib.rs</code></a>, <a href="/crates/physician-demo-db/src/seed.rs"><code>src/seed.rs</code></a></td><td>In-memory and browser <code>turso_core</code> SQLite demo store, build-time fixture seeder (<code>seed_demo_db</code>), chart search, and verbatim citation matching</td><td><a href="public-site.html">Public site</a></td></tr>
+<tr><td><code>physician-demo-api</code></td><td><a href="/crates/physician-demo-api/src/lib.rs"><code>src/lib.rs</code></a>, <a href="/crates/physician-demo-api/src/routes.rs"><code>src/routes.rs</code></a></td><td>Embeddable pure-Rust demo API router serving per-visitor <code>turso_core</code> sessions, <code>crates/harness</code> tool loops, <code>physician-bus</code> SSE, <code>DemoTurnBudget</code>, and dual-mode cloud + quantized <code>candle</code> GGUF inference</td><td><a href="public-site.html">Public site</a></td></tr>
 <tr><td><code>physician-auth</code></td><td><a href="/crates/physician-auth/src/lib.rs"><code>src/lib.rs</code></a>, <a href="/crates/physician-auth/src/bin/physician-auth-migrate.rs"><code>src/bin/physician-auth-migrate.rs</code></a></td><td>Physician identity, membership, panels, and sessions</td><td><a href="physician-site.html#physician-sign-in-and-practice-access">Physician site</a></td></tr>
 <tr><td><code>local-product</code></td><td><a href="/crates/local-product/src/lib.rs"><code>src/lib.rs</code></a></td><td>Local subscription or API model execution; the physician runtime store, and hosted chat’s instructions and <code>skill_view</code> tool (<code>physician_chat</code>)</td><td><a href="physician-site.html">Physician site</a></td></tr>
 <tr><td><code>physician-bus</code></td><td><a href="/crates/physician-bus/src/lib.rs"><code>src/lib.rs</code></a></td><td>Telling open physician pages to reread changed state, through a local bus or Redis fan-out. Lossy invalidation, not a durable work queue</td><td><a href="physician-site.html">Physician site</a></td></tr>

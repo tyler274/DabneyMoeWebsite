@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [package.metadata.cargo-all-features]
-denylist = ["axum", "tokio", "leptos_axum", "tower", "tower-http", "reqwest", "futures-util", "url", "wasm-bindgen", "console_error_panic_hook", "mimalloc"]
+denylist = ["axum", "tokio", "leptos_axum", "tower", "tower-http", "reqwest", "futures-util", "url", "wasm-bindgen", "console_error_panic_hook", "mimalloc", "physician-demo-api"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -32,6 +32,7 @@ base64 = { workspace = true, optional = true }
 http = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+physician-demo-api = { workspace = true, optional = true }
 # Hardened global allocator for the SSR server (`secure` => -DMI_SECURE:
 # guard pages, encrypted free lists, randomized allocation, double-free
 # detection). Only linked into the native server binary, never the wasm.
@@ -70,4 +71,5 @@ ssr = [
   "dep:http",
   "dep:serde",
   "dep:serde_json",
+  "dep:physician-demo-api",
 ]

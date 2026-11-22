@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-df04c4d9.js";
+            window.path_to_searchindex_js = "searchindex-6556f8e8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4caaaa21.js"></script>
@@ -304,6 +304,8 @@ documentation cleanup.</p>
 <tr><td><code>physician-wire</code></td><td><a href="/crates/physician-wire/src/lib.rs"><code>src/lib.rs</code></a></td><td>The physician read types, following coda-agents’ <a href="/submodules/coda-agents/src/server/apiTypes%2Ets"><code>apiTypes.ts</code></a></td><td><a href="#the-chords-physician-site-and-its-harness">Physician site</a></td></tr>
 <tr><td><code>physician-client</code></td><td><a href="/crates/physician-client/src/lib.rs"><code>src/lib.rs</code></a></td><td>The caller for the Node <code>CodaServer</code> and the sample server</td><td><a href="#the-chords-physician-site-and-its-harness">Physician site</a></td></tr>
 <tr><td><code>physician-sample</code></td><td><a href="/crates/physician-sample/src/lib.rs"><code>src/lib.rs</code></a>, <a href="/crates/physician-sample/src/main.rs"><code>src/main.rs</code></a></td><td>Serves the page and the synthetic practice, plus auth and live chat routes; the <code>physician-migrate</code> binary runs the physician schema migrations</td><td><a href="#the-chords-physician-site-and-its-harness">Physician site</a></td></tr>
+<tr><td><code>physician-demo-db</code></td><td><a href="/crates/physician-demo-db/src/lib.rs"><code>src/lib.rs</code></a>, <a href="/crates/physician-demo-db/src/seed.rs"><code>src/seed.rs</code></a></td><td>In-memory and browser <code>turso_core</code> SQLite demo store, build-time fixture seeder (<code>seed_demo_db</code>), chart search, and verbatim citation matching</td><td><a href="#public-site">Public site</a></td></tr>
+<tr><td><code>physician-demo-api</code></td><td><a href="/crates/physician-demo-api/src/lib.rs"><code>src/lib.rs</code></a>, <a href="/crates/physician-demo-api/src/routes.rs"><code>src/routes.rs</code></a></td><td>Embeddable pure-Rust demo API router serving per-visitor <code>turso_core</code> sessions, <code>crates/harness</code> tool loops, <code>physician-bus</code> SSE, <code>DemoTurnBudget</code>, and dual-mode cloud + quantized <code>candle</code> GGUF inference</td><td><a href="#public-site">Public site</a></td></tr>
 <tr><td><code>physician-auth</code></td><td><a href="/crates/physician-auth/src/lib.rs"><code>src/lib.rs</code></a>, <a href="/crates/physician-auth/src/bin/physician-auth-migrate.rs"><code>src/bin/physician-auth-migrate.rs</code></a></td><td>Physician identity, membership, panels, and sessions</td><td><a href="#physician-sign-in-and-practice-access">Physician site</a></td></tr>
 <tr><td><code>local-product</code></td><td><a href="/crates/local-product/src/lib.rs"><code>src/lib.rs</code></a></td><td>Local subscription or API model execution; the physician runtime store, and hosted chat’s instructions and <code>skill_view</code> tool (<code>physician_chat</code>)</td><td><a href="#the-chords-physician-site-and-its-harness">Physician site</a></td></tr>
 <tr><td><code>physician-bus</code></td><td><a href="/crates/physician-bus/src/lib.rs"><code>src/lib.rs</code></a></td><td>Telling open physician pages to reread changed state, through a local bus or Redis fan-out. Lossy invalidation, not a durable work queue</td><td><a href="#the-chords-physician-site-and-its-harness">Physician site</a></td></tr>
@@ -580,9 +582,14 @@ the independent inventory. Establish its provenance and completeness separately.
 then record deletion or withdrawal in the independent journal. Restore the older
 SQL into an isolated target and replay the newer inventory. Check the stored
 restriction and refusal through the product owner, including repeat replay and
-missing-journal refusal, before any claim that deleted data cannot return. The
-physician database has its own schema, principals and readback checks; it does
-not import Duet’s privacy types.</p>
+missing-journal refusal, before any claim that deleted data cannot return. When
+an account held a Connected Care mapping, <code>public.duet_deleted_identities</code> retains
+<code>front_door_account_id</code>, and both <a href="/crates/duet-api/src/bin/duet-privacy-replay.rs"><code>duet-privacy-replay</code></a>
+and startup reconciliation configure <code>FRONT_DOOR_DATABASE_URL</code> or <code>FRONT_DOOR_URL</code>
+with <code>FRONT_DOOR_OPERATOR_TOKEN</code> so <code>AccountDelete</code> replay idempotently ends
+front-door connections and scrubs front-door staging even when the front-door
+database was restored from an older backup. The physician database has its own
+schema, principals and readback checks; it does not import Duet’s privacy types.</p>
 <p><a href="#gcp-deployment">GCP recovery</a> owns disposable cloud targets and operator approval. Record
 backup identity, target, replay evidence and validation results together. A
 successful SQL restore operation, a local file-journal test or a ready process
@@ -956,7 +963,7 @@ renders the same startup pages, <code>404.html</code>, <code>sitemap.xml</code>,
 and hashed/raw assets to disk for subpath hosting such as <code>https://dabney.moe/coda/</code>
 or GitHub Pages (with the architecture book and WASM SQLite physician demo built
 alongside by <a href="/scripts/build-pages-site.sh"><code>scripts/build-pages-site.sh</code></a> with
-<code>ORIGIN</code> defaulting to <code>https://dabney.moe</code>). When <a href="/crates/physician-app/src/lib.rs"><code>physician-app</code></a> runs with <code>PHYSICIAN_DEMO_DB="./demo.sqlite"</code>, it boots live-first against the configured API base (<code>/coda/physician/api</code> on <code>/coda/physician/</code> or a loopback <code>?api=</code> override): it probes <code>POST /auth/demo-session</code>, switches to <code>Live harness</code> with an ephemeral in-memory Bearer session and Valkey SSE updates when available (hiding <code>Sign out</code> and invitation controls, and showing <code>Live turn limit reached</code> with <code>Use local chart preview</code> on <code>429 demo_turn_budget_exhausted</code>), and falls back to <code>Local chart preview</code> over browser-side pure-Rust <code>turso_core</code> SQLite + IndexedDB (<a href="/crates/physician-demo-db/src/lib.rs"><code>physician-demo-db</code></a>) whenever no live backend answers or the visitor chooses local preview.</p>
+<code>ORIGIN</code> defaulting to <code>https://dabney.moe</code>). When <a href="/crates/physician-app/src/lib.rs"><code>physician-app</code></a> runs with <code>PHYSICIAN_DEMO_DB="./demo.sqlite"</code>, it boots live-first against the configured API base (<code>/coda/physician/api</code> on <code>/coda/physician/</code> or a loopback <code>?api=</code> override): it probes <code>POST /auth/demo-session</code>, switches to <code>Live harness</code> with an ephemeral in-memory Bearer session and SSE updates when available (hiding <code>Sign out</code> and invitation controls, and showing <code>Live turn limit reached</code> with <code>Use local chart preview</code> on <code>429 demo_turn_budget_exhausted</code>), and falls back to <code>Local chart preview</code> over browser-side pure-Rust <code>turso_core</code> SQLite + IndexedDB (<a href="/crates/physician-demo-db/src/lib.rs"><code>physician-demo-db</code></a>) whenever no live backend answers or the visitor chooses local preview. Embeddable deployments mount <a href="/crates/physician-demo-api/src/lib.rs"><code>physician-demo-api</code></a> as a pure-Rust <code>axum::Router</code>, giving each visitor an isolated in-memory <code>turso_core</code> snapshot, <code>crates/harness</code> chart search/read execution, <code>physician-bus</code> (<code>LocalBus</code> or <code>RedisBus</code> via <code>VALKEY_URL</code>/<code>REDIS_URL</code>/<code>PHYSICIAN_REDIS_URL</code>) invalidation streams, <code>DemoTurnBudget</code> enforcement, and dual-mode inference (<code>OPENAI_API_KEY</code>, <code>GEMINI_API_KEY</code>, or <code>ANTHROPIC_API_KEY</code> when configured, otherwise pure-Rust <code>candle</code> <code>quantized_qwen3</code> / <code>quantized_qwen2</code> GGUF defaulting to <code>Qwen3-0.6B</code> Q8_0).</p>
 <p>Legal documents are data. Each current document is one record in
 <code>data/&lt;document&gt;.json</code> holding every word of it: heading, title, intro, date and
 sections. That covers Duet’s privacy policy, terms and consumer health data policy,

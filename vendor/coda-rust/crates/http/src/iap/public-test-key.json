@@ -1,0 +1,16 @@
+{
+  "notice": "PUBLIC TEST-ONLY P-256 key generated once using OpenSSL. Deliberately disclosed private key; NEVER use for real credentials.",
+  "private_pkcs8_base64": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgoD1G8zL8z2CPYeuk7AiZjxY00kDuU1cq+DSG0D9bqKmhRANCAARpVQti4JXR7IxJnAEu+pxL9noWZAJwkiDuRqnfyF6N7HBFhkb4uzGwNtaVuYPtR9JEDBdZtcsDoRvLALSCukVK",
+  "keys": [
+    {
+      "kty": "EC",
+      "crv": "P-256",
+      "kid": "public-test-key",
+      "alg": "ES256",
+      "use": "sig",
+      "key_ops": ["verify"],
+      "x": "aVULYuCV0eyMSZwBLvqcS_Z6FmQCcJIg7kap38hejew",
+      "y": "cEWGRvi7MbA21pW5g-1H0kQMF1m1ywOhG8sAtIK6RUo"
+    }
+  ]
+}
