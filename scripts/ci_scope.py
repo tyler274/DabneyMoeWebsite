@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Select which CI jobs a change needs, from the complete Git comparison.
 
-Prints `build=<bool>` and `android=<bool>` to $GITHUB_OUTPUT (or stdout).
+Prints `build=<bool>`, `desktop=<bool>`, and `android=<bool>` to $GITHUB_OUTPUT
+(or stdout).
 
 - build:   false only when every changed path is documentation or out-of-band
            infrastructure that no build, test, image, or deploy step reads.
+- desktop: true when the change can affect the Tauri desktop app.
 - android: true when the change can affect the Android APK.
 
 Anything that cannot be compared (manual dispatch, first push of a branch,
@@ -20,15 +22,18 @@ import subprocess
 # Terraform and the self-host stack are applied by hand, never by this workflow.
 SKIP_PREFIXES = ("terraform/", "selfhost/")
 
-# Inputs of the Android build: the Tauri shell, the crates it links, the Trunk
-# frontend bundle (styles + copied public assets), and the Nix toolchain.
-ANDROID_PREFIXES = ("src-tauri/", "crates/", "nix/", "public/", "style/")
-ANDROID_FILES = {
-    "Cargo.lock",
+# Inputs of the Tauri desktop + Android builds: the Tauri shell, the UI crates
+# it links (never `crates/web/`, `vendor/coda-rust/`, or `public/coda/`), the
+# Trunk frontend bundle (styles + copied photos/favicon/resume), and Nix/Rust
+# toolchain files (excluding `nix/web-server.nix`, which is web-only).
+TAURI_PREFIXES = ("src-tauri/", "crates/ui/", "crates/tauri-ui/", "style/", "public/photos/")
+TAURI_FILES = {
     "Cargo.toml",
     "Trunk.toml",
     "flake.lock",
     "flake.nix",
+    "public/favicon.png",
+    "public/resume.pdf",
     "rust-toolchain.toml",
     "tailwind.config.js",
     ".github/workflows/ci.yml",
@@ -40,8 +45,12 @@ def skippable(path):
     return path.endswith(".md") or path.startswith(SKIP_PREFIXES)
 
 
-def android_input(path):
-    return path in ANDROID_FILES or path.startswith(ANDROID_PREFIXES)
+def tauri_input(path):
+    if path in TAURI_FILES or path.startswith(TAURI_PREFIXES):
+        return True
+    if path.startswith("nix/") and path != "nix/web-server.nix":
+        return True
+    return False
 
 
 def git(*args):
@@ -76,15 +85,15 @@ def changed_paths(event_name, event):
 
 
 def select(event_name, event):
-    """Return (build, android, reason)."""
+    """Return (build, desktop, android, reason)."""
     paths, unavailable = changed_paths(event_name, event)
     if paths is None:
-        return True, True, unavailable
+        return True, True, True, unavailable
     if all(skippable(path) for path in paths):
-        return False, False, "only documentation, terraform/ or selfhost/ changed"
-    if any(android_input(path) for path in paths):
-        return True, True, "change includes Android build inputs"
-    return True, False, "change cannot affect the Android build"
+        return False, False, False, "only documentation, terraform/ or selfhost/ changed"
+    if any(tauri_input(path) for path in paths):
+        return True, True, True, "change includes Tauri desktop/Android build inputs"
+    return True, False, False, "change is web/Coda-only and cannot affect Tauri desktop or Android"
 
 
 def main():
@@ -92,9 +101,13 @@ def main():
         event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     except (KeyError, OSError, ValueError):
         event = {}
-    build, android, reason = select(os.environ.get("GITHUB_EVENT_NAME", ""), event)
-    output = f"build={str(build).lower()}\nandroid={str(android).lower()}\n"
-    summary = f"CI scope: build={build}, android={android} ({reason})"
+    build, desktop, android, reason = select(os.environ.get("GITHUB_EVENT_NAME", ""), event)
+    output = (
+        f"build={str(build).lower()}\n"
+        f"desktop={str(desktop).lower()}\n"
+        f"android={str(android).lower()}\n"
+    )
+    summary = f"CI scope: build={build}, desktop={desktop}, android={android} ({reason})"
     print(summary)
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
