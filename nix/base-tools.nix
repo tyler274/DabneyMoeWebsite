@@ -11,6 +11,8 @@ with pkgs;
   binaryen
   # Tauri v2 CLI (`cargo tauri ...`).
   cargo-tauri
+  # Dependency guardrails (advisories, licences, bans, sources); see deny.toml.
+  cargo-deny
   # JS/TS engine & toolchain of choice.
   bun
   nodejs_22

@@ -37,7 +37,9 @@ permissions:
 # test, build-web and build-image, so wall time is the slowest gate, not the sum.
 #
 # Rust build cache: clippy, test, build-web and build-desktop restore `target/`
-# keyed by job, rustc version and lockfiles. Crate sources are vendored in the
+# keyed by job, rustc version, flake.lock and Cargo.lock. The fallback key
+# keeps flake.lock: cached build scripts and proc macros link against the
+# pinned glibc store path and cannot run after a nixpkgs bump. Crate sources are vendored in the
 # CI image, so there is no registry to cache. Only runs on main save, after
 # scripts/ci-trim-target.sh strips workspace outputs, so pull requests read the
 # cache without filling the 10 GB repository limit. Cache steps never fail a
@@ -221,6 +223,36 @@ jobs:
         run: nix develop -c nixpkgs-fmt --check flake.nix nix/
       - name: Check rustfmt
         run: nix develop -c cargo fmt --all --check
+  # RustSec advisories, licence allow-list, bans and source checks. deny.toml is
+  # the single policy file; the dev shell carries cargo-deny too, so
+  # `nix develop -c cargo deny --all-features check` and `nix run .#ci` match
+  # this job. It needs neither the CI image nor a build, so it runs beside the
+  # image bootstrap. Deliberately not in `deploy.needs`: a newly published
+  # advisory must not block a deploy of otherwise unchanged code.
+  cargo-deny:
+    name: Dependency guardrails (cargo-deny)
+    needs: [scope]
+    if: needs.scope.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Read the pinned Rust version
+        id: toolchain
+        run: python3 -c 'import tomllib; print("channel=" + tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])' >> "$GITHUB_OUTPUT"
+      - name: Check dependency guardrails
+        uses: EmbarkStudios/cargo-deny-action@v2
+        # The action's image ships an older Rust. Install the pin minimally and
+        # use it instead of letting rustup pull the full toolchain file profile.
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.channel }}
+        with:
+          rust-version: ${{ steps.toolchain.outputs.channel }}
+          command: check
+          # `arguments` is the argv head (before `check`); `command-arguments`
+          # land after it. `--all-features` must come before `check`.
+          arguments: --all-features
+          command-arguments: advisories bans licenses sources
   # Clippy lint gate.
   clippy:
     name: Clippy
@@ -257,9 +289,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: target
-          key: rust-v1-clippy-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          key: rust-v1-clippy-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            rust-v1-clippy-${{ steps.rustc.outputs.version }}-
+            rust-v1-clippy-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-
       - name: "clippy: ui (ssr)"
         run: nix develop -c cargo clippy -p ui --features ssr -- -D warnings
       - name: "clippy: web (ssr)"
@@ -314,9 +346,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: target
-          key: rust-v1-build-web-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          key: rust-v1-build-web-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            rust-v1-build-web-${{ steps.rustc.outputs.version }}-
+            rust-v1-build-web-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-
       - name: cargo leptos build --release
         run: nix develop -c cargo leptos build --release
       # act's built-in artifact server doesn't speak the upload-artifact@v7
@@ -377,9 +409,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: target
-          key: rust-v1-build-desktop-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          key: rust-v1-build-desktop-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            rust-v1-build-desktop-${{ steps.rustc.outputs.version }}-
+            rust-v1-build-desktop-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-
       - name: cargo tauri build --no-bundle
         run: nix develop -c cargo tauri build --no-bundle
       - name: Prepare Rust cache payload
@@ -489,9 +521,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: target
-          key: rust-v1-test-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          key: rust-v1-test-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            rust-v1-test-${{ steps.rustc.outputs.version }}-
+            rust-v1-test-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-
       - name: "test: ui (data + ssr render)"
         run: nix develop -c cargo test -p ui --features ssr
       - name: "test: web (ssr route list)"

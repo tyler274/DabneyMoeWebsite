@@ -20,18 +20,18 @@ leptos_axum = { version = "0.8" }
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["fs", "compression-gzip", "trace", "request-id", "limit"] }
+tower-http = { version = "0.7", features = ["fs", "compression-gzip", "trace", "request-id", "limit"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # rustls (not default native-tls/openssl) so the static-musl Nix image builds offline.
 tracing-loki = { version = "0.2", default-features = false, features = ["compat-0-2-1", "rustls"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 futures-util = "0.3"
 url = "2"
-base64 = "0.22"
+base64 = "0.23"
 http = "1"
 # Pinned to match the `wasm-bindgen-cli` provided by the Nix dev shell.
-wasm-bindgen = "=0.2.121"
+wasm-bindgen = "=0.2.130"
 console_error_panic_hook = "0.1"
 
 serde = { version = "1", features = ["derive"] }
