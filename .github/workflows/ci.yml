@@ -55,6 +55,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       build: ${{ steps.select.outputs.build }}
+      desktop: ${{ steps.select.outputs.desktop }}
       android: ${{ steps.select.outputs.android }}
     steps:
       - uses: actions/checkout@v6
@@ -65,7 +66,7 @@ jobs:
         run: |
           if ! python3 scripts/ci_scope.py; then
             echo "::warning::CI scope selection failed; running every job."
-            printf 'build=true\nandroid=true\n' >> "$GITHUB_OUTPUT"
+            printf 'build=true\ndesktop=true\nandroid=true\n' >> "$GITHUB_OUTPUT"
           fi
   # Bootstrap the CI base image when it doesn't already exist.
   #
@@ -174,6 +175,12 @@ jobs:
       - name: Wait for Nix to be ready
         if: steps.check.outputs.skip != 'true' && env.ACT == ''
         run: timeout 120 bash -c 'until nix store info 2>/dev/null; do sleep 1; done'
+      - name: Magic Nix Cache
+        if: steps.check.outputs.skip != 'true' && env.ACT == ''
+        continue-on-error: true
+        uses: DeterminateSystems/magic-nix-cache-action@v15
+        with:
+          use-flakehub: false
       - name: Build Cargo vendor dir
         if: steps.check.outputs.skip != 'true' && env.ACT == ''
         run: |
@@ -286,7 +293,7 @@ jobs:
         id: rust-cache
         if: ${{ !env.ACT }}
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: target
           key: rust-v1-clippy-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
@@ -310,7 +317,7 @@ jobs:
       - name: Save Rust build cache
         if: ${{ steps.cache-payload.outcome == 'success' }}
         continue-on-error: true
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: target
           key: ${{ steps.rust-cache.outputs.cache-primary-key }}
@@ -343,7 +350,7 @@ jobs:
         id: rust-cache
         if: ${{ !env.ACT }}
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: target
           key: rust-v1-build-web-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
@@ -373,7 +380,7 @@ jobs:
       - name: Save Rust build cache
         if: ${{ steps.cache-payload.outcome == 'success' }}
         continue-on-error: true
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: target
           key: ${{ steps.rust-cache.outputs.cache-primary-key }}
@@ -381,7 +388,7 @@ jobs:
   build-desktop:
     name: Build desktop app (Tauri)
     needs: [scope, build-ci-image]
-    if: needs.scope.outputs.build == 'true'
+    if: needs.scope.outputs.build == 'true' && needs.scope.outputs.desktop == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -406,7 +413,7 @@ jobs:
         id: rust-cache
         if: ${{ !env.ACT }}
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: target
           key: rust-v1-build-desktop-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
@@ -422,7 +429,7 @@ jobs:
       - name: Save Rust build cache
         if: ${{ steps.cache-payload.outcome == 'success' }}
         continue-on-error: true
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: target
           key: ${{ steps.rust-cache.outputs.cache-primary-key }}
@@ -459,14 +466,14 @@ jobs:
       # gradle-wrapper.properties produced by init, so it bumps automatically
       # whenever Tauri generates a newer Gradle version.
       - name: Cache Gradle wrapper distribution
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.gradle/wrapper/dists
           key: gradle-wrapper-${{ hashFiles('src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-wrapper-
       # Cache the Gradle dependency / build-tool JARs downloaded via Maven.
       - name: Cache Gradle caches
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.gradle/caches
           key: gradle-caches-${{ hashFiles('src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties', 'src-tauri/Cargo.toml') }}
@@ -518,7 +525,7 @@ jobs:
         id: rust-cache
         if: ${{ !env.ACT }}
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: target
           key: rust-v1-test-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
@@ -538,31 +545,32 @@ jobs:
       - name: Save Rust build cache
         if: ${{ steps.cache-payload.outcome == 'success' }}
         continue-on-error: true
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: target
           key: ${{ steps.rust-cache.outputs.cache-primary-key }}
-  # Build the production OCI image (Nix). Runs alongside the checks; deploy
-  # still waits for all of them before shipping it.
+  # Build the production OCI image (Nix). Runs on the host runner with the Nix
+  # daemon + Magic Nix Cache (matching coda-rust's Locked Nix images job) so
+  # `cargoVendorDir`, pre-baked Qwen GGUF weights, and unchanged static musl
+  # builds are cached across runs instead of rebuilt cold inside a container.
   build-image:
     name: Build server OCI image
-    needs: [scope, build-ci-image]
+    needs: [scope]
     if: needs.scope.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      # act sometimes drops Dockerfile ENV; keep Nix on PATH.
-      PATH: /nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-    container:
-      image: ${{ needs.build-ci-image.outputs.image }}
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-      options: --privileged
     steps:
       - uses: actions/checkout@v6
-      - name: Trust workspace for Git
-        run: git config --system --add safe.directory '*'
+      - uses: DeterminateSystems/nix-installer-action@v22
+        if: env.ACT == ''
+      - name: Wait for Nix to be ready
+        run: timeout 120 bash -c 'until nix store info 2>/dev/null; do sleep 1; done'
+      - name: Magic Nix Cache
+        if: ${{ !env.ACT }}
+        continue-on-error: true
+        uses: DeterminateSystems/magic-nix-cache-action@v15
+        with:
+          use-flakehub: false
       - name: nix build .#serverImage
         run: |
           nix build .#serverImage

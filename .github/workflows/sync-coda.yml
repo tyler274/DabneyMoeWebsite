@@ -35,6 +35,11 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@v22
       - name: Wait for Nix to be ready
         run: timeout 120 bash -c 'until nix store info 2>/dev/null; do sleep 1; done'
+      - name: Magic Nix Cache
+        continue-on-error: true
+        uses: DeterminateSystems/magic-nix-cache-action@v15
+        with:
+          use-flakehub: false
       - name: Sync Coda static bundle and embedded crates
         run: |
           CODA_SHA=$(git -C .coda-rust-tmp rev-parse --short=10 HEAD)
