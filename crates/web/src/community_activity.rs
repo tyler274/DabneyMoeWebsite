@@ -57,9 +57,24 @@ mod tests {
             "No publishable data",
             "noindex",
             "href=\"/community-policy\"",
+            "rolling seven-day window",
+            "does not expire published Git LFS history",
+            "How publication and privacy work",
         ] {
             assert!(html.contains(text), "{text}");
         }
+        let home = app
+            .clone()
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(home.status(), axum::http::StatusCode::OK);
+        let home = axum::body::to_bytes(home.into_body(), 1_048_576)
+            .await
+            .unwrap();
+        assert!(String::from_utf8(home.to_vec())
+            .unwrap()
+            .contains("href=\"/community-activity\""));
         let api = app
             .oneshot(
                 Request::builder()

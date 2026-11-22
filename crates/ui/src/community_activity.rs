@@ -38,9 +38,13 @@ pub fn CommunityActivityPage() -> impl IntoView {
         <article class="mx-auto max-w-5xl px-6 py-16">
             <a href="/">"Home"</a>
             <h1 class="text-4xl font-bold my-6">"Community activity"</h1>
-            <p>"Observed metadata only. Presence is Discord-reported, delayed at least one hour and limited to seven days. Offline or invisible does not prove absence. Missing observations and disconnected periods are unknown, never inferred as offline. Counts cover completed UTC hours only."</p>
-            <p class="my-4">"No listener is confirmed active. Synthetic fixtures are used only in tests, never as a live-data fallback."</p>
-            <p>"Current authorization is checked separately on every request. Publication stops when authorization is unavailable or over 60 seconds old, or the snapshot is over five minutes old. Withdrawal can still be visible within that bounded interval; this is not instantaneous revocation. Refresh to load new data. The display timer is only a convenience: suspended tabs, disabled JavaScript, and downloaded pages cannot be revoked. Already copied pages cannot be recalled. Aggregates exclude the operator; affected hours must be removed entirely on withdrawal, not republished with subtracted counts."</p>
+            <p>"This page shows authorized community activity metadata, not messages or conversations. Live activity is unavailable until a listener and current authorization are available. Test data is never shown as live activity."</p>
+            <p class="my-4">"Discord-reported presence is delayed by at least one hour. The dashboard shows a rolling seven-day window; this does not expire published Git LFS history or downloaded copies. Missing observations are unknown, not evidence that someone is offline."</p>
+            <details class="my-4">
+                <summary class="cursor-pointer">"How publication and privacy work"</summary>
+                <p class="my-4">"Offline or invisible does not prove absence. Counts cover completed UTC hours only. No listener is confirmed active."</p>
+                <p>"Current authorization is checked separately on every request. Publication stops when authorization is unavailable or over 60 seconds old, or the snapshot is over five minutes old. Withdrawal can still be visible within that bounded interval; this is not instantaneous revocation. Refresh to load new data. The display timer is only a convenience: suspended tabs, disabled JavaScript, and downloaded pages cannot be revoked. Already copied pages cannot be recalled. Aggregates exclude the operator; affected hours must be removed entirely on withdrawal, not republished with subtracted counts."</p>
+            </details>
             <p class="my-4"><a class="underline" href="/community-policy">"Community privacy and participation policy"</a></p>
             <Suspense fallback=|| view! { <p role="status">"Loading; observation state unknown."</p> }>
                 {move || data.get().map(|result| match result {
@@ -77,6 +81,47 @@ pub(crate) fn utc_time(at: i64) -> String {
     chrono::DateTime::from_timestamp(at, 0)
         .map(|time| time.format("%Y-%m-%d %H:%M:%S UTC").to_string())
         .unwrap_or_else(|| "Unknown time".into())
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn synthetic_chart_has_accessible_values_and_unknown_gaps() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let chart = Chart {
+                title: "Synthetic activity".into(),
+                rows: vec![
+                    Row {
+                        at: 1_800_000_000,
+                        description: "20 synthetic messages".into(),
+                        count: Some(20),
+                    },
+                    Row {
+                        at: 1_800_003_600,
+                        description: "Unknown observation".into(),
+                        count: None,
+                    },
+                ],
+            };
+            let html = view! { <ActivityChart chart /> }.to_html();
+            for text in [
+                "role=\"img\"",
+                "aria-label=\"Synthetic activity",
+                "<caption>",
+                "scope=\"col\"",
+                "scope=\"row\"",
+                "20 synthetic messages",
+                "Unknown observation",
+                "Missing hours are unknown, not zero",
+                "UTC",
+            ] {
+                assert!(html.contains(text), "{text}: {html}");
+            }
+        });
+    }
 }
 
 #[component]
