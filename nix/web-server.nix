@@ -132,15 +132,15 @@ let
   webServerStatic = mkWebServer { staticMusl = true; }; # hardened default
   webServer = mkWebServer { }; # glibc fallback
 
-  # Pre-baked Qwen3-0.6B Q8_0 GGUF weights + tokenizer for the embedded
+  # Pre-baked Qwen3-1.7B Q4_K_M GGUF weights + tokenizer for the embedded
   # pure-Rust `candle-transformers` (`quantized_qwen3`) physician harness API,
   # so Cloud Run cold starts load directly from `/nix/store` with zero network I/O.
   qwenGguf = pkgs.fetchurl {
-    url = "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf";
-    sha256 = "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031";
+    url = "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf";
+    sha256 = "b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897";
   };
   qwenTokenizer = pkgs.fetchurl {
-    url = "https://huggingface.co/Qwen/Qwen3-0.6B/resolve/main/tokenizer.json";
+    url = "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/main/tokenizer.json";
     sha256 = "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4";
   };
 
