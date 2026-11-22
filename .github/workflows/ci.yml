@@ -4,10 +4,12 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-# Cancel superseded runs on the same ref to save CI minutes.
+# Only a newer revision of the same pull request cancels a run. Pushes to main
+# and manual runs each get their own group, so a run that is already deploying
+# is never cancelled by the next push.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
   # Required by DeterminateSystems/nix-installer-action for FlakeHub OIDC auth.
@@ -29,7 +31,40 @@ permissions:
 # starts (no daemon-socket), hanging every later `nix` command. Leaving ACT
 # undefined means: real runners → installer uses systemd; act → ACT=true set by
 # act itself. Undefined `env.ACT` still compares equal to '' in expressions.
+
+# Job graph: `scope` and the image bootstrap run first, then format, clippy,
+# test and every build run in parallel. `deploy` waits for format, clippy,
+# test, build-web and build-image, so wall time is the slowest gate, not the sum.
+#
+# Rust build cache: clippy, test, build-web and build-desktop restore `target/`
+# keyed by job, rustc version and lockfiles. Crate sources are vendored in the
+# CI image, so there is no registry to cache. Only runs on main save, after
+# scripts/ci-trim-target.sh strips workspace outputs, so pull requests read the
+# cache without filling the 10 GB repository limit. Cache steps never fail a
+# job (`continue-on-error`) and are skipped under act, like artifact uploads.
 jobs:
+  # Decide which jobs this change needs. Changes confined to Markdown,
+  # terraform/ and selfhost/ skip every build and the deploy; Android builds
+  # only when its inputs changed. See scripts/ci_scope.py. Anything that cannot
+  # be compared (manual runs, act, missing history) runs everything.
+  scope:
+    name: Select CI scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.select.outputs.build }}
+      android: ${{ steps.select.outputs.android }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Classify the change
+        id: select
+        run: |
+          if ! python3 scripts/ci_scope.py; then
+            echo "::warning::CI scope selection failed; running every job."
+            printf 'build=true\nandroid=true\n' >> "$GITHUB_OUTPUT"
+          fi
   # Bootstrap the CI base image when it doesn't already exist.
   #
   # On GitHub Actions the job checks whether the Cargo.lock-pinned image tag is
@@ -42,30 +77,59 @@ jobs:
   # `--pull=false` so container jobs use that local tag instead of GHCR.
   build-ci-image:
     name: Bootstrap CI base image
+    needs: [scope]
+    if: needs.scope.outputs.build == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      image: ${{ steps.check.outputs.image }}
     steps:
       - uses: actions/checkout@v6
-      # Fast-path: skip only when a local image actually runs `nix`. A stale tag
-      # (partial pull, old bootstrap) can exist without a working Nix install.
+      # The GHCR package is private, so the registry lookup below needs a login.
+      - name: Log in to GHCR
+        if: env.ACT == ''
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Fast-path: skip when the image for this Cargo.lock + ci.Dockerfile is
+      # already in GHCR (or, under act, in the local Docker daemon and able to
+      # run `nix`; a stale tag can exist without a working Nix install).
+      #
+      # The tag is computed here, before the vendor dir exists, and reused when
+      # pushing. Hashing `**/Cargo.lock` again after vendoring also picks up
+      # lockfiles shipped inside vendored crates, so the pushed tag never
+      # matched this lookup and the image was rebuilt on every run.
+      #
+      # Container jobs run the pinned tag from this job's `image` output, not
+      # `latest`: `latest` may have been pushed by a branch with another
+      # Cargo.lock, whose vendored crates would not satisfy an offline build.
       - name: Check if image already exists
         id: check
         env:
           IMAGE: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci
+          TAG: ${{ hashFiles('Cargo.lock', 'ci.Dockerfile') }}
         run: |
-          TAG_HASH="${IMAGE}:${{ hashFiles('**/Cargo.lock') }}"
+          TAG_HASH="${IMAGE}:${TAG}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           image_ready() {
             docker image inspect "$1" > /dev/null 2>&1 \
               && docker run --rm "$1" nix --version > /dev/null 2>&1
           }
-          if image_ready "${IMAGE}:latest"; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          elif image_ready "$TAG_HASH"; then
+          ref="$TAG_HASH"
+          if image_ready "$TAG_HASH"; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           elif docker manifest inspect "$TAG_HASH" > /dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "${ACT:-}" ] && image_ready "${IMAGE}:latest"; then
+            # Local runs reuse whatever working image is already loaded.
+            ref="${IMAGE}:latest"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
+          echo "image=${ref}" >> "$GITHUB_OUTPUT"
       # === Local act path =====================================================
       # Build an image with Nix pre-installed directly from the Docker daemon.
       # No Cargo vendoring (downstream jobs fetch as needed for local testing).
@@ -75,7 +139,7 @@ jobs:
         run: |
           docker build \
             -t ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest \
-            -t "ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:${{ hashFiles('**/Cargo.lock') }}" \
+            -t "ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:${{ steps.check.outputs.tag }}" \
             -f - . <<'DOCKERFILE'
           FROM ubuntu:22.04
           ARG DEBIAN_FRONTEND=noninteractive
@@ -116,13 +180,6 @@ jobs:
           STORE_PATH=$(readlink -f cargo-vendor-result)
           sed "s|${STORE_PATH}|/ci-cargo-vendor|g" \
             cargo-vendor-result/config.toml > cargo-home-config.toml
-      - name: Log in to GHCR
-        if: steps.check.outputs.skip != 'true' && env.ACT == ''
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set up Docker Buildx
         if: steps.check.outputs.skip != 'true' && env.ACT == ''
         uses: docker/setup-buildx-action@v3
@@ -135,22 +192,23 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
-            ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:${{ hashFiles('**/Cargo.lock') }}
+            ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:${{ steps.check.outputs.tag }}
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
           cache-to: type=inline
-  # Quick format check: rustfmt + nixpkgs-fmt. Fast gate that catches style
-  # issues before we spend time on linting or building.
+  # Quick format check: rustfmt + nixpkgs-fmt.
   # The CI image ships Nix but not the dev-shell tools; invoke them via
   # `nix develop -c` so the same toolchain runs locally, under act, and on GH.
   format:
     name: Format (rustfmt + nixpkgs-fmt)
-    needs: [build-ci-image]
+    needs: [scope, build-ci-image]
+    if: needs.scope.outputs.build == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       # act sometimes drops Dockerfile ENV; keep Nix on PATH.
       PATH: /nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     container:
-      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      image: ${{ needs.build-ci-image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -163,16 +221,22 @@ jobs:
         run: nix develop -c nixpkgs-fmt --check flake.nix nix/
       - name: Check rustfmt
         run: nix develop -c cargo fmt --all --check
-  # Clippy lint gate. Runs after format passes.
+  # Clippy lint gate.
   clippy:
     name: Clippy
-    needs: [format]
+    needs: [scope, build-ci-image]
+    if: needs.scope.outputs.build == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       # act sometimes drops Dockerfile ENV; keep Nix on PATH.
       PATH: /nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      # Dependencies come from the cache and CI never rebuilds incrementally;
+      # debug info only makes the cached target/ larger.
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
     container:
-      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      image: ${{ needs.build-ci-image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -181,6 +245,21 @@ jobs:
       - uses: actions/checkout@v6
       - name: Trust workspace for Git
         run: git config --system --add safe.directory '*'
+      - name: Rust toolchain version
+        id: rustc
+        run: |
+          version="$(nix develop -c rustc -vV | awk '/^release:/{r=$2} /^commit-hash:/{c=$2} END{print r "-" substr(c,1,12)}')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - name: Restore Rust build cache
+        id: rust-cache
+        if: ${{ !env.ACT }}
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: target
+          key: rust-v1-clippy-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          restore-keys: |
+            rust-v1-clippy-${{ steps.rustc.outputs.version }}-
       - name: "clippy: ui (ssr)"
         run: nix develop -c cargo clippy -p ui --features ssr -- -D warnings
       - name: "clippy: web (ssr)"
@@ -191,16 +270,30 @@ jobs:
         run: nix develop -c cargo clippy -p dabney-app -- -D warnings
       - name: "clippy: icon-gen"
         run: nix develop -c cargo clippy -p icon-gen -- -D warnings
+      - name: Prepare Rust cache payload
+        id: cache-payload
+        if: ${{ !env.ACT && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.rust-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        run: scripts/ci-trim-target.sh target
+      - name: Save Rust build cache
+        if: ${{ steps.cache-payload.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: target
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
   # Production web build (Axum SSR server binary + hashed site assets).
   build-web:
     name: Build web (Leptos SSR)
-    needs: [clippy]
+    needs: [scope, build-ci-image]
+    if: needs.scope.outputs.build == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       # act sometimes drops Dockerfile ENV; keep Nix on PATH.
       PATH: /nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     container:
-      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      image: ${{ needs.build-ci-image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -209,6 +302,21 @@ jobs:
       - uses: actions/checkout@v6
       - name: Trust workspace for Git
         run: git config --system --add safe.directory '*'
+      - name: Rust toolchain version
+        id: rustc
+        run: |
+          version="$(nix develop -c rustc -vV | awk '/^release:/{r=$2} /^commit-hash:/{c=$2} END{print r "-" substr(c,1,12)}')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - name: Restore Rust build cache
+        id: rust-cache
+        if: ${{ !env.ACT }}
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: target
+          key: rust-v1-build-web-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          restore-keys: |
+            rust-v1-build-web-${{ steps.rustc.outputs.version }}-
       - name: cargo leptos build --release
         run: nix develop -c cargo leptos build --release
       # act's built-in artifact server doesn't speak the upload-artifact@v7
@@ -225,16 +333,30 @@ jobs:
             target/release/web
           if-no-files-found: error
           retention-days: 7
+      - name: Prepare Rust cache payload
+        id: cache-payload
+        if: ${{ !env.ACT && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.rust-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        run: scripts/ci-trim-target.sh target
+      - name: Save Rust build cache
+        if: ${{ steps.cache-payload.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: target
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
   # Desktop app: compile only (no OS packaging / bundling).
   build-desktop:
     name: Build desktop app (Tauri)
-    needs: [clippy]
+    needs: [scope, build-ci-image]
+    if: needs.scope.outputs.build == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       # act sometimes drops Dockerfile ENV; keep Nix on PATH.
       PATH: /nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     container:
-      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      image: ${{ needs.build-ci-image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -243,19 +365,48 @@ jobs:
       - uses: actions/checkout@v6
       - name: Trust workspace for Git
         run: git config --system --add safe.directory '*'
+      - name: Rust toolchain version
+        id: rustc
+        run: |
+          version="$(nix develop -c rustc -vV | awk '/^release:/{r=$2} /^commit-hash:/{c=$2} END{print r "-" substr(c,1,12)}')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - name: Restore Rust build cache
+        id: rust-cache
+        if: ${{ !env.ACT }}
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: target
+          key: rust-v1-build-desktop-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          restore-keys: |
+            rust-v1-build-desktop-${{ steps.rustc.outputs.version }}-
       - name: cargo tauri build --no-bundle
         run: nix develop -c cargo tauri build --no-bundle
+      - name: Prepare Rust cache payload
+        id: cache-payload
+        if: ${{ !env.ACT && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.rust-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        run: scripts/ci-trim-target.sh target
+      - name: Save Rust build cache
+        if: ${{ steps.cache-payload.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: target
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
   # Android app: cross-compile to an (unsigned) APK. `src-tauri/gen` is
   # git-ignored, so the Gradle/Android project is regenerated each run.
   build-android:
     name: Build Android app (APK)
-    needs: [clippy]
+    needs: [scope, build-ci-image]
+    if: needs.scope.outputs.build == 'true' && needs.scope.outputs.android == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       # act sometimes drops Dockerfile ENV; keep Nix on PATH.
       PATH: /nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     container:
-      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      image: ${{ needs.build-ci-image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -302,16 +453,22 @@ jobs:
           path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: warn
           retention-days: 7
-  # Test suite. Runs after web build finishes (uses the built artifacts).
+  # Test suite.
   test:
     name: Test suite
-    needs: [build-web]
+    needs: [scope, build-ci-image]
+    if: needs.scope.outputs.build == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       # act sometimes drops Dockerfile ENV; keep Nix on PATH.
       PATH: /nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      # Dependencies come from the cache and CI never rebuilds incrementally;
+      # debug info only makes the cached target/ larger.
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
     container:
-      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      image: ${{ needs.build-ci-image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -320,22 +477,52 @@ jobs:
       - uses: actions/checkout@v6
       - name: Trust workspace for Git
         run: git config --system --add safe.directory '*'
+      - name: Rust toolchain version
+        id: rustc
+        run: |
+          version="$(nix develop -c rustc -vV | awk '/^release:/{r=$2} /^commit-hash:/{c=$2} END{print r "-" substr(c,1,12)}')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - name: Restore Rust build cache
+        id: rust-cache
+        if: ${{ !env.ACT }}
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: target
+          key: rust-v1-test-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          restore-keys: |
+            rust-v1-test-${{ steps.rustc.outputs.version }}-
       - name: "test: ui (data + ssr render)"
         run: nix develop -c cargo test -p ui --features ssr
       - name: "test: web (ssr route list)"
         run: nix develop -c cargo test -p web --features ssr
       - name: "test: dabney-app (tauri context)"
         run: nix develop -c cargo test -p dabney-app
-  # Build the production OCI image (Nix). Only runs if web builds AND tests pass.
+      - name: Prepare Rust cache payload
+        id: cache-payload
+        if: ${{ !env.ACT && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.rust-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        run: scripts/ci-trim-target.sh target
+      - name: Save Rust build cache
+        if: ${{ steps.cache-payload.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: target
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
+  # Build the production OCI image (Nix). Runs alongside the checks; deploy
+  # still waits for all of them before shipping it.
   build-image:
     name: Build server OCI image
-    needs: [test]
+    needs: [scope, build-ci-image]
+    if: needs.scope.outputs.build == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       # act sometimes drops Dockerfile ENV; keep Nix on PATH.
       PATH: /nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     container:
-      image: ghcr.io/${{ github.repository_owner }}/dabneymoe-ci:latest
+      image: ${{ needs.build-ci-image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -377,15 +564,33 @@ jobs:
   deploy:
     name: Deploy web (GCP Cloud Run)
     runs-on: ubuntu-latest
-    # Deploy only after: check (format+clippy), all builds, test, and image build pass
-    needs: [clippy, build-web, test, build-image]
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    timeout-minutes: 15
+    # Deploy only after format, clippy, test, the web build and the image build
+    # all succeeded. Each result is checked explicitly: a failed, cancelled or
+    # skipped gate (for example a docs-only change, where `scope` skips the
+    # builds) must skip the deploy rather than let it run.
+    needs: [scope, format, clippy, build-web, test, build-image]
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.scope.outputs.build == 'true' && needs.format.result == 'success' && needs.clippy.result == 'success' && needs.build-web.result == 'success' && needs.test.result == 'success' && needs.build-image.result == 'success' }}
+    # Main runs are no longer cancelled by the next push, so two deploys can
+    # overlap. Run them one at a time.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
     environment: production
     steps:
       - uses: actions/checkout@v6
       - uses: DeterminateSystems/nix-installer-action@v22
       - name: Wait for Nix to be ready
         run: timeout 120 bash -c 'until nix store info 2>/dev/null; do sleep 1; done'
+      # Caches the deploy shell closure in the Actions cache. Only this job uses
+      # it: the container jobs run Nix single-user with no daemon, and the
+      # action hangs there instead of starting.
+      - name: Magic Nix Cache
+        if: ${{ !env.ACT }}
+        continue-on-error: true
+        uses: DeterminateSystems/magic-nix-cache-action@v15
+        with:
+          use-flakehub: false
       - name: Download server image artifact
         uses: actions/download-artifact@v8
         with:
@@ -402,14 +607,15 @@ jobs:
             echo "::notice::DOPPLER_TOKEN not set; skipping web deploy. See terraform/README.md."
           fi
       # Push the pre-built image (by commit SHA + latest) and roll a new Cloud
-      # Run revision. gcloud/skopeo/doppler come from the Nix dev shell;
-      # Doppler injects the GCP creds + project/region.
+      # Run revision. gcloud/skopeo/doppler come from the slim `deploy` dev shell
+      # (not the full Rust/Tauri shell); Doppler injects the GCP creds +
+      # project/region.
       - name: Push image and deploy revision
         if: steps.creds.outputs.configured == 'true'
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |
-          nix develop -c doppler run -- bash -euo pipefail -c '
+          nix develop .#deploy -c doppler run -- bash -euo pipefail -c '
             printf "%s" "$GCP_SA_KEY" > "$RUNNER_TEMP/gcp-sa.json"
             gcloud auth activate-service-account --key-file="$RUNNER_TEMP/gcp-sa.json"
             gcloud config set project "$GCP_PROJECT_ID"
