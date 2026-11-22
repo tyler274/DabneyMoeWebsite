@@ -1282,6 +1282,11 @@ pub enum Step {
         /// How the edit stands.
         state: StepState<()>,
     },
+    /// Coda created a patient follow-up item.
+    CreatedFollowUp {
+        /// How the follow-up creation stands.
+        state: StepState<()>,
+    },
 }
 
 /// Which page of its results a chart search got.
@@ -2125,10 +2130,14 @@ mod tests {
             Step::EditedMemory {
                 state: StepState::Running,
             },
+            Step::CreatedFollowUp {
+                state: StepState::Returned { result: () },
+            },
         ];
         let json = serde_json::to_value(&steps).unwrap();
         assert_eq!(json[0]["did"], "saved_memory_note");
         assert_eq!(json[1]["did"], "edited_memory");
+        assert_eq!(json[2]["did"], "created_follow_up");
         assert_eq!(serde_json::from_value::<Vec<Step>>(json).unwrap(), steps);
 
         let memory = PatientMemoryResponse {

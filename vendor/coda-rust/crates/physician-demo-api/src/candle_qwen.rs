@@ -42,8 +42,11 @@ pub const CODA_CANDLE_CACHE_DIR_ENV: &str = "CODA_CANDLE_CACHE_DIR";
 
 const MAX_INFERENCE_CONCURRENCY: usize = 1;
 const DEFAULT_MAX_NEW_TOKENS: usize = 192;
-const TOOL_SEARCH_NAME: &str = "chart_search";
-const TOOL_READ_NAME: &str = "chart_read";
+
+use crate::harness_product::{
+    TOOL_BRIEFING_READ, TOOL_CHART_READ, TOOL_CHART_SEARCH, TOOL_FOLLOW_UP_CREATE,
+    TOOL_FOLLOW_UP_LIST, TOOL_MEMORY_READ, TOOL_MEMORY_SAVE,
+};
 
 /// Errors raised while resolving, verifying, or running the Candle GGUF model.
 #[derive(Debug, thiserror::Error)]
@@ -505,29 +508,50 @@ struct ChartExcerpt {
 }
 
 enum PromptPhase {
-    NeedSearch { query: String },
-    NeedRead { candidate_ids: Vec<String> },
-    ReadyToAnswer { excerpts: Vec<ChartExcerpt> },
+    NeedTool {
+        query: String,
+    },
+    NeedRead {
+        candidate_ids: Vec<String>,
+    },
+    ReadyToAnswer {
+        excerpts: Vec<ChartExcerpt>,
+        workspace_notes: Vec<String>,
+    },
+}
+
+fn is_workspace_tool(name: &str) -> bool {
+    matches!(
+        name,
+        TOOL_MEMORY_READ
+            | TOOL_MEMORY_SAVE
+            | TOOL_FOLLOW_UP_LIST
+            | TOOL_FOLLOW_UP_CREATE
+            | TOOL_BRIEFING_READ
+    )
 }
 
 fn inspect_prompt_phase(request: &Request) -> PromptPhase {
     let tools_present = request.tools.iter().any(|t| {
-        t.get("name").and_then(Value::as_str) == Some(TOOL_SEARCH_NAME)
-            || t.get("function")
-                .and_then(|f| f.get("name"))
-                .and_then(Value::as_str)
-                == Some(TOOL_SEARCH_NAME)
+        let name = t
+            .get("name")
+            .or_else(|| t.pointer("/function/name"))
+            .and_then(Value::as_str);
+        matches!(name, Some(TOOL_CHART_SEARCH)) || name.is_some_and(is_workspace_tool)
     });
     if !tools_present {
         return PromptPhase::ReadyToAnswer {
             excerpts: Vec::new(),
+            workspace_notes: Vec::new(),
         };
     }
 
     let mut calls_by_id = std::collections::HashMap::<&str, &str>::new();
     let mut searched_candidates = Vec::new();
     let mut has_search_result = false;
+    let mut has_workspace_result = false;
     let mut excerpts = Vec::new();
+    let mut workspace_notes = Vec::new();
     let mut last_user = String::new();
 
     for item in &request.items {
@@ -537,7 +561,7 @@ fn inspect_prompt_phase(request: &Request) -> PromptPhase {
             }
             Item::MaterializedResult { call_id, output } => {
                 match calls_by_id.get(call_id.as_str()).copied() {
-                    Some(TOOL_SEARCH_NAME) => {
+                    Some(TOOL_CHART_SEARCH) => {
                         has_search_result = true;
                         if let Ok(parsed) = serde_json::from_str::<Value>(output)
                             && let Some(cands) = parsed.get("candidates").and_then(Value::as_array)
@@ -551,7 +575,7 @@ fn inspect_prompt_phase(request: &Request) -> PromptPhase {
                             }
                         }
                     }
-                    Some(TOOL_READ_NAME) => {
+                    Some(TOOL_CHART_READ) => {
                         if let Ok(parsed) = serde_json::from_str::<Value>(output)
                             && let Some(records) = parsed.get("records").and_then(Value::as_array)
                         {
@@ -583,6 +607,11 @@ fn inspect_prompt_phase(request: &Request) -> PromptPhase {
                             }
                         }
                     }
+                    Some(tool_name) if is_workspace_tool(tool_name) => {
+                        has_workspace_result = true;
+                        let bounded: String = output.chars().take(900).collect();
+                        workspace_notes.push(format!("{tool_name}: {bounded}"));
+                    }
                     _ => {}
                 }
             }
@@ -593,8 +622,11 @@ fn inspect_prompt_phase(request: &Request) -> PromptPhase {
         }
     }
 
-    if !excerpts.is_empty() {
-        PromptPhase::ReadyToAnswer { excerpts }
+    if !excerpts.is_empty() || has_workspace_result {
+        PromptPhase::ReadyToAnswer {
+            excerpts,
+            workspace_notes,
+        }
     } else if has_search_result && !searched_candidates.is_empty() {
         PromptPhase::NeedRead {
             candidate_ids: searched_candidates.into_iter().take(3).collect(),
@@ -602,9 +634,10 @@ fn inspect_prompt_phase(request: &Request) -> PromptPhase {
     } else if has_search_result {
         PromptPhase::ReadyToAnswer {
             excerpts: Vec::new(),
+            workspace_notes: Vec::new(),
         }
     } else {
-        PromptPhase::NeedSearch { query: last_user }
+        PromptPhase::NeedTool { query: last_user }
     }
 }
 
@@ -613,12 +646,37 @@ fn format_chatml_prompt(
     phase: &PromptPhase,
     architecture: QwenArchitecture,
 ) -> String {
-    if let PromptPhase::ReadyToAnswer { excerpts } = phase {
+    if let PromptPhase::ReadyToAnswer {
+        excerpts,
+        workspace_notes,
+    } = phase
+    {
         let mut prompt = String::from(
             "<|im_start|>system\n\
-             You are Coda, a clinical chart assistant. Answer the physician's question in 2-4 concise, natural plain-English sentences using ONLY the retrieved chart excerpts.\n\
-             Cite each clinical claim inline using [1], [2], etc. matching the excerpt numbers.\n\
-             Write plain-English clinical prose ONLY. Never output JSON, braces, or tool calls.<|im_end|>\n",
+             You are Coda, a clinical chart assistant. Answer the physician's question in 2-4 concise, natural plain-English sentences using ONLY the retrieved chart excerpts and workspace tool results.\n",
+        );
+        if excerpts.len() > 1 {
+            let max_num = excerpts
+                .iter()
+                .map(|ex| ex.citation_number)
+                .max()
+                .unwrap_or(excerpts.len());
+            prompt.push_str(&format!(
+                "You have {} retrieved chart excerpts ([1] through [{}]). Synthesize across all relevant excerpts and cite EVERY applicable excerpt number ([1], [2], ...) directly beside the specific clinical claim from that excerpt — do not cite only [1] when claims come from multiple excerpts.\n",
+                excerpts.len(),
+                max_num
+            ));
+        } else if !excerpts.is_empty() {
+            prompt.push_str(
+                "Cite each clinical claim inline using [1], [2], etc. matching the excerpt numbers.\n",
+            );
+        } else {
+            prompt.push_str(
+                "Confirm the completed workspace action or summarize the retrieved workspace state clearly without inventing [N] chart citations.\n",
+            );
+        }
+        prompt.push_str(
+            "Write plain-English clinical prose ONLY. Never output JSON, braces, or tool calls.<|im_end|>\n",
         );
         let mut last_user = String::new();
         for item in &request.items {
@@ -634,23 +692,35 @@ fn format_chatml_prompt(
                 prompt.push_str(&format!("<|im_start|>{chat_role}\n{text}<|im_end|>\n"));
             }
         }
-        if excerpts.is_empty() {
+        if excerpts.is_empty() && workspace_notes.is_empty() {
             prompt.push_str(&format!("<|im_start|>user\n{last_user}<|im_end|>\n"));
         } else {
-            prompt.push_str("<|im_start|>user\nRetrieved chart excerpts:\n");
-            for ex in excerpts {
-                let snippet: String = ex.content.chars().take(700).collect();
-                let date_part = if ex.recorded_at.is_empty() {
-                    String::new()
-                } else {
-                    format!(" ({})", ex.recorded_at)
-                };
-                prompt.push_str(&format!(
-                    "[{}] {}{}: {}\n",
-                    ex.citation_number, ex.title, date_part, snippet
-                ));
+            prompt.push_str("<|im_start|>user\n");
+            if !excerpts.is_empty() {
+                prompt.push_str("Retrieved chart excerpts:\n");
+                for ex in excerpts {
+                    let snippet: String = ex.content.chars().take(700).collect();
+                    let date_part = if ex.recorded_at.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", ex.recorded_at)
+                    };
+                    prompt.push_str(&format!(
+                        "[{}] {}{}: {}\n",
+                        ex.citation_number, ex.title, date_part, snippet
+                    ));
+                }
             }
-            prompt.push_str(&format!("\nPhysician question: {last_user}<|im_end|>\n"));
+            if !workspace_notes.is_empty() {
+                if !excerpts.is_empty() {
+                    prompt.push('\n');
+                }
+                prompt.push_str("Workspace tool results:\n");
+                for note in workspace_notes {
+                    prompt.push_str(&format!("- {note}\n"));
+                }
+            }
+            prompt.push_str(&format!("\nPhysician request: {last_user}<|im_end|>\n"));
         }
         prompt.push_str(architecture.assistant_prefix());
         return prompt;
@@ -909,7 +979,82 @@ fn parse_single_call_json(
     })
 }
 
-fn normalize_answer_citations(raw: &str, excerpts: &[ChartExcerpt]) -> String {
+fn fallback_initial_tool_call(query: &str, allowed_tools: &[String]) -> Invocation {
+    let lower = query.to_ascii_lowercase();
+    let allows = |name: &str| allowed_tools.iter().any(|t| t == name);
+    let trimmed = query.trim();
+    if allows(TOOL_MEMORY_SAVE)
+        && (lower.contains("save to memory")
+            || lower.contains("save in memory")
+            || lower.contains("memory note")
+            || lower.starts_with("remember "))
+    {
+        return Invocation {
+            id: format!("candle-memory-save-{}", uuid::Uuid::new_v4().simple()),
+            name: TOOL_MEMORY_SAVE.to_owned(),
+            arguments: json!({ "note": trimmed }).to_string(),
+        };
+    }
+    if allows(TOOL_FOLLOW_UP_CREATE)
+        && (lower.contains("create a follow-up")
+            || lower.contains("create follow-up")
+            || lower.contains("schedule a follow-up")
+            || lower.contains("schedule follow-up")
+            || lower.contains("add a follow-up"))
+    {
+        let title: String = trimmed.chars().take(80).collect();
+        return Invocation {
+            id: format!("candle-followup-create-{}", uuid::Uuid::new_v4().simple()),
+            name: TOOL_FOLLOW_UP_CREATE.to_owned(),
+            arguments: json!({
+                "title": title,
+                "instructions": trimmed,
+            })
+            .to_string(),
+        };
+    }
+    if allows(TOOL_MEMORY_READ)
+        && (lower.contains("patient memory")
+            || lower.contains("read memory")
+            || lower.contains("in memory"))
+    {
+        return Invocation {
+            id: format!("candle-memory-read-{}", uuid::Uuid::new_v4().simple()),
+            name: TOOL_MEMORY_READ.to_owned(),
+            arguments: json!({}).to_string(),
+        };
+    }
+    if allows(TOOL_FOLLOW_UP_LIST)
+        && (lower.contains("list follow-up")
+            || lower.contains("open follow-up")
+            || lower.contains("current follow-up")
+            || lower.contains("scheduled follow-up"))
+    {
+        return Invocation {
+            id: format!("candle-followup-list-{}", uuid::Uuid::new_v4().simple()),
+            name: TOOL_FOLLOW_UP_LIST.to_owned(),
+            arguments: json!({}).to_string(),
+        };
+    }
+    if allows(TOOL_BRIEFING_READ) && (lower.contains("briefing") || lower.contains("pre-visit")) {
+        return Invocation {
+            id: format!("candle-briefing-read-{}", uuid::Uuid::new_v4().simple()),
+            name: TOOL_BRIEFING_READ.to_owned(),
+            arguments: json!({}).to_string(),
+        };
+    }
+    Invocation {
+        id: format!("candle-search-{}", uuid::Uuid::new_v4().simple()),
+        name: TOOL_CHART_SEARCH.to_owned(),
+        arguments: json!({ "query": query }).to_string(),
+    }
+}
+
+fn normalize_answer_citations(
+    raw: &str,
+    excerpts: &[ChartExcerpt],
+    workspace_notes: &[String],
+) -> String {
     let stripped = strip_think_blocks(raw);
     let trimmed = stripped
         .replace("<tool_call>", "")
@@ -919,23 +1064,30 @@ fn normalize_answer_citations(raw: &str, excerpts: &[ChartExcerpt]) -> String {
     let looks_like_tool_json = trimmed.starts_with('{')
         || trimmed.contains("\"candidate_ids\"")
         || trimmed.contains("\"chart_read\"")
-        || trimmed.contains("\"chart_search\"");
-    if looks_like_tool_json && !excerpts.is_empty() {
-        return excerpts
-            .iter()
-            .take(2)
-            .map(|ex| {
-                let first = ex
-                    .content
-                    .lines()
-                    .find(|l| !l.trim().is_empty())
-                    .unwrap_or(ex.content.as_str())
-                    .trim();
-                let short: String = first.chars().take(140).collect();
-                format!("{} reports: {short} [{}].", ex.title, ex.citation_number)
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
+        || trimmed.contains("\"chart_search\"")
+        || trimmed.contains("\"memory_save\"")
+        || trimmed.contains("\"follow_up_create\"");
+    if looks_like_tool_json {
+        if !excerpts.is_empty() {
+            return excerpts
+                .iter()
+                .take(3)
+                .map(|ex| {
+                    let first = ex
+                        .content
+                        .lines()
+                        .find(|l| !l.trim().is_empty())
+                        .unwrap_or(ex.content.as_str())
+                        .trim();
+                    let short: String = first.chars().take(140).collect();
+                    format!("{} reports: {short} [{}].", ex.title, ex.citation_number)
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+        }
+        if !workspace_notes.is_empty() {
+            return "Updated the patient workspace as requested.".to_owned();
+        }
     }
 
     let read_count = excerpts.len();
@@ -981,7 +1133,7 @@ impl Provider for CandleQwenProvider {
         let model_name = loaded.model_name.clone();
         let prompt = format_chatml_prompt(request, &phase, architecture);
         let max_new = match phase {
-            PromptPhase::NeedSearch { .. } | PromptPhase::NeedRead { .. } => {
+            PromptPhase::NeedTool { .. } | PromptPhase::NeedRead { .. } => {
                 self.runtime.config.max_new_tokens.min(64)
             }
             PromptPhase::ReadyToAnswer { .. } => self.runtime.config.max_new_tokens.min(128),
@@ -1029,14 +1181,10 @@ impl Provider for CandleQwenProvider {
         };
 
         let items = match phase {
-            PromptPhase::NeedSearch { query } => {
+            PromptPhase::NeedTool { query } => {
                 let mut calls = parse_qwen_tool_calls(&raw_text, &allowed_tools);
                 if calls.is_empty() {
-                    calls.push(Invocation {
-                        id: format!("candle-search-{}", uuid::Uuid::new_v4().simple()),
-                        name: TOOL_SEARCH_NAME.to_owned(),
-                        arguments: json!({ "query": query }).to_string(),
-                    });
+                    calls.push(fallback_initial_tool_call(&query, &allowed_tools));
                 }
                 for call in &calls {
                     observer
@@ -1050,12 +1198,12 @@ impl Provider for CandleQwenProvider {
             PromptPhase::NeedRead { candidate_ids } => {
                 let mut calls = parse_qwen_tool_calls(&raw_text, &allowed_tools)
                     .into_iter()
-                    .filter(|c| c.name == TOOL_READ_NAME)
+                    .filter(|c| c.name == TOOL_CHART_READ || is_workspace_tool(&c.name))
                     .collect::<Vec<_>>();
                 if calls.is_empty() {
                     calls.push(Invocation {
                         id: format!("candle-read-{}", uuid::Uuid::new_v4().simple()),
-                        name: TOOL_READ_NAME.to_owned(),
+                        name: TOOL_CHART_READ.to_owned(),
                         arguments: json!({ "candidate_ids": candidate_ids }).to_string(),
                     });
                 }
@@ -1068,9 +1216,14 @@ impl Provider for CandleQwenProvider {
                 }
                 calls.into_iter().map(Item::Call).collect()
             }
-            PromptPhase::ReadyToAnswer { excerpts } => {
+            PromptPhase::ReadyToAnswer {
+                excerpts,
+                workspace_notes,
+            } => {
                 vec![Item::assistant(normalize_answer_citations(
-                    &raw_text, &excerpts,
+                    &raw_text,
+                    &excerpts,
+                    &workspace_notes,
                 ))]
             }
         };
@@ -1119,18 +1272,28 @@ mod tests {
             content: "Serum potassium 5.2 mmol/L.".to_owned(),
         }];
         assert_eq!(
-            normalize_answer_citations("Serum potassium was 5.2 mmol/L [S1].", &excerpts),
+            normalize_answer_citations("Serum potassium was 5.2 mmol/L [S1].", &excerpts, &[]),
             "Serum potassium was 5.2 mmol/L [1]."
         );
         assert_eq!(
-            normalize_answer_citations("Serum potassium was elevated.", &excerpts),
+            normalize_answer_citations("Serum potassium was elevated.", &excerpts, &[]),
             "Serum potassium was elevated. [1]"
         );
         let prose = normalize_answer_citations(
             r#"{"name":"chart_read","arguments":{"candidate_ids":["a"]}}"#,
             &excerpts,
+            &[],
         );
         assert!(prose.contains("BMP") && prose.contains("[1]") && !prose.contains("{\"name\""));
+        assert_eq!(
+            normalize_answer_citations(
+                "Saved your note to Patient Memory.",
+                &[],
+                &["memory_save: {\"saved\":true}".to_owned()]
+            ),
+            "Saved your note to Patient Memory.",
+            "workspace-only answer must not append [1]"
+        );
     }
 
     #[tokio::test]
@@ -1168,7 +1331,7 @@ mod tests {
             max_input_tokens: 4096,
             options: Value::Null,
             instructions: "Be concise".to_owned(),
-            tools: vec![json!({ "name": TOOL_SEARCH_NAME })],
+            tools: vec![json!({ "name": TOOL_CHART_SEARCH })],
             items: vec![
                 Item::Message {
                     role: "user".to_owned(),
@@ -1176,7 +1339,7 @@ mod tests {
                 },
                 Item::Call(Invocation {
                     id: "c1".to_owned(),
-                    name: TOOL_READ_NAME.to_owned(),
+                    name: TOOL_CHART_READ.to_owned(),
                     arguments: r#"{"candidate_ids":["rec-1"]}"#.to_owned(),
                 }),
                 Item::MaterializedResult {
@@ -1195,17 +1358,25 @@ mod tests {
             ],
         };
         let phase = inspect_prompt_phase(&req);
-        let PromptPhase::ReadyToAnswer { excerpts } = phase else {
+        let PromptPhase::ReadyToAnswer {
+            excerpts,
+            workspace_notes,
+        } = phase
+        else {
             panic!("expected ReadyToAnswer");
         };
         assert_eq!(excerpts.len(), 1);
+        assert!(workspace_notes.is_empty());
         assert_eq!(
             excerpts[0].content,
             "Atorvastatin 20 mg daily; LDL 130 mg/dL."
         );
         let prompt_q3 = format_chatml_prompt(
             &req,
-            &PromptPhase::ReadyToAnswer { excerpts },
+            &PromptPhase::ReadyToAnswer {
+                excerpts,
+                workspace_notes,
+            },
             QwenArchitecture::Qwen3,
         );
         assert!(prompt_q3.contains("Atorvastatin 20 mg daily; LDL 130 mg/dL."));
@@ -1215,12 +1386,109 @@ mod tests {
         );
         let prompt_q2 = format_chatml_prompt(
             &req,
-            &PromptPhase::NeedSearch {
+            &PromptPhase::NeedTool {
                 query: "medications".to_owned(),
             },
             QwenArchitecture::Qwen2,
         );
         assert!(prompt_q2.ends_with("<|im_start|>assistant\n"));
+    }
+
+    #[test]
+    fn multi_excerpt_prompt_and_workspace_tool_phases_are_grounded() {
+        let req = Request {
+            cache_key: None,
+            model: "qwen".to_owned(),
+            context_window_tokens: 8192,
+            max_input_tokens: 4096,
+            options: Value::Null,
+            instructions: "Be concise".to_owned(),
+            tools: vec![
+                json!({ "name": TOOL_CHART_SEARCH }),
+                json!({ "name": TOOL_MEMORY_SAVE }),
+                json!({ "name": TOOL_FOLLOW_UP_CREATE }),
+            ],
+            items: vec![
+                Item::Message {
+                    role: "user".to_owned(),
+                    text: "Summarize vitals, note, and medications".to_owned(),
+                },
+                Item::Call(Invocation {
+                    id: "c-read".to_owned(),
+                    name: TOOL_CHART_READ.to_owned(),
+                    arguments: r#"{"candidate_ids":["v1","n1","m1"]}"#.to_owned(),
+                }),
+                Item::MaterializedResult {
+                    call_id: "c-read".to_owned(),
+                    output: json!({
+                        "records": [
+                            { "citation_number": 1, "title": "Vitals", "recorded_at": "2026-07-15", "body": "BP 127/82." },
+                            { "citation_number": 2, "title": "DM follow-up", "recorded_at": "2026-07-15", "body": "Feet numb." },
+                            { "citation_number": 3, "title": "Medications", "recorded_at": "2026-07-15", "body": "Atorvastatin 20 mg." }
+                        ]
+                    })
+                    .to_string(),
+                },
+            ],
+        };
+        let phase = inspect_prompt_phase(&req);
+        let prompt = format_chatml_prompt(&req, &phase, QwenArchitecture::Qwen3);
+        assert!(
+            prompt.contains("3 retrieved chart excerpts ([1] through [3])"),
+            "multi-excerpt prompt must explicitly instruct citing [1]..[3]:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("[1] Vitals")
+                && prompt.contains("[2] DM follow-up")
+                && prompt.contains("[3] Medications")
+        );
+
+        let mem_req = Request {
+            items: vec![
+                Item::Message {
+                    role: "user".to_owned(),
+                    text: "Remember patient prefers morning labs".to_owned(),
+                },
+                Item::Call(Invocation {
+                    id: "c-mem".to_owned(),
+                    name: TOOL_MEMORY_SAVE.to_owned(),
+                    arguments: r#"{"note":"Prefers morning labs"}"#.to_owned(),
+                }),
+                Item::MaterializedResult {
+                    call_id: "c-mem".to_owned(),
+                    output: json!({ "saved": true, "note_number": "N1" }).to_string(),
+                },
+            ],
+            ..req
+        };
+        let PromptPhase::ReadyToAnswer {
+            excerpts,
+            workspace_notes,
+        } = inspect_prompt_phase(&mem_req)
+        else {
+            panic!("memory_save result must transition to ReadyToAnswer");
+        };
+        assert!(excerpts.is_empty());
+        assert_eq!(workspace_notes.len(), 1);
+        assert!(workspace_notes[0].contains("memory_save"));
+
+        let allowed = vec![
+            TOOL_CHART_SEARCH.to_owned(),
+            TOOL_MEMORY_SAVE.to_owned(),
+            TOOL_FOLLOW_UP_CREATE.to_owned(),
+        ];
+        assert_eq!(
+            fallback_initial_tool_call("Remember patient prefers morning labs", &allowed).name,
+            TOOL_MEMORY_SAVE
+        );
+        assert_eq!(
+            fallback_initial_tool_call("Schedule a follow-up to recheck potassium", &allowed).name,
+            TOOL_FOLLOW_UP_CREATE
+        );
+        assert_eq!(
+            fallback_initial_tool_call("What is the latest A1c?", &allowed).name,
+            TOOL_CHART_SEARCH
+        );
     }
 
     #[test]

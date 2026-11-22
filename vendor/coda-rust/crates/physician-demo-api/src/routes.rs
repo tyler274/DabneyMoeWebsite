@@ -33,7 +33,7 @@ use physician_wire::{
     AnswerState, ChatSnapshot, DemoSessionResponse, DictationRequest, ExchangeSteps,
     InviteColleagueRequest, InvitePatientRequest, QueuedMessageWire, ResponseId,
     ReviewControlRequest, SaveFeedback, SavePhysicianMemoryEditRequest, SavedAt, SnapshotFeedback,
-    Step, StepState, WorkItemId, WorkResumeTarget, WorkStopTarget,
+    WorkItemId, WorkResumeTarget, WorkStopTarget,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -1935,26 +1935,7 @@ async fn handle_work_stop(
         .cancel_run(&ws_id, &work_id)
         .unwrap_or_else(|| format!("run-stopped-{}", next_demo_seq()));
 
-    if let ExchangeSteps::Read(steps) = &mut ex.steps {
-        for step in steps {
-            match step {
-                Step::SearchedChart { state, .. } if matches!(state, StepState::Running) => {
-                    *state = StepState::Stopped;
-                }
-                Step::ReadRecords { state, .. } if matches!(state, StepState::Running) => {
-                    *state = StepState::Stopped;
-                }
-                Step::ReadConversation { state }
-                | Step::SavedMemoryNote { state }
-                | Step::EditedMemory { state }
-                    if matches!(state, StepState::Running) =>
-                {
-                    *state = StepState::Stopped;
-                }
-                _ => {}
-            }
-        }
-    }
+    crate::harness_product::close_running_steps(&mut ex.steps, true);
     ex.answer = AnswerState::Stopped {
         resume: Some(WorkResumeTarget {
             work_item_id: WorkItemId(work_id.clone()),

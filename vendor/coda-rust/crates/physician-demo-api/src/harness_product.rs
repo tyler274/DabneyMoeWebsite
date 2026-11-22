@@ -1,6 +1,6 @@
 //! `crates/harness` [`Product`] implementation over per-session `turso_core` [`DemoStore`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -8,6 +8,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use harness::engine::recipe::{Finish, RequestBinding, RequestRecipe, TextDelivery, ToolFuture};
 use harness::engine::recovery::{Inputs, Messages, Records};
+use harness::engine::results::ToolResult;
 use harness::engine::runs::{HoldReason, RunOutcome};
 use harness::engine::{
     Cancellation, Event, EventKind, Failure, Invocation, Item, LimitBackstop, NotCurrent, Product,
@@ -16,16 +17,19 @@ use harness::engine::{
 use harness::skills::Package;
 use physician_bus::{Bus, Event as BusEvent};
 use physician_demo_db::DemoSourceRecord;
+use physician_demo_db::driver::DbError;
 use physician_demo_db::store::{
     DEFAULT_DEMO_BASE_UNIX, build_cited_source_wire, extract_verbatim_quote, next_demo_seq,
     parse_record_group_wire, search_terms_for_question,
 };
+use physician_wire::follow_ups::UpdateFollowUpBody;
 use physician_wire::{
     AnswerState, AttemptId, ChatSnapshot, CitationTargetKind, CitedSourceWire, Exchange,
     ExchangeSteps, Found, MessageKey, MessageSegment, PhysicianMessage, RecordAbout, RecordDate,
     RecordRead, ResponseId, SavedAt, SearchPage, SourceVersion, Step, StepState, WorkItemId,
     WorkResumeTarget, WorkStopTarget,
 };
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::provider::ProviderBackend;
@@ -33,6 +37,109 @@ use crate::sessions::{ActiveRun, VisitorSession, unix_now};
 
 pub(crate) const TOOL_CHART_SEARCH: &str = "chart_search";
 pub(crate) const TOOL_CHART_READ: &str = "chart_read";
+pub(crate) const TOOL_MEMORY_READ: &str = "memory_read";
+pub(crate) const TOOL_MEMORY_SAVE: &str = "memory_save";
+pub(crate) const TOOL_FOLLOW_UP_LIST: &str = "follow_up_list";
+pub(crate) const TOOL_FOLLOW_UP_CREATE: &str = "follow_up_create";
+pub(crate) const TOOL_BRIEFING_READ: &str = "briefing_read";
+
+const DEFAULT_DEMO_FOLLOW_UP_DUE_DATE: &str = "2026-09-03";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DemoTool {
+    ChartSearch,
+    ChartRead,
+    MemoryRead,
+    MemorySave,
+    FollowUpList,
+    FollowUpCreate,
+    BriefingRead,
+    SkillView,
+}
+
+impl DemoTool {
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            TOOL_CHART_SEARCH => Some(Self::ChartSearch),
+            TOOL_CHART_READ => Some(Self::ChartRead),
+            TOOL_MEMORY_READ => Some(Self::MemoryRead),
+            TOOL_MEMORY_SAVE => Some(Self::MemorySave),
+            TOOL_FOLLOW_UP_LIST => Some(Self::FollowUpList),
+            TOOL_FOLLOW_UP_CREATE => Some(Self::FollowUpCreate),
+            TOOL_BRIEFING_READ => Some(Self::BriefingRead),
+            harness::skills::SKILL_VIEW => Some(Self::SkillView),
+            _ => None,
+        }
+    }
+
+    fn is_read_only(self) -> bool {
+        match self {
+            Self::ChartSearch
+            | Self::ChartRead
+            | Self::MemoryRead
+            | Self::FollowUpList
+            | Self::BriefingRead
+            | Self::SkillView => true,
+            Self::MemorySave | Self::FollowUpCreate => false,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ChartSearchArgs {
+    #[serde(default)]
+    query: Option<String>,
+    #[serde(default, rename = "record_type")]
+    _record_type: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ChartReadArgs {
+    #[serde(default)]
+    candidate_ids: Vec<String>,
+    #[serde(default)]
+    candidate_id: Option<String>,
+}
+
+impl ChartReadArgs {
+    fn into_ids(self) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .candidate_ids
+            .into_iter()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if ids.is_empty()
+            && let Some(single) = self
+                .candidate_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        {
+            ids.push(single.to_owned());
+        }
+        ids
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct MemorySaveArgs {
+    note: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct FollowUpCreateArgs {
+    title: String,
+    instructions: String,
+    #[serde(default)]
+    due_at: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct BriefingReadArgs {
+    #[serde(default)]
+    briefing_id: Option<String>,
+}
 
 /// Shared runtime dependencies needed to spawn `crates/harness` runs for a visitor session.
 #[derive(Clone)]
@@ -250,6 +357,7 @@ impl HarnessRunner {
             cancel: cancel.clone(),
             read_records: Vec::new(),
             assigned_citation_ids: Arc::new(std::sync::Mutex::new(Vec::new())),
+            pending_calls: HashMap::new(),
             last_search_terms: search_terms_for_question(question),
             last_search_more: false,
             refused_unbound_citations: 0,
@@ -277,10 +385,11 @@ impl HarnessRunner {
 
 pub(crate) fn chart_recipe(model: &str, skills: &Package) -> RequestRecipe {
     let mut instructions = String::from(
-        "You are Coda, a clinical chart assistant helping a physician review a synthetic patient chart.\n\
-         First search the chart with `chart_search`, then read the relevant records with `chart_read` before answering.\n\
-         Cite every retrieved clinical claim inline using [1], [2], etc. corresponding to the `citation_number` returned by `chart_read`.\n\
-         Do not cite numbers not returned by `chart_read`, and do not fabricate clinical values absent from read records.",
+        "You are Coda, a clinical chart assistant helping a physician manage a synthetic patient workspace.\n\
+         For clinical chart questions, first search the chart with `chart_search`, then read all relevant records with `chart_read` before answering.\n\
+         When multiple records are read, cite EVERY relevant `citation_number` inline ([1], [2], [3], ...) beside each clinical claim.\n\
+         Do not cite numbers not returned by `chart_read`, and do not fabricate clinical values absent from read records.\n\
+         Use `memory_read` / `memory_save` to read or append durable physician notes in Patient Memory, `follow_up_list` / `follow_up_create` to inspect or schedule patient follow-ups, and `briefing_read` to read pre-visit briefings.",
     );
     let catalog = skills.catalog_instructions();
     if !catalog.is_empty() {
@@ -296,6 +405,11 @@ pub(crate) fn chart_recipe(model: &str, skills: &Package) -> RequestRecipe {
         tools: vec![
             chart_search_tool().function(),
             chart_read_tool().function(),
+            memory_read_tool().function(),
+            memory_save_tool().function(),
+            follow_up_list_tool().function(),
+            follow_up_create_tool().function(),
+            briefing_read_tool().function(),
             harness::skills::tool().function(),
         ],
     }
@@ -309,7 +423,7 @@ fn chart_search_tool() -> Tool {
             "type": "object",
             "properties": {
                 "query": { "type": "string", "description": "Clinical keywords to search for." },
-                "record_type": { "type": ["string", "null"], "description": "Optional record type filter." }
+                "record_type": { "type": "string", "description": "Optional record type filter." }
             },
             "required": ["query"],
             "additionalProperties": false
@@ -336,6 +450,92 @@ fn chart_read_tool() -> Tool {
     }
 }
 
+fn memory_read_tool() -> Tool {
+    Tool {
+        name: TOOL_MEMORY_READ.to_owned(),
+        description: "Read the active patient's current durable Patient Memory (`summary` and physician `direction` notes).".to_owned(),
+        parameters: json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }),
+    }
+}
+
+fn memory_save_tool() -> Tool {
+    Tool {
+        name: TOOL_MEMORY_SAVE.to_owned(),
+        description: "Append a concise physician note to the active patient's durable Patient Memory without overwriting prior notes.".to_owned(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "note": {
+                    "type": "string",
+                    "description": "Non-empty physician clinical note or preference to persist in Patient Memory."
+                }
+            },
+            "required": ["note"],
+            "additionalProperties": false
+        }),
+    }
+}
+
+fn follow_up_list_tool() -> Tool {
+    Tool {
+        name: TOOL_FOLLOW_UP_LIST.to_owned(),
+        description: "List the active patient's scheduled, open, and completed follow-up items."
+            .to_owned(),
+        parameters: json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }),
+    }
+}
+
+fn follow_up_create_tool() -> Tool {
+    Tool {
+        name: TOOL_FOLLOW_UP_CREATE.to_owned(),
+        description: "Create a new scheduled follow-up item for the active patient with a concise title, clinical instructions, and optional due date.".to_owned(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Concise non-empty summary title for the follow-up."
+                },
+                "instructions": {
+                    "type": "string",
+                    "description": "Non-empty clinical instructions or monitoring plan for the follow-up."
+                },
+                "due_at": {
+                    "type": "string",
+                    "description": "Optional due date in YYYY-MM-DD or RFC 3339 format."
+                }
+            },
+            "required": ["title", "instructions"],
+            "additionalProperties": false
+        }),
+    }
+}
+
+fn briefing_read_tool() -> Tool {
+    Tool {
+        name: TOOL_BRIEFING_READ.to_owned(),
+        description: "Read the active patient's saved pre-visit briefings (or a specific briefing by `briefing_id`).".to_owned(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "briefing_id": {
+                    "type": "string",
+                    "description": "Optional briefing identifier to read one briefing directly."
+                }
+            },
+            "additionalProperties": false
+        }),
+    }
+}
+
 struct DemoHarnessProduct {
     session: VisitorSession,
     bus: Arc<dyn Bus>,
@@ -349,6 +549,7 @@ struct DemoHarnessProduct {
     cancel: Cancellation,
     read_records: Vec<DemoSourceRecord>,
     assigned_citation_ids: Arc<std::sync::Mutex<Vec<String>>>,
+    pending_calls: HashMap<String, DemoTool>,
     last_search_terms: Vec<String>,
     last_search_more: bool,
     refused_unbound_citations: usize,
@@ -401,14 +602,18 @@ impl DemoHarnessProduct {
     }
 
     async fn handle_tool_started(&mut self, call: &Invocation) -> Result<(), ProductError> {
+        let Some(tool) = DemoTool::from_name(&call.name) else {
+            return Ok(());
+        };
+        self.pending_calls.insert(call.id.clone(), tool);
         let args: Value = serde_json::from_str(&call.arguments).unwrap_or_else(|_| json!({}));
-        match call.name.as_str() {
-            TOOL_CHART_SEARCH => {
-                let query = args
-                    .get("query")
-                    .and_then(Value::as_str)
-                    .unwrap_or(&self.question)
-                    .to_owned();
+        match tool {
+            DemoTool::ChartSearch => {
+                let parsed: ChartSearchArgs = serde_json::from_value(args).unwrap_or_default();
+                let query = parsed
+                    .query
+                    .filter(|q| !q.trim().is_empty())
+                    .unwrap_or_else(|| self.question.clone());
                 let terms = search_terms_for_question(&query);
                 if !terms.is_empty() {
                     self.last_search_terms = terms;
@@ -427,8 +632,9 @@ impl DemoHarnessProduct {
                 })
                 .await?;
             }
-            TOOL_CHART_READ => {
-                let requested = extract_candidate_ids(&args).len().max(1);
+            DemoTool::ChartRead => {
+                let parsed: ChartReadArgs = serde_json::from_value(args).unwrap_or_default();
+                let requested = parsed.into_ids().len().max(1);
                 self.with_exchange_mut(|snap, idx| {
                     let ExchangeSteps::Read(steps) = &mut snap.transcript[idx].steps else {
                         return false;
@@ -441,107 +647,235 @@ impl DemoHarnessProduct {
                 })
                 .await?;
             }
-            _ => {}
+            DemoTool::MemorySave => {
+                self.with_exchange_mut(|snap, idx| {
+                    let ExchangeSteps::Read(steps) = &mut snap.transcript[idx].steps else {
+                        return false;
+                    };
+                    steps.push(Step::SavedMemoryNote {
+                        state: StepState::Running,
+                    });
+                    true
+                })
+                .await?;
+            }
+            DemoTool::FollowUpCreate => {
+                self.with_exchange_mut(|snap, idx| {
+                    let ExchangeSteps::Read(steps) = &mut snap.transcript[idx].steps else {
+                        return false;
+                    };
+                    steps.push(Step::CreatedFollowUp {
+                        state: StepState::Running,
+                    });
+                    true
+                })
+                .await?;
+            }
+            DemoTool::MemoryRead
+            | DemoTool::FollowUpList
+            | DemoTool::BriefingRead
+            | DemoTool::SkillView => {}
         }
         Ok(())
     }
 
-    async fn handle_tool_returned(&mut self, output: &str) -> Result<(), ProductError> {
-        let parsed: Value = serde_json::from_str(output).unwrap_or(Value::Null);
-        if let Some(cands) = parsed.get("candidates").and_then(Value::as_array) {
-            let count = cands.len();
-            let more = self.last_search_more;
-            self.with_exchange_mut(|snap, idx| {
-                let ExchangeSteps::Read(steps) = &mut snap.transcript[idx].steps else {
-                    return false;
+    async fn handle_tool_returned(
+        &mut self,
+        call_id: &str,
+        result: &ToolResult,
+    ) -> Result<(), ProductError> {
+        let Some(tool) = self.pending_calls.remove(call_id) else {
+            return Ok(());
+        };
+        if matches!(result, ToolResult::Refused(_)) {
+            self.mark_running_step_failed(tool).await?;
+            return Ok(());
+        }
+        let Some(output) = result.original() else {
+            return Ok(());
+        };
+        match tool {
+            DemoTool::ChartSearch => {
+                let parsed: Value = serde_json::from_str(output).unwrap_or(Value::Null);
+                let count = parsed
+                    .get("candidates")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len);
+                let more = self.last_search_more;
+                self.with_exchange_mut(|snap, idx| {
+                    let ExchangeSteps::Read(steps) = &mut snap.transcript[idx].steps else {
+                        return false;
+                    };
+                    for step in steps.iter_mut().rev() {
+                        if let Step::SearchedChart { state, .. } = step
+                            && matches!(state, StepState::Running)
+                        {
+                            *state = StepState::Returned {
+                                result: Found {
+                                    records: count,
+                                    more,
+                                },
+                            };
+                            return true;
+                        }
+                    }
+                    false
+                })
+                .await?;
+            }
+            DemoTool::ChartRead => {
+                let parsed: Value = serde_json::from_str(output).unwrap_or(Value::Null);
+                let Some(recs) = parsed.get("records").and_then(Value::as_array) else {
+                    return Ok(());
                 };
-                for step in steps.iter_mut().rev() {
-                    if let Step::SearchedChart { state, .. } = step
-                        && matches!(state, StepState::Running)
-                    {
-                        *state = StepState::Returned {
-                            result: Found {
-                                records: count,
-                                more,
-                            },
-                        };
-                        return true;
+                let mut ids = Vec::new();
+                for r in recs {
+                    if let Some(id) = r.get("candidate_id").and_then(Value::as_str) {
+                        ids.push(id.to_owned());
                     }
                 }
-                false
-            })
-            .await?;
-        } else if let Some(recs) = parsed.get("records").and_then(Value::as_array) {
-            let mut ids = Vec::new();
-            for r in recs {
-                if let Some(id) = r.get("candidate_id").and_then(Value::as_str) {
-                    ids.push(id.to_owned());
+                let fetched = {
+                    let _guard = self.session.store_lock.lock().await;
+                    self.session
+                        .store
+                        .read_records_by_ids(&self.ws_id, &ids)
+                        .map_err(|e| ProductError::Failed(Box::new(e)))?
+                };
+                for rec in fetched {
+                    if !self
+                        .read_records
+                        .iter()
+                        .any(|existing| existing.id == rec.id)
+                    {
+                        self.read_records.push(rec);
+                    }
                 }
-            }
-            let fetched = {
-                let _guard = self.session.store_lock.lock().await;
-                self.session
-                    .store
-                    .read_records_by_ids(&self.ws_id, &ids)
-                    .map_err(|e| ProductError::Failed(e.to_string().into()))?
-            };
-            for rec in fetched {
-                if !self
+                let assigned = self
+                    .assigned_citation_ids
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                self.read_records.sort_by_key(|rec| {
+                    assigned
+                        .iter()
+                        .position(|id| id == &rec.id)
+                        .unwrap_or(usize::MAX)
+                });
+                let read_wires: Vec<RecordRead> = self
                     .read_records
                     .iter()
-                    .any(|existing| existing.id == rec.id)
-                {
-                    self.read_records.push(rec);
-                }
-            }
-            let assigned = self
-                .assigned_citation_ids
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone();
-            self.read_records.sort_by_key(|rec| {
-                assigned
-                    .iter()
-                    .position(|id| id == &rec.id)
-                    .unwrap_or(usize::MAX)
-            });
-            let read_wires: Vec<RecordRead> = self
-                .read_records
-                .iter()
-                .map(|r| RecordRead::Whole {
-                    version: SourceVersion {
-                        candidate_id: r.id.clone(),
-                        revision: "1".into(),
-                    },
-                    about: RecordAbout {
-                        group: Some(parse_record_group_wire(&r.group)),
-                        title: Some(r.title.clone()),
-                        dates: vec![RecordDate {
-                            role: Some(physician_wire::DateRole::Recorded),
-                            value: r.recorded_at.clone(),
-                        }],
-                    },
-                })
-                .collect();
-            self.with_exchange_mut(|snap, idx| {
-                let ExchangeSteps::Read(steps) = &mut snap.transcript[idx].steps else {
-                    return false;
-                };
-                for step in steps.iter_mut().rev() {
-                    if let Step::ReadRecords { state, .. } = step
-                        && matches!(state, StepState::Running)
-                    {
-                        *state = StepState::Returned {
-                            result: read_wires.clone(),
-                        };
-                        return true;
+                    .map(|r| RecordRead::Whole {
+                        version: SourceVersion {
+                            candidate_id: r.id.clone(),
+                            revision: "1".into(),
+                        },
+                        about: RecordAbout {
+                            group: Some(parse_record_group_wire(&r.group)),
+                            title: Some(r.title.clone()),
+                            dates: vec![RecordDate {
+                                role: Some(physician_wire::DateRole::Recorded),
+                                value: r.recorded_at.clone(),
+                            }],
+                        },
+                    })
+                    .collect();
+                self.with_exchange_mut(|snap, idx| {
+                    let ExchangeSteps::Read(steps) = &mut snap.transcript[idx].steps else {
+                        return false;
+                    };
+                    for step in steps.iter_mut().rev() {
+                        if let Step::ReadRecords { state, .. } = step
+                            && matches!(state, StepState::Running)
+                        {
+                            *state = StepState::Returned {
+                                result: read_wires.clone(),
+                            };
+                            return true;
+                        }
                     }
-                }
-                false
-            })
-            .await?;
+                    false
+                })
+                .await?;
+            }
+            DemoTool::MemorySave => {
+                self.with_exchange_mut(|snap, idx| {
+                    let ExchangeSteps::Read(steps) = &mut snap.transcript[idx].steps else {
+                        return false;
+                    };
+                    for step in steps.iter_mut().rev() {
+                        if let Step::SavedMemoryNote { state } = step
+                            && matches!(state, StepState::Running)
+                        {
+                            *state = StepState::Returned { result: () };
+                            return true;
+                        }
+                    }
+                    false
+                })
+                .await?;
+            }
+            DemoTool::FollowUpCreate => {
+                self.with_exchange_mut(|snap, idx| {
+                    let ExchangeSteps::Read(steps) = &mut snap.transcript[idx].steps else {
+                        return false;
+                    };
+                    for step in steps.iter_mut().rev() {
+                        if let Step::CreatedFollowUp { state } = step
+                            && matches!(state, StepState::Running)
+                        {
+                            *state = StepState::Returned { result: () };
+                            return true;
+                        }
+                    }
+                    false
+                })
+                .await?;
+            }
+            DemoTool::MemoryRead
+            | DemoTool::FollowUpList
+            | DemoTool::BriefingRead
+            | DemoTool::SkillView => {}
         }
         Ok(())
+    }
+
+    async fn mark_running_step_failed(&self, tool: DemoTool) -> Result<(), ProductError> {
+        self.with_exchange_mut(|snap, idx| {
+            let ExchangeSteps::Read(steps) = &mut snap.transcript[idx].steps else {
+                return false;
+            };
+            for step in steps.iter_mut().rev() {
+                match (tool, step) {
+                    (DemoTool::ChartSearch, Step::SearchedChart { state, .. })
+                        if matches!(state, StepState::Running) =>
+                    {
+                        *state = StepState::Failed;
+                        return true;
+                    }
+                    (DemoTool::ChartRead, Step::ReadRecords { state, .. })
+                        if matches!(state, StepState::Running) =>
+                    {
+                        *state = StepState::Failed;
+                        return true;
+                    }
+                    (DemoTool::MemorySave, Step::SavedMemoryNote { state })
+                        if matches!(state, StepState::Running) =>
+                    {
+                        *state = StepState::Failed;
+                        return true;
+                    }
+                    (DemoTool::FollowUpCreate, Step::CreatedFollowUp { state })
+                        if matches!(state, StepState::Running) =>
+                    {
+                        *state = StepState::Failed;
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+            false
+        })
+        .await
     }
 }
 
@@ -589,10 +923,8 @@ impl Product for DemoHarnessProduct {
     async fn persist(&mut self, event: Event) -> Result<(), ProductError> {
         match &event.kind {
             EventKind::ToolStarted(call) => self.handle_tool_started(call).await?,
-            EventKind::ToolReturned { result, .. } => {
-                if let Some(original) = result.original() {
-                    self.handle_tool_returned(original).await?;
-                }
+            EventKind::ToolReturned { call_id, result } => {
+                self.handle_tool_returned(call_id, result).await?;
             }
             _ => {}
         }
@@ -627,32 +959,45 @@ impl Product for DemoHarnessProduct {
     }
 
     fn read_only(&self, name: &str) -> bool {
-        matches!(
-            name,
-            TOOL_CHART_SEARCH | TOOL_CHART_READ | harness::skills::SKILL_VIEW
-        )
+        DemoTool::from_name(name).is_some_and(DemoTool::is_read_only)
     }
 
     fn execute(&mut self, call: &Invocation, arguments: Value) -> ToolFuture {
         let name = call.name.clone();
         let session = self.session.clone();
+        let bus = Arc::clone(&self.bus);
         let ws_id = self.ws_id.clone();
         let skills = Arc::clone(&self.skills);
         let default_query = self.question.clone();
         let assigned = Arc::clone(&self.assigned_citation_ids);
         Box::pin(async move {
-            match name.as_str() {
-                TOOL_CHART_SEARCH => {
-                    let query = arguments
-                        .get("query")
-                        .and_then(Value::as_str)
+            let Some(tool) = DemoTool::from_name(&name) else {
+                return Ok(ToolOutcome::refused(format!(
+                    "tool `{name}` is not authorized"
+                )));
+            };
+            match tool {
+                DemoTool::ChartSearch => {
+                    let args: ChartSearchArgs = match serde_json::from_value(arguments) {
+                        Ok(a) => a,
+                        Err(err) => {
+                            return Ok(ToolOutcome::refused(format!(
+                                "invalid chart_search arguments: {err}"
+                            )));
+                        }
+                    };
+                    let query = args
+                        .query
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|q| !q.is_empty())
                         .unwrap_or(&default_query);
                     let terms = search_terms_for_question(query);
                     let _guard = session.store_lock.lock().await;
                     let found = session
                         .store
                         .search_records(&ws_id, &terms, 6)
-                        .map_err(|e| ProductError::Failed(e.to_string().into()))?;
+                        .map_err(|e| ProductError::Failed(Box::new(e)))?;
                     let candidates: Vec<Value> = found
                         .iter()
                         .map(|r| {
@@ -670,8 +1015,16 @@ impl Product for DemoHarnessProduct {
                         json!({ "candidates": candidates }).to_string(),
                     ))
                 }
-                TOOL_CHART_READ => {
-                    let ids = extract_candidate_ids(&arguments);
+                DemoTool::ChartRead => {
+                    let args: ChartReadArgs = match serde_json::from_value(arguments) {
+                        Ok(a) => a,
+                        Err(err) => {
+                            return Ok(ToolOutcome::refused(format!(
+                                "invalid chart_read arguments: {err}"
+                            )));
+                        }
+                    };
+                    let ids = args.into_ids();
                     if ids.is_empty() {
                         return Ok(ToolOutcome::refused(
                             "chart_read requires at least one candidate_id",
@@ -682,7 +1035,7 @@ impl Product for DemoHarnessProduct {
                         session
                             .store
                             .read_records_by_ids(&ws_id, &ids)
-                            .map_err(|e| ProductError::Failed(e.to_string().into()))?
+                            .map_err(|e| ProductError::Failed(Box::new(e)))?
                     };
                     if records.is_empty() {
                         return Ok(ToolOutcome::refused(
@@ -719,13 +1072,204 @@ impl Product for DemoHarnessProduct {
                         json!({ "records": encoded_records }).to_string(),
                     ))
                 }
-                harness::skills::SKILL_VIEW => match skills.execute_skill_view(&arguments) {
+                DemoTool::MemoryRead => {
+                    let _guard = session.store_lock.lock().await;
+                    let memory = match session.store.patient_memory(&ws_id).await {
+                        Ok(m) => m,
+                        Err(DbError::NotFound { kind, id }) => {
+                            return Ok(ToolOutcome::refused(format!("{kind} `{id}` not found")));
+                        }
+                        Err(err) => return Err(ProductError::Failed(Box::new(err))),
+                    };
+                    let encoded = serde_json::to_string(&memory)
+                        .map_err(|e| ProductError::Failed(Box::new(e)))?;
+                    Ok(ToolOutcome::Returned(encoded))
+                }
+                DemoTool::MemorySave => {
+                    let args: MemorySaveArgs = match serde_json::from_value(arguments) {
+                        Ok(a) => a,
+                        Err(err) => {
+                            return Ok(ToolOutcome::refused(format!(
+                                "invalid memory_save arguments: {err}"
+                            )));
+                        }
+                    };
+                    let note = args.note.trim();
+                    if note.is_empty() {
+                        return Ok(ToolOutcome::refused(
+                            "memory_save requires a non-empty `note`",
+                        ));
+                    }
+                    let saved = {
+                        let _guard = session.store_lock.lock().await;
+                        match session.store.save_patient_memory(&ws_id, note).await {
+                            Ok(s) => s,
+                            Err(DbError::InvalidCommand(msg)) => {
+                                return Ok(ToolOutcome::refused(msg));
+                            }
+                            Err(DbError::NotFound { kind, id }) => {
+                                return Ok(ToolOutcome::refused(format!(
+                                    "{kind} `{id}` not found"
+                                )));
+                            }
+                            Err(err) => return Err(ProductError::Failed(Box::new(err))),
+                        }
+                    };
+                    let _ = bus
+                        .publish(BusEvent::WorkspaceChanged {
+                            workspace_id: ws_id.clone(),
+                        })
+                        .await;
+                    Ok(ToolOutcome::Returned(
+                        json!({
+                            "saved": true,
+                            "note_number": saved.note_number,
+                            "log_path": saved.log_path,
+                            "saved_at": saved.saved_at,
+                            "note": note,
+                        })
+                        .to_string(),
+                    ))
+                }
+                DemoTool::FollowUpList => {
+                    let _guard = session.store_lock.lock().await;
+                    let follow_ups = match session.store.patient_follow_ups(&ws_id).await {
+                        Ok(f) => f,
+                        Err(DbError::NotFound { kind, id }) => {
+                            return Ok(ToolOutcome::refused(format!("{kind} `{id}` not found")));
+                        }
+                        Err(err) => return Err(ProductError::Failed(Box::new(err))),
+                    };
+                    let encoded = serde_json::to_string(&follow_ups)
+                        .map_err(|e| ProductError::Failed(Box::new(e)))?;
+                    Ok(ToolOutcome::Returned(encoded))
+                }
+                DemoTool::FollowUpCreate => {
+                    let args: FollowUpCreateArgs = match serde_json::from_value(arguments) {
+                        Ok(a) => a,
+                        Err(err) => {
+                            return Ok(ToolOutcome::refused(format!(
+                                "invalid follow_up_create arguments: {err}"
+                            )));
+                        }
+                    };
+                    let title = args.title.trim();
+                    let instructions = args.instructions.trim();
+                    if title.is_empty() || instructions.is_empty() {
+                        return Ok(ToolOutcome::refused(
+                            "follow_up_create requires non-empty `title` and `instructions`",
+                        ));
+                    }
+                    let due_date = args
+                        .due_at
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or(DEFAULT_DEMO_FOLLOW_UP_DUE_DATE);
+                    let created = {
+                        let _guard = session.store_lock.lock().await;
+                        let idem = format!("tool-fu-{}", next_demo_seq());
+                        let initial = match session
+                            .store
+                            .create_follow_up(&ws_id, title, due_date, &idem)
+                            .await
+                        {
+                            Ok(c) => c,
+                            Err(DbError::InvalidCommand(msg)) => {
+                                return Ok(ToolOutcome::refused(msg));
+                            }
+                            Err(DbError::NotFound { kind, id }) => {
+                                return Ok(ToolOutcome::refused(format!(
+                                    "{kind} `{id}` not found"
+                                )));
+                            }
+                            Err(err) => return Err(ProductError::Failed(Box::new(err))),
+                        };
+                        match session
+                            .store
+                            .update_follow_up(
+                                &ws_id,
+                                &initial.follow_up.follow_up_id,
+                                &UpdateFollowUpBody {
+                                    summary: None,
+                                    due_date: None,
+                                    note: Some(instructions.to_owned()),
+                                    idempotency_key: format!("tool-fu-note-{}", next_demo_seq()),
+                                },
+                            )
+                            .await
+                        {
+                            Ok(updated) => updated,
+                            Err(err) => return Err(ProductError::Failed(Box::new(err))),
+                        }
+                    };
+                    let _ = bus
+                        .publish(BusEvent::WorkspaceChanged {
+                            workspace_id: ws_id.clone(),
+                        })
+                        .await;
+                    let encoded = serde_json::to_string(&created.follow_up)
+                        .map_err(|e| ProductError::Failed(Box::new(e)))?;
+                    Ok(ToolOutcome::Returned(encoded))
+                }
+                DemoTool::BriefingRead => {
+                    let args: BriefingReadArgs = match serde_json::from_value(arguments) {
+                        Ok(a) => a,
+                        Err(err) => {
+                            return Ok(ToolOutcome::refused(format!(
+                                "invalid briefing_read arguments: {err}"
+                            )));
+                        }
+                    };
+                    let _guard = session.store_lock.lock().await;
+                    if let Some(id) = args
+                        .briefing_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        let briefing = match session.store.visit_briefing(&ws_id, id).await {
+                            Ok(b) => b,
+                            Err(DbError::NotFound { kind, id }) => {
+                                return Ok(ToolOutcome::refused(format!(
+                                    "{kind} `{id}` not found"
+                                )));
+                            }
+                            Err(err) => return Err(ProductError::Failed(Box::new(err))),
+                        };
+                        let encoded = serde_json::to_string(&briefing)
+                            .map_err(|e| ProductError::Failed(Box::new(e)))?;
+                        return Ok(ToolOutcome::Returned(encoded));
+                    }
+                    let summary = match session.store.workspace_briefings(&ws_id).await {
+                        Ok(s) => s,
+                        Err(DbError::NotFound { kind, id }) => {
+                            return Ok(ToolOutcome::refused(format!("{kind} `{id}` not found")));
+                        }
+                        Err(err) => return Err(ProductError::Failed(Box::new(err))),
+                    };
+                    let mut details = Vec::with_capacity(summary.briefings.len());
+                    for item in &summary.briefings {
+                        if let Ok(full) = session
+                            .store
+                            .visit_briefing(&ws_id, &item.briefing_id)
+                            .await
+                        {
+                            details.push(full.briefing);
+                        }
+                    }
+                    Ok(ToolOutcome::Returned(
+                        json!({
+                            "briefings": summary.briefings,
+                            "details": details,
+                        })
+                        .to_string(),
+                    ))
+                }
+                DemoTool::SkillView => match skills.execute_skill_view(&arguments) {
                     Ok(view) => Ok(ToolOutcome::Returned(view.to_json())),
                     Err(err) => Ok(ToolOutcome::refused(err.to_string())),
                 },
-                _ => Ok(ToolOutcome::refused(format!(
-                    "tool `{name}` is not authorized"
-                ))),
             }
         })
     }
@@ -846,27 +1390,6 @@ impl Product for DemoHarnessProduct {
             note_references: Vec::new(),
         })
     }
-}
-
-fn extract_candidate_ids(arguments: &Value) -> Vec<String> {
-    if let Some(arr) = arguments.get("candidate_ids").and_then(Value::as_array) {
-        return arr
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned)
-            .collect();
-    }
-    if let Some(single) = arguments
-        .get("candidate_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        return vec![single.to_owned()];
-    }
-    Vec::new()
 }
 
 fn parse_citation_markers(text: &str) -> Vec<(usize, usize, usize)> {
@@ -1089,6 +1612,49 @@ async fn pop_next_queued_turn(
     }))
 }
 
+pub(crate) fn close_running_steps(steps: &mut ExchangeSteps, stopped: bool) {
+    let ExchangeSteps::Read(items) = steps else {
+        return;
+    };
+    let terminal = if stopped {
+        StepState::Stopped
+    } else {
+        StepState::Failed
+    };
+    for step in items {
+        match step {
+            Step::SearchedChart { state, .. } if matches!(state, StepState::Running) => {
+                *state = if stopped {
+                    StepState::Stopped
+                } else {
+                    StepState::Failed
+                };
+            }
+            Step::ReadRecords { state, .. } if matches!(state, StepState::Running) => {
+                *state = if stopped {
+                    StepState::Stopped
+                } else {
+                    StepState::Failed
+                };
+            }
+            Step::ReadConversation { state }
+            | Step::SavedMemoryNote { state }
+            | Step::EditedMemory { state }
+            | Step::CreatedFollowUp { state }
+                if matches!(state, StepState::Running) =>
+            {
+                *state = terminal.clone();
+            }
+            Step::SearchedChart { .. }
+            | Step::ReadRecords { .. }
+            | Step::ReadConversation { .. }
+            | Step::SavedMemoryNote { .. }
+            | Step::EditedMemory { .. }
+            | Step::CreatedFollowUp { .. } => {}
+        }
+    }
+}
+
 async fn mark_exchange_stopped(
     session: &VisitorSession,
     ws_id: &str,
@@ -1133,38 +1699,7 @@ async fn update_terminal_hold(
     if !matches!(ex.answer, AnswerState::Working { .. }) {
         return;
     }
-    if let ExchangeSteps::Read(steps) = &mut ex.steps {
-        for step in steps {
-            match step {
-                Step::SearchedChart { state, .. } if matches!(state, StepState::Running) => {
-                    *state = if stopped {
-                        StepState::Stopped
-                    } else {
-                        StepState::Failed
-                    };
-                }
-                Step::ReadRecords { state, .. } if matches!(state, StepState::Running) => {
-                    *state = if stopped {
-                        StepState::Stopped
-                    } else {
-                        StepState::Failed
-                    };
-                }
-                Step::ReadConversation { state }
-                | Step::SavedMemoryNote { state }
-                | Step::EditedMemory { state }
-                    if matches!(state, StepState::Running) =>
-                {
-                    *state = if stopped {
-                        StepState::Stopped
-                    } else {
-                        StepState::Failed
-                    };
-                }
-                _ => {}
-            }
-        }
-    }
+    close_running_steps(&mut ex.steps, stopped);
     let resume = Some(WorkResumeTarget {
         work_item_id: WorkItemId(work_item_id.to_owned()),
         expected_run_id: run_id.to_owned(),
