@@ -6,9 +6,13 @@
 //! - `hydrate` : browser hydration of the server-rendered HTML.
 //! - `csr`     : pure client-side rendering for the Tauri (Trunk) build.
 
+pub mod activity_snapshot;
+#[cfg(feature = "ssr")]
+pub mod activity_source;
 pub mod analytics;
 pub mod commissions;
 pub mod commissions_data;
+pub mod community_activity;
 pub mod community_policy;
 pub mod consent;
 pub mod data;
@@ -102,6 +106,7 @@ pub fn App() -> impl IntoView {
                     <Route path=StaticSegment("privacy") view=PrivacyPage />
                     <Route path=StaticSegment("koizetsu") view=koizetsu::KoizetsuPage />
                     <Route path=StaticSegment("community-policy") view=CommunityPolicyPage />
+                    <Route path=StaticSegment("community-activity") view=community_activity::CommunityActivityPage ssr=leptos_router::SsrMode::Async />
                     <Route
                         path=(StaticSegment("tools"), StaticSegment("investment-account"))
                         view=InvestmentAccountPage

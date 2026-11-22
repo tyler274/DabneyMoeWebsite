@@ -82,6 +82,9 @@ async fn main() {
         embedded_coda_api,
     )
     .merge(site_routes)
+    .layer(axum::middleware::from_fn(
+        web::community_activity::privacy_headers,
+    ))
     .layer(SetRequestIdLayer::new(
         HeaderName::from_static("x-request-id"),
         MakeRequestUuid,
@@ -103,7 +106,6 @@ async fn main() {
             .on_response(DefaultOnResponse::new().level(Level::INFO))
             .on_failure(DefaultOnFailure::new().level(Level::ERROR)),
     );
-
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     tracing::info!(%addr, service = "dabney-web", "listening");
     axum::serve(
