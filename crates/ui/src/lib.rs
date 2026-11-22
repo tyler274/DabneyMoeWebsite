@@ -11,6 +11,7 @@ pub mod commissions;
 pub mod commissions_data;
 pub mod consent;
 pub mod data;
+pub mod koizetsu;
 pub mod portfolio;
 pub mod portfolio_chart;
 pub mod privacy;
@@ -97,6 +98,7 @@ pub fn App() -> impl IntoView {
                 <Routes fallback=|| view! { <HomePage /> }>
                     <Route path=StaticSegment("") view=HomePage />
                     <Route path=StaticSegment("privacy") view=PrivacyPage />
+                    <Route path=StaticSegment("koizetsu") view=koizetsu::KoizetsuPage />
                     <Route
                         path=(StaticSegment("tools"), StaticSegment("investment-account"))
                         view=InvestmentAccountPage
