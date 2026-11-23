@@ -413,55 +413,10 @@ pub fn parse_lingo_csv(csv_text: &str) -> Result<Vec<LingoReading>, LingoParseEr
 }
 
 fn split_csv_row(line: &str, line_no: usize) -> Result<Vec<String>, LingoParseError> {
-    let mut fields = Vec::new();
-    let mut current = String::new();
-    let mut chars = line.chars().peekable();
-    let mut in_quotes = false;
-    let mut field_was_quoted = false;
-    let mut after_closing_quote = false;
-
-    while let Some(ch) = chars.next() {
-        if in_quotes {
-            if ch == '"' {
-                if chars.peek() == Some(&'"') {
-                    let _ = chars.next();
-                    current.push('"');
-                } else {
-                    in_quotes = false;
-                    after_closing_quote = true;
-                }
-            } else {
-                current.push(ch);
-            }
-        } else if ch == ',' {
-            fields.push(current.trim().to_owned());
-            current.clear();
-            field_was_quoted = false;
-            after_closing_quote = false;
-        } else if after_closing_quote {
-            if !ch.is_whitespace() {
-                return Err(LingoParseError::InvalidRow {
-                    line: line_no,
-                    detail: "unexpected characters after closing quote in CSV field".into(),
-                });
-            }
-        } else if ch == '"' && current.trim().is_empty() && !field_was_quoted {
-            current.clear();
-            in_quotes = true;
-            field_was_quoted = true;
-        } else {
-            current.push(ch);
-        }
-    }
-
-    if in_quotes {
-        return Err(LingoParseError::InvalidRow {
-            line: line_no,
-            detail: "unterminated quoted CSV field".into(),
-        });
-    }
-    fields.push(current.trim().to_owned());
-    Ok(fields)
+    crate::cgm::split_csv_row_delim(line, ',').map_err(|detail| LingoParseError::InvalidRow {
+        line: line_no,
+        detail: detail.into(),
+    })
 }
 
 fn is_timestamp_header(raw: &str) -> bool {
@@ -975,9 +930,7 @@ impl DemoStore {
     }
 }
 
-fn round1(val: f64) -> f64 {
-    (val * 10.0).round() / 10.0
-}
+use crate::cgm::round1;
 
 #[cfg(test)]
 mod tests {

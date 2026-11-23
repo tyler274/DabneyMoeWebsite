@@ -1,6 +1,7 @@
 //! Browser-based SQLite store and build-time fixture seeder for the static Chords demo.
 #![deny(missing_docs)]
 
+pub mod cgm;
 pub mod driver;
 pub mod follow_ups;
 pub mod lingo;
@@ -13,6 +14,11 @@ pub mod spruce;
 pub mod store;
 pub mod updates_briefings;
 
+pub use cgm::{
+    AgpHourBin, CgmClinicalSummary, CgmParseError, GlucoseMonitor, GlucoseReading,
+    GlucoseReadingBound, GlucoseUnit, GriZone, MMOL_L_TO_MG_DL, MeasurementMethod,
+    ParsedGlucoseImport, parse_commercial_glucose_csv,
+};
 pub use driver::{DbError, SqliteDriver};
 pub use lingo::{
     Gad7Severity, LingoCgmSummary, LingoParseError, LingoReading, MentalHealthCheckIn,
@@ -725,6 +731,39 @@ mod tests {
                 .iter()
                 .any(|f| f.key == "gad7_score" && f.name == "GAD-7 (Mild)")
         );
+
+        let dexcom_import = parse_commercial_glucose_csv(
+            "Index,Timestamp (YYYY-MM-DDThh:mm:ss),Event Type,Source Device ID,Glucose Value (mg/dL),Glucose Rate of Change (mg/dL/min)\n\
+             1,2026-08-27T06:00:00,EGV,DX-G7,52,-1.2\n\
+             2,2026-08-27T09:00:00,EGV,DX-G7,114,0.4\n\
+             3,2026-08-27T13:00:00,EGV,DX-G7,218,2.1\n\
+             4,2026-08-27T18:00:00,EGV,DX-G7,102,-0.3\n",
+            None,
+        )
+        .unwrap();
+        assert_eq!(dexcom_import.monitor, GlucoseMonitor::DexcomClarity);
+        let (dex_rec, dex_summary) = store
+            .ingest_commercial_cgm(
+                "unit-lingo-mh-1",
+                "Dexcom G7 Clarity Consultation Upload",
+                &dexcom_import,
+            )
+            .await
+            .unwrap();
+        assert_eq!(dex_summary.count, 4);
+        assert_eq!(dex_summary.agp_hourly.len(), 4);
+        let fetched_dex = store
+            .source_record("unit-lingo-mh-1", &dex_rec.id)
+            .await
+            .unwrap();
+        assert_eq!(fetched_dex.source_label, "Dexcom Clarity CGM");
+        assert!(
+            fetched_dex
+                .fields
+                .iter()
+                .any(|f| f.key == "cgm_gmi_percent")
+        );
+        assert!(fetched_dex.fields.iter().any(|f| f.key == "cgm_gri"));
 
         let _ = std::fs::remove_dir_all(dir);
     }

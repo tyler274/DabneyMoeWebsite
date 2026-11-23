@@ -44,7 +44,7 @@ const MAX_INFERENCE_CONCURRENCY: usize = 1;
 const DEFAULT_MAX_NEW_TOKENS: usize = 192;
 
 use crate::harness_product::{
-    TOOL_BRIEFING_READ, TOOL_CHART_READ, TOOL_CHART_SEARCH, TOOL_FOLLOW_UP_CREATE,
+    TOOL_BRIEFING_READ, TOOL_CGM_INGEST, TOOL_CHART_READ, TOOL_CHART_SEARCH, TOOL_FOLLOW_UP_CREATE,
     TOOL_FOLLOW_UP_LIST, TOOL_LINGO_CGM_INGEST, TOOL_MEMORY_READ, TOOL_MEMORY_SAVE,
     TOOL_MENTAL_HEALTH_LOG,
 };
@@ -531,6 +531,7 @@ fn is_workspace_tool(name: &str) -> bool {
             | TOOL_BRIEFING_READ
             | TOOL_MENTAL_HEALTH_LOG
             | TOOL_LINGO_CGM_INGEST
+            | TOOL_CGM_INGEST
     )
 }
 
@@ -1071,7 +1072,8 @@ fn normalize_answer_citations(
         || trimmed.contains("\"memory_save\"")
         || trimmed.contains("\"follow_up_create\"")
         || trimmed.contains("\"mental_health_log\"")
-        || trimmed.contains("\"lingo_cgm_ingest\"");
+        || trimmed.contains("\"lingo_cgm_ingest\"")
+        || trimmed.contains("\"cgm_ingest\"");
     if looks_like_tool_json {
         if !excerpts.is_empty() {
             return excerpts

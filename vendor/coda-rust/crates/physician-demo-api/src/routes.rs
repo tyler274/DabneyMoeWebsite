@@ -41,8 +41,9 @@ use serde_json::{Value, json};
 use crate::DemoApiState;
 use crate::budget::{DemoBudgetExhausted, demo_budget_exhausted_response};
 use crate::harness_product::{
-    LingoCgmIngestPayload, MentalHealthCheckInPayload, create_working_exchange,
-    default_demo_timestamp, extract_prior_history, fallback_title, lingo_cgm_record_response,
+    CgmIngestPayload, LingoCgmIngestPayload, MentalHealthCheckInPayload,
+    commercial_cgm_record_response, create_working_exchange, default_demo_timestamp,
+    extract_prior_history, fallback_title, lingo_cgm_record_response,
     mental_health_record_response, run_reply_revision_with_provider,
 };
 use crate::sessions::VisitorSession;
@@ -275,6 +276,10 @@ pub fn build_router(state: DemoApiState) -> Router {
         .route(
             "/patient-workspaces/{workspace_id}/lingo-cgm",
             post(post_lingo_cgm),
+        )
+        .route(
+            "/patient-workspaces/{workspace_id}/cgm",
+            post(post_commercial_cgm),
         )
         .route("/dictation", post(dictate))
         .route("/commands", post(command))
@@ -2179,5 +2184,30 @@ async fn post_lingo_cgm(
         .await;
     Ok(no_store(
         Json(lingo_cgm_record_response(&rec, &summary)).into_response(),
+    ))
+}
+
+async fn post_commercial_cgm(
+    State(state): State<DemoApiState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+    Json(payload): Json<CgmIngestPayload>,
+) -> Result<Response, ApiError> {
+    let session = require_session(&state, &headers)?;
+    check_workspace(&session, &workspace_id)?;
+    let (title, import) = payload.resolve_import().map_err(ApiError::BadRequest)?;
+    let (rec, summary) = {
+        let _guard = session.store_lock.lock().await;
+        session
+            .store
+            .ingest_commercial_cgm(&workspace_id, &title, &import)
+            .await?
+    };
+    let _ = state
+        .bus
+        .publish(BusEvent::WorkspaceChanged { workspace_id })
+        .await;
+    Ok(no_store(
+        Json(commercial_cgm_record_response(&rec, &summary, &import)).into_response(),
     ))
 }

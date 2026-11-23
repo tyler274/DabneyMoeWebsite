@@ -22,7 +22,8 @@ use physician_demo_db::store::{
     next_demo_seq, parse_record_group_wire, search_terms_for_question,
 };
 use physician_demo_db::{
-    DemoSourceRecord, LingoCgmSummary, LingoParseError, LingoReading, MentalHealthCheckIn,
+    CgmClinicalSummary, DemoSourceRecord, GlucoseMonitor, LingoCgmSummary, LingoParseError,
+    LingoReading, MentalHealthCheckIn, ParsedGlucoseImport, parse_commercial_glucose_csv,
     parse_lingo_csv,
 };
 use physician_wire::follow_ups::UpdateFollowUpBody;
@@ -47,6 +48,7 @@ pub(crate) const TOOL_FOLLOW_UP_CREATE: &str = "follow_up_create";
 pub(crate) const TOOL_BRIEFING_READ: &str = "briefing_read";
 pub(crate) const TOOL_MENTAL_HEALTH_LOG: &str = "mental_health_log";
 pub(crate) const TOOL_LINGO_CGM_INGEST: &str = "lingo_cgm_ingest";
+pub(crate) const TOOL_CGM_INGEST: &str = "cgm_ingest";
 
 const DEFAULT_DEMO_FOLLOW_UP_DUE_DATE: &str = "2026-09-03";
 
@@ -61,6 +63,7 @@ enum DemoTool {
     BriefingRead,
     MentalHealthLog,
     LingoCgmIngest,
+    CgmIngest,
     SkillView,
 }
 
@@ -76,6 +79,7 @@ impl DemoTool {
             TOOL_BRIEFING_READ => Some(Self::BriefingRead),
             TOOL_MENTAL_HEALTH_LOG => Some(Self::MentalHealthLog),
             TOOL_LINGO_CGM_INGEST => Some(Self::LingoCgmIngest),
+            TOOL_CGM_INGEST => Some(Self::CgmIngest),
             harness::skills::SKILL_VIEW => Some(Self::SkillView),
             _ => None,
         }
@@ -92,7 +96,8 @@ impl DemoTool {
             Self::MemorySave
             | Self::FollowUpCreate
             | Self::MentalHealthLog
-            | Self::LingoCgmIngest => false,
+            | Self::LingoCgmIngest
+            | Self::CgmIngest => false,
         }
     }
 }
@@ -257,6 +262,66 @@ pub(crate) fn lingo_cgm_record_response(
         "source_label": rec.source_label,
         "body": rec.body,
         "fields": rec.fields,
+        "summary": summary,
+    })
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct CgmIngestPayload {
+    pub(crate) csv: String,
+    #[serde(default)]
+    pub(crate) monitor: Option<String>,
+    #[serde(default)]
+    pub(crate) summary_title: Option<String>,
+}
+
+impl CgmIngestPayload {
+    pub(crate) fn resolve_import(self) -> Result<(String, ParsedGlucoseImport), String> {
+        let monitor_hint = match self.monitor.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(raw) => Some(GlucoseMonitor::from_slug(raw).ok_or_else(|| {
+                format!(
+                    "unsupported `monitor` slug `{raw}` (expected one of: abbott_lingo, abbott_freestyle_libre, dexcom_clarity, dexcom_stelo, medtronic_carelink, senseonics_eversense, tandem_source, glooko_tidepool, fingerstick_bgm, generic_csv)"
+                )
+            })?),
+            None => None,
+        };
+        let import =
+            parse_commercial_glucose_csv(&self.csv, monitor_hint).map_err(|e| e.to_string())?;
+        let title = self
+            .summary_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                format!("{} — AGP & Glycemic Summary", import.monitor.display_name())
+            });
+        Ok((title, import))
+    }
+}
+
+pub(crate) fn commercial_cgm_record_response(
+    rec: &DemoSourceRecord,
+    summary: &CgmClinicalSummary,
+    import: &ParsedGlucoseImport,
+) -> Value {
+    json!({
+        "record_id": rec.id,
+        "workspace_id": rec.workspace_id,
+        "detected_monitor": import.monitor,
+        "source_unit": import.source_unit,
+        "record": {
+            "id": rec.id,
+            "workspace_id": rec.workspace_id,
+            "group": rec.group,
+            "title": rec.title,
+            "recorded_at": rec.recorded_at,
+            "source_label": rec.source_label,
+            "body": rec.body,
+            "readable_parts": rec.readable_parts,
+            "fields": rec.fields,
+            "record_status": rec.record_status,
+        },
         "summary": summary,
     })
 }
@@ -509,7 +574,7 @@ pub(crate) fn chart_recipe(model: &str, skills: &Package) -> RequestRecipe {
          For clinical chart questions, first search the chart with `chart_search`, then read all relevant records with `chart_read` before answering.\n\
          When multiple records are read, cite EVERY relevant `citation_number` inline ([1], [2], [3], ...) beside each clinical claim.\n\
          Do not cite numbers not returned by `chart_read`, and do not fabricate clinical values absent from read records.\n\
-         Use `memory_read` / `memory_save` to read or append durable physician notes in Patient Memory, `follow_up_list` / `follow_up_create` to inspect or schedule patient follow-ups, `briefing_read` to read pre-visit briefings, `mental_health_log` to record structured mental health check-ins (mood, anxiety, energy, sleep, PHQ-9, GAD-7), and `lingo_cgm_ingest` to ingest Abbott Lingo CGM glucose readings or CSV summaries.",
+         Use `memory_read` / `memory_save` to read or append durable physician notes in Patient Memory, `follow_up_list` / `follow_up_create` to inspect or schedule patient follow-ups, `briefing_read` to read pre-visit briefings, `mental_health_log` to record structured mental health check-ins (mood, anxiety, energy, sleep, PHQ-9, GAD-7), and `cgm_ingest` (or `lingo_cgm_ingest`) to ingest commercial CGM or BGM exports (Abbott Lingo, FreeStyle Libre, Dexcom Clarity, Dexcom Stelo, Medtronic CareLink, Eversense, Tandem, Glooko/Tidepool, fingerstick BGM) with 5-band TIR, GMI, GRI, and 24-hour AGP analytics.",
     );
     let catalog = skills.catalog_instructions();
     if !catalog.is_empty() {
@@ -532,6 +597,7 @@ pub(crate) fn chart_recipe(model: &str, skills: &Package) -> RequestRecipe {
             briefing_read_tool().function(),
             mental_health_log_tool().function(),
             lingo_cgm_ingest_tool().function(),
+            cgm_ingest_tool().function(),
             harness::skills::tool().function(),
         ],
     }
@@ -752,6 +818,32 @@ fn lingo_cgm_ingest_tool() -> Tool {
     }
 }
 
+fn cgm_ingest_tool() -> Tool {
+    Tool {
+        name: TOOL_CGM_INGEST.to_owned(),
+        description: "Auto-detect and ingest CSV exports from any major commercial CGM or blood glucose meter (Abbott Lingo, FreeStyle Libre / LibreView, Dexcom G6/G7/ONE+ Clarity, Dexcom Stelo, Medtronic CareLink, Senseonics Eversense, Tandem Source, Omnipod / Glooko / Tidepool, capillary BGM, or generic CSV) in mg/dL or mmol/L, computing ADA 5-band Time in Ranges, TITR 70–140, GMI %, GRI (Zone A–E), CV%, MAGE, active wear %, and 24-hour AGP.".to_owned(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "csv": {
+                    "type": "string",
+                    "description": "Raw CSV text exported from a commercial CGM or blood glucose meter."
+                },
+                "monitor": {
+                    "type": "string",
+                    "description": "Optional explicit monitor slug (`abbott_lingo`, `abbott_freestyle_libre`, `dexcom_clarity`, `dexcom_stelo`, `medtronic_carelink`, `senseonics_eversense`, `tandem_source`, `glooko_tidepool`, `fingerstick_bgm`, `generic_csv`). Auto-detected when omitted."
+                },
+                "summary_title": {
+                    "type": "string",
+                    "description": "Optional clinical title for the filed chart source record."
+                }
+            },
+            "required": ["csv"],
+            "additionalProperties": false
+        }),
+    }
+}
+
 struct DemoHarnessProduct {
     session: VisitorSession,
     bus: Arc<dyn Bus>,
@@ -892,6 +984,7 @@ impl DemoHarnessProduct {
             | DemoTool::BriefingRead
             | DemoTool::MentalHealthLog
             | DemoTool::LingoCgmIngest
+            | DemoTool::CgmIngest
             | DemoTool::SkillView => {}
         }
         Ok(())
@@ -1054,6 +1147,7 @@ impl DemoHarnessProduct {
             | DemoTool::BriefingRead
             | DemoTool::MentalHealthLog
             | DemoTool::LingoCgmIngest
+            | DemoTool::CgmIngest
             | DemoTool::SkillView => {}
         }
         Ok(())
@@ -1567,6 +1661,47 @@ impl Product for DemoHarnessProduct {
                         .await;
                     Ok(ToolOutcome::Returned(
                         lingo_cgm_record_response(&rec, &summary).to_string(),
+                    ))
+                }
+                DemoTool::CgmIngest => {
+                    let payload: CgmIngestPayload = match serde_json::from_value(arguments) {
+                        Ok(p) => p,
+                        Err(err) => {
+                            return Ok(ToolOutcome::refused(format!(
+                                "invalid cgm_ingest arguments: {err}"
+                            )));
+                        }
+                    };
+                    let (title, import) = match payload.resolve_import() {
+                        Ok(resolved) => resolved,
+                        Err(msg) => return Ok(ToolOutcome::refused(msg)),
+                    };
+                    let (rec, summary) = {
+                        let _guard = session.store_lock.lock().await;
+                        match session
+                            .store
+                            .ingest_commercial_cgm(&ws_id, &title, &import)
+                            .await
+                        {
+                            Ok(res) => res,
+                            Err(DbError::InvalidCommand(msg)) => {
+                                return Ok(ToolOutcome::refused(msg));
+                            }
+                            Err(DbError::NotFound { kind, id }) => {
+                                return Ok(ToolOutcome::refused(format!(
+                                    "{kind} `{id}` not found"
+                                )));
+                            }
+                            Err(err) => return Err(ProductError::Failed(Box::new(err))),
+                        }
+                    };
+                    let _ = bus
+                        .publish(BusEvent::WorkspaceChanged {
+                            workspace_id: ws_id.clone(),
+                        })
+                        .await;
+                    Ok(ToolOutcome::Returned(
+                        commercial_cgm_record_response(&rec, &summary, &import).to_string(),
                     ))
                 }
                 DemoTool::SkillView => match skills.execute_skill_view(&arguments) {
