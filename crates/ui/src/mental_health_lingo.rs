@@ -97,8 +97,163 @@ pub struct GlucoseMoodCorrelation {
     pub mood: u8,
     pub anxiety: u8,
     pub energy: u8,
+    pub sleep_hours: f32,
+    pub phq9: Option<u8>,
+    pub gad7: Option<u8>,
     pub spike_adjacent: bool,
     pub note: String,
+}
+
+/// A longitudinal PHQ-9 / GAD-7 assessment point for multi-week trend charting.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssessmentPoint {
+    pub date: String,
+    pub phq9: Option<u8>,
+    pub gad7: Option<u8>,
+    pub label: String,
+}
+
+/// Preloaded 4-week synthetic PHQ-9 & GAD-7 baseline trajectory.
+pub fn sample_assessment_history() -> Vec<AssessmentPoint> {
+    vec![
+        AssessmentPoint {
+            date: "2026-10-31".to_string(),
+            phq9: Some(11),
+            gad7: Some(12),
+            label: "Baseline before Lingo CGM".to_string(),
+        },
+        AssessmentPoint {
+            date: "2026-11-07".to_string(),
+            phq9: Some(9),
+            gad7: Some(10),
+            label: "Week 1 Lingo tracking".to_string(),
+        },
+        AssessmentPoint {
+            date: "2026-11-14".to_string(),
+            phq9: Some(7),
+            gad7: Some(8),
+            label: "Reduced afternoon spikes".to_string(),
+        },
+        AssessmentPoint {
+            date: "2026-11-21".to_string(),
+            phq9: Some(6),
+            gad7: Some(7),
+            label: "Current check-in".to_string(),
+        },
+    ]
+}
+
+/// Combine longitudinal baseline assessments with any newly logged check-ins that carry PHQ-9/GAD-7.
+pub fn build_assessment_series(
+    baseline: &[AssessmentPoint],
+    checkins: &[MentalHealthCheckIn],
+) -> Vec<AssessmentPoint> {
+    let mut series = baseline.to_vec();
+    for c in checkins {
+        if (c.phq9.is_some() || c.gad7.is_some()) && c.recorded_at != "2026-11-21 07:15" {
+            series.push(AssessmentPoint {
+                date: c.recorded_at.clone(),
+                phq9: c.phq9,
+                gad7: c.gad7,
+                label: c.note.clone(),
+            });
+        }
+    }
+    series
+}
+
+/// Quote-aware RFC-4180 CSV row splitter supporting `"..."` and `""` escapes.
+fn split_csv_row(line: &str) -> Result<Vec<String>, String> {
+    let mut cols = Vec::new();
+    let mut current = String::new();
+    let mut chars = line.chars().peekable();
+    let mut in_quotes = false;
+    let mut just_closed_quote = false;
+
+    while let Some(ch) = chars.next() {
+        if in_quotes {
+            if ch == '"' {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    current.push('"');
+                } else {
+                    in_quotes = false;
+                    just_closed_quote = true;
+                }
+            } else {
+                current.push(ch);
+            }
+        } else if just_closed_quote {
+            if ch == ',' {
+                cols.push(current.trim().to_string());
+                current.clear();
+                just_closed_quote = false;
+            } else if ch.is_whitespace() {
+                continue;
+            } else {
+                return Err("Unexpected characters after closing quote.".to_string());
+            }
+        } else if ch == ',' {
+            cols.push(current.trim().to_string());
+            current.clear();
+        } else if ch == '"' && current.trim().is_empty() {
+            current.clear();
+            in_quotes = true;
+        } else {
+            current.push(ch);
+        }
+    }
+    if in_quotes {
+        return Err("Unterminated quoted field.".to_string());
+    }
+    cols.push(current.trim().to_string());
+    Ok(cols)
+}
+
+/// Format an RFC-4180 CSV export of all correlated mental health check-ins.
+pub fn export_correlations_csv(rows: &[GlucoseMoodCorrelation]) -> String {
+    let mut out = String::from(
+        "recorded_at,nearest_glucose_mg_dl,peak_prior_2h_mg_dl,mood,anxiety,energy,sleep_hours,phq9,gad7,pattern,note\n",
+    );
+    for row in rows {
+        let phq9 = row.phq9.map(|v| v.to_string()).unwrap_or_default();
+        let gad7 = row.gad7.map(|v| v.to_string()).unwrap_or_default();
+        let pattern = if row.spike_adjacent {
+            "post_spike_gt_140"
+        } else {
+            "in_lingo_zone"
+        };
+        let escaped_note = row.note.replace('"', "\"\"");
+        out.push_str(&format!(
+            "\"{}\",{:.1},{:.1},{},{},{},{:.1},{},{},{},\"{}\"\n",
+            row.recorded_at.replace('"', "\"\""),
+            row.nearest_glucose_mg_dl,
+            row.peak_prior_2h_mg_dl,
+            row.mood,
+            row.anxiety,
+            row.energy,
+            row.sleep_hours,
+            phq9,
+            gad7,
+            pattern,
+            escaped_note,
+        ));
+    }
+    out
+}
+
+/// Percent-encode CSV text for a `data:text/csv;charset=utf-8,...` download link.
+pub fn csv_data_uri(csv: &str) -> String {
+    let mut encoded = String::from("data:text/csv;charset=utf-8,");
+    for byte in csv.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
 }
 
 /// Classify a PHQ-9 score (`0..=27`).
@@ -141,7 +296,7 @@ pub fn parse_lingo_csv(input: &str) -> Result<Vec<LingoReading>, String> {
             continue;
         }
 
-        let cols: Vec<&str> = line.split(',').map(str::trim).collect();
+        let cols = split_csv_row(line).map_err(|err| format!("Line {}: {err}", line_idx + 1))?;
         if cols.len() < 2 {
             return Err(format!(
                 "Line {} needs at least `timestamp,glucose_mg_dl`.",
@@ -149,13 +304,12 @@ pub fn parse_lingo_csv(input: &str) -> Result<Vec<LingoReading>, String> {
             ));
         }
 
-        let timestamp = cols[0].trim_matches('"').to_string();
+        let timestamp = cols[0].clone();
         if timestamp.is_empty() {
             return Err(format!("Line {} has an empty timestamp.", line_idx + 1));
         }
 
         let glucose: f64 = cols[1]
-            .trim_matches('"')
             .parse()
             .map_err(|_| format!("Line {} has invalid glucose `{}`.", line_idx + 1, cols[1]))?;
         if !glucose.is_finite() || !(35.0..=450.0).contains(&glucose) {
@@ -167,16 +321,11 @@ pub fn parse_lingo_csv(input: &str) -> Result<Vec<LingoReading>, String> {
 
         let lingo_count = cols
             .get(2)
-            .map(|s| s.trim_matches('"'))
             .filter(|s| !s.is_empty())
             .and_then(|s| s.parse::<f64>().ok())
             .filter(|v| v.is_finite() && *v >= 0.0);
 
-        let tag = cols
-            .get(3)
-            .map(|s| s.trim_matches('"'))
-            .filter(|s| !s.is_empty())
-            .map(ToOwned::to_owned);
+        let tag = cols.get(3).filter(|s| !s.is_empty()).cloned();
 
         let hour_offset = if let Some(mins) = parse_pseudo_minutes(&timestamp) {
             let start = *first_minutes.get_or_insert(mins);
@@ -317,6 +466,9 @@ pub fn correlate_glucose_and_mood(
                 mood: c.mood,
                 anxiety: c.anxiety,
                 energy: c.energy,
+                sleep_hours: c.sleep_hours,
+                phq9: c.phq9,
+                gad7: c.gad7,
                 spike_adjacent: peak_prior_2h > 140.0,
                 note: c.note.clone(),
             }
@@ -445,5 +597,27 @@ mod tests {
         assert_eq!(classify_gad7(7), ClinicalBand::Mild);
         assert_eq!(classify_gad7(12), ClinicalBand::Moderate);
         assert_eq!(classify_gad7(18), ClinicalBand::Severe);
+    }
+
+    #[test]
+    fn parses_quoted_commas_and_exports_rfc4180_csv() {
+        let csv = "timestamp,glucose_mg_dl,lingo_count,tag\n\
+                   \"2026-11-21 13:00\",164,14,\"Oat latte, pastry, \"\"rush\"\"\"\n";
+        let readings = parse_lingo_csv(csv).expect("quoted comma CSV parses");
+        assert_eq!(readings.len(), 1);
+        assert_eq!(
+            readings[0].tag.as_deref(),
+            Some("Oat latte, pastry, \"rush\"")
+        );
+
+        let checkins = sample_checkins();
+        let corr = correlate_glucose_and_mood(&readings, &checkins);
+        let exported = export_correlations_csv(&corr);
+        assert!(exported.starts_with("recorded_at,nearest_glucose_mg_dl,"));
+        assert!(exported.contains("post_spike_gt_140"));
+        assert!(csv_data_uri(&exported).starts_with("data:text/csv;charset=utf-8,"));
+
+        let series = build_assessment_series(&sample_assessment_history(), &checkins);
+        assert_eq!(series.len(), 4);
     }
 }

@@ -2515,6 +2515,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glam"
+version = "0.30.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19fc433e8437a212d1b6f1e68c7824af3aed907da60afa994e7f542d18d12aa9"
+
+[[package]]
 name = "glib"
 version = "0.18.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2597,6 +2603,18 @@ dependencies = [
  "js-sys",
  "serde",
  "serde_json",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "glow"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "263218b0ba2b0715c3370fb04674f5f8aa331594b521c94ff0a8e4a8472d1386"
+dependencies = [
+ "js-sys",
+ "slotmap",
  "wasm-bindgen",
  "web-sys",
 ]
@@ -7792,6 +7810,8 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "csv",
+ "glam",
+ "glow",
  "js-sys",
  "leptos",
  "leptos_meta",
