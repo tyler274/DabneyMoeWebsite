@@ -3,6 +3,7 @@
 
 pub mod driver;
 pub mod follow_ups;
+pub mod lingo;
 pub mod reviews_memory;
 pub(crate) mod schema;
 #[cfg(not(target_arch = "wasm32"))]
@@ -13,6 +14,10 @@ pub mod store;
 pub mod updates_briefings;
 
 pub use driver::{DbError, SqliteDriver};
+pub use lingo::{
+    Gad7Severity, LingoCgmSummary, LingoParseError, LingoReading, MentalHealthCheckIn,
+    MentalHealthValidationError, Phq9Severity, parse_lingo_csv,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use store::ChatWorkLocation;
 pub use store::{DemoSourceRecord, DemoStore, DraftSaveOutcome};
@@ -629,6 +634,97 @@ mod tests {
                     if segments.iter().any(|s| matches!(s, MessageSegment::Citation { target: CitationTargetKind::Passage, .. }))
             ));
         }
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn maya_lin_lingo_cgm_and_mental_health_tracking_roundtrip() {
+        let (dir, store) = seeded_active_store("lingo-mh", 6);
+
+        let search = store.search("Maya Lin").await.unwrap();
+        assert_eq!(search.patients[0].patient_workspace_id, "unit-lingo-mh-1");
+
+        let ws = store.workspace("unit-lingo-mh-1").await.unwrap();
+        assert_eq!(ws.display_name, "Maya Lin");
+        assert!(!ws.active_follow_ups.is_empty());
+
+        let today = store.today().await.unwrap();
+        assert!(
+            today
+                .rows
+                .iter()
+                .any(|r| r.patient_workspace_id == "unit-lingo-mh-1"),
+            "Maya Lin must appear prominently in Today"
+        );
+
+        let briefings = store.workspace_briefings("unit-lingo-mh-1").await.unwrap();
+        assert!(
+            briefings
+                .briefings
+                .iter()
+                .any(|b| b.visit_label == "Mental health & Lingo CGM review")
+        );
+
+        let mem = store.patient_memory("unit-lingo-mh-1").await.unwrap();
+        assert!(
+            mem.summary
+                .as_ref()
+                .is_some_and(|d| d.markdown.contains("Abbott Lingo"))
+        );
+
+        let readings = parse_lingo_csv(
+            "timestamp,glucose_mg_dl,lingo_count,note\n\
+             2026-08-27T08:00:00Z,88,0,Fasting\n\
+             2026-08-27T13:00:00Z,158,10,Post-lunch spike\n\
+             2026-08-27T15:00:00Z,74,0,Afternoon dip\n",
+        )
+        .unwrap();
+        let (cgm_rec, summary) = store
+            .ingest_lingo_cgm(
+                "unit-lingo-mh-1",
+                "Day-15 Lingo Biosensor Upload",
+                &readings,
+            )
+            .await
+            .unwrap();
+        assert_eq!(summary.count, 3);
+        assert_eq!(summary.spike_count_over_140, 1);
+        let fetched_cgm = store
+            .source_record("unit-lingo-mh-1", &cgm_rec.id)
+            .await
+            .unwrap();
+        assert!(
+            fetched_cgm
+                .fields
+                .iter()
+                .any(|f| f.key == "lingo_peak_glucose" && f.value == "158.0")
+        );
+
+        let checkin = MentalHealthCheckIn {
+            recorded_at: "2026-08-27T15:30:00Z".into(),
+            mood_1_to_10: 7,
+            anxiety_1_to_10: 4,
+            energy_1_to_10: 7,
+            sleep_hours: 7.5,
+            phq9_score: Some(6),
+            gad7_score: Some(9),
+            note: "Steady afternoon energy after protein-first lunch.".into(),
+        };
+        let mh_rec = store
+            .log_mental_health_checkin("unit-lingo-mh-1", &checkin)
+            .await
+            .unwrap();
+        let fetched_mh = store
+            .source_record("unit-lingo-mh-1", &mh_rec.id)
+            .await
+            .unwrap();
+        assert!(
+            fetched_mh
+                .fields
+                .iter()
+                .any(|f| f.key == "gad7_score" && f.name == "GAD-7 (Mild)")
+        );
 
         let _ = std::fs::remove_dir_all(dir);
     }

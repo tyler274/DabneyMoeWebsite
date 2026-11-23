@@ -16,11 +16,14 @@ use harness::engine::{
 };
 use harness::skills::Package;
 use physician_bus::{Bus, Event as BusEvent};
-use physician_demo_db::DemoSourceRecord;
 use physician_demo_db::driver::DbError;
 use physician_demo_db::store::{
-    DEFAULT_DEMO_BASE_UNIX, build_cited_source_wire, extract_verbatim_quote, next_demo_seq,
-    parse_record_group_wire, search_terms_for_question,
+    DEFAULT_DEMO_BASE_UNIX, DEFAULT_DEMO_DATE, build_cited_source_wire, extract_verbatim_quote,
+    next_demo_seq, parse_record_group_wire, search_terms_for_question,
+};
+use physician_demo_db::{
+    DemoSourceRecord, LingoCgmSummary, LingoParseError, LingoReading, MentalHealthCheckIn,
+    parse_lingo_csv,
 };
 use physician_wire::follow_ups::UpdateFollowUpBody;
 use physician_wire::{
@@ -42,6 +45,8 @@ pub(crate) const TOOL_MEMORY_SAVE: &str = "memory_save";
 pub(crate) const TOOL_FOLLOW_UP_LIST: &str = "follow_up_list";
 pub(crate) const TOOL_FOLLOW_UP_CREATE: &str = "follow_up_create";
 pub(crate) const TOOL_BRIEFING_READ: &str = "briefing_read";
+pub(crate) const TOOL_MENTAL_HEALTH_LOG: &str = "mental_health_log";
+pub(crate) const TOOL_LINGO_CGM_INGEST: &str = "lingo_cgm_ingest";
 
 const DEFAULT_DEMO_FOLLOW_UP_DUE_DATE: &str = "2026-09-03";
 
@@ -54,6 +59,8 @@ enum DemoTool {
     FollowUpList,
     FollowUpCreate,
     BriefingRead,
+    MentalHealthLog,
+    LingoCgmIngest,
     SkillView,
 }
 
@@ -67,6 +74,8 @@ impl DemoTool {
             TOOL_FOLLOW_UP_LIST => Some(Self::FollowUpList),
             TOOL_FOLLOW_UP_CREATE => Some(Self::FollowUpCreate),
             TOOL_BRIEFING_READ => Some(Self::BriefingRead),
+            TOOL_MENTAL_HEALTH_LOG => Some(Self::MentalHealthLog),
+            TOOL_LINGO_CGM_INGEST => Some(Self::LingoCgmIngest),
             harness::skills::SKILL_VIEW => Some(Self::SkillView),
             _ => None,
         }
@@ -80,7 +89,10 @@ impl DemoTool {
             | Self::FollowUpList
             | Self::BriefingRead
             | Self::SkillView => true,
-            Self::MemorySave | Self::FollowUpCreate => false,
+            Self::MemorySave
+            | Self::FollowUpCreate
+            | Self::MentalHealthLog
+            | Self::LingoCgmIngest => false,
         }
     }
 }
@@ -139,6 +151,114 @@ struct FollowUpCreateArgs {
 struct BriefingReadArgs {
     #[serde(default)]
     briefing_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct MentalHealthCheckInPayload {
+    #[serde(default)]
+    pub(crate) recorded_at: Option<String>,
+    pub(crate) mood_1_to_10: u8,
+    pub(crate) anxiety_1_to_10: u8,
+    pub(crate) energy_1_to_10: u8,
+    pub(crate) sleep_hours: f32,
+    #[serde(default)]
+    pub(crate) phq9_score: Option<u8>,
+    #[serde(default)]
+    pub(crate) gad7_score: Option<u8>,
+    #[serde(default)]
+    pub(crate) note: Option<String>,
+}
+
+impl MentalHealthCheckInPayload {
+    pub(crate) fn into_checkin(self) -> MentalHealthCheckIn {
+        let recorded_at = self
+            .recorded_at
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(DEFAULT_DEMO_DATE)
+            .to_owned();
+        MentalHealthCheckIn {
+            recorded_at,
+            mood_1_to_10: self.mood_1_to_10,
+            anxiety_1_to_10: self.anxiety_1_to_10,
+            energy_1_to_10: self.energy_1_to_10,
+            sleep_hours: self.sleep_hours,
+            phq9_score: self.phq9_score,
+            gad7_score: self.gad7_score,
+            note: self.note.unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct LingoCgmIngestPayload {
+    #[serde(default)]
+    pub(crate) summary_title: Option<String>,
+    #[serde(default)]
+    pub(crate) csv: Option<String>,
+    #[serde(default)]
+    pub(crate) readings: Option<Vec<LingoReading>>,
+}
+
+impl LingoCgmIngestPayload {
+    pub(crate) fn resolve_readings(self) -> Result<(String, Vec<LingoReading>), LingoParseError> {
+        let title = self
+            .summary_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("Abbott Lingo CGM Summary")
+            .to_owned();
+        match (self.csv, self.readings) {
+            (Some(csv), _) if !csv.trim().is_empty() => {
+                let parsed = parse_lingo_csv(&csv)?;
+                Ok((title, parsed))
+            }
+            (_, Some(readings)) => {
+                if readings.is_empty() {
+                    return Err(LingoParseError::EmptyInput);
+                }
+                for (idx, reading) in readings.iter().enumerate() {
+                    reading.validate(idx + 1)?;
+                }
+                Ok((title, readings))
+            }
+            _ => Err(LingoParseError::EmptyInput),
+        }
+    }
+}
+
+pub(crate) fn mental_health_record_response(
+    rec: &DemoSourceRecord,
+    checkin: &MentalHealthCheckIn,
+) -> Value {
+    json!({
+        "record_id": rec.id,
+        "workspace_id": rec.workspace_id,
+        "title": rec.title,
+        "recorded_at": rec.recorded_at,
+        "source_label": rec.source_label,
+        "body": rec.body,
+        "fields": rec.fields,
+        "checkin": checkin,
+    })
+}
+
+pub(crate) fn lingo_cgm_record_response(
+    rec: &DemoSourceRecord,
+    summary: &LingoCgmSummary,
+) -> Value {
+    json!({
+        "record_id": rec.id,
+        "workspace_id": rec.workspace_id,
+        "title": rec.title,
+        "recorded_at": rec.recorded_at,
+        "source_label": rec.source_label,
+        "body": rec.body,
+        "fields": rec.fields,
+        "summary": summary,
+    })
 }
 
 /// Shared runtime dependencies needed to spawn `crates/harness` runs for a visitor session.
@@ -389,7 +509,7 @@ pub(crate) fn chart_recipe(model: &str, skills: &Package) -> RequestRecipe {
          For clinical chart questions, first search the chart with `chart_search`, then read all relevant records with `chart_read` before answering.\n\
          When multiple records are read, cite EVERY relevant `citation_number` inline ([1], [2], [3], ...) beside each clinical claim.\n\
          Do not cite numbers not returned by `chart_read`, and do not fabricate clinical values absent from read records.\n\
-         Use `memory_read` / `memory_save` to read or append durable physician notes in Patient Memory, `follow_up_list` / `follow_up_create` to inspect or schedule patient follow-ups, and `briefing_read` to read pre-visit briefings.",
+         Use `memory_read` / `memory_save` to read or append durable physician notes in Patient Memory, `follow_up_list` / `follow_up_create` to inspect or schedule patient follow-ups, `briefing_read` to read pre-visit briefings, `mental_health_log` to record structured mental health check-ins (mood, anxiety, energy, sleep, PHQ-9, GAD-7), and `lingo_cgm_ingest` to ingest Abbott Lingo CGM glucose readings or CSV summaries.",
     );
     let catalog = skills.catalog_instructions();
     if !catalog.is_empty() {
@@ -410,6 +530,8 @@ pub(crate) fn chart_recipe(model: &str, skills: &Package) -> RequestRecipe {
             follow_up_list_tool().function(),
             follow_up_create_tool().function(),
             briefing_read_tool().function(),
+            mental_health_log_tool().function(),
+            lingo_cgm_ingest_tool().function(),
             harness::skills::tool().function(),
         ],
     }
@@ -529,6 +651,100 @@ fn briefing_read_tool() -> Tool {
                 "briefing_id": {
                     "type": "string",
                     "description": "Optional briefing identifier to read one briefing directly."
+                }
+            },
+            "additionalProperties": false
+        }),
+    }
+}
+
+fn mental_health_log_tool() -> Tool {
+    Tool {
+        name: TOOL_MENTAL_HEALTH_LOG.to_owned(),
+        description: "Record a structured mental health check-in for the active patient (mood, anxiety, energy on 1..=10, prior-night sleep hours, and optional PHQ-9 / GAD-7 scores) as a cited chart source record.".to_owned(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "recorded_at": {
+                    "type": "string",
+                    "description": "Optional ISO date or timestamp when the check-in occurred."
+                },
+                "mood_1_to_10": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "description": "Self-reported mood rating from 1 (lowest) to 10 (brightest)."
+                },
+                "anxiety_1_to_10": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "description": "Self-reported anxiety intensity from 1 (calm) to 10 (severe)."
+                },
+                "energy_1_to_10": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "description": "Self-reported daytime energy rating from 1 (exhausted) to 10 (energized)."
+                },
+                "sleep_hours": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 24.0,
+                    "description": "Prior-night sleep duration in hours (0.0..=24.0)."
+                },
+                "phq9_score": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 27,
+                    "description": "Optional PHQ-9 depression total score (0..=27)."
+                },
+                "gad7_score": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 21,
+                    "description": "Optional GAD-7 anxiety total score (0..=21)."
+                },
+                "note": {
+                    "type": "string",
+                    "description": "Optional symptom, trigger, or context note."
+                }
+            },
+            "required": ["mood_1_to_10", "anxiety_1_to_10", "energy_1_to_10", "sleep_hours"],
+            "additionalProperties": false
+        }),
+    }
+}
+
+fn lingo_cgm_ingest_tool() -> Tool {
+    Tool {
+        name: TOOL_LINGO_CGM_INGEST.to_owned(),
+        description: "Ingest Abbott Lingo continuous glucose monitoring (CGM) CSV rows or structured readings for the active patient, compute glycemic variability and Time in Range metrics, and file a cited chart source record.".to_owned(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "summary_title": {
+                    "type": "string",
+                    "description": "Optional title for the filed Abbott Lingo CGM summary record."
+                },
+                "csv": {
+                    "type": "string",
+                    "description": "Abbott Lingo CSV text (`timestamp,glucose_mg_dl[,lingo_count[,note]]`)."
+                },
+                "readings": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "timestamp": { "type": "string" },
+                            "glucose_mg_dl": { "type": "number" },
+                            "lingo_count": { "type": "number" },
+                            "note": { "type": "string" }
+                        },
+                        "required": ["timestamp", "glucose_mg_dl"],
+                        "additionalProperties": false
+                    },
+                    "description": "Structured Abbott Lingo glucose readings when CSV text is not supplied."
                 }
             },
             "additionalProperties": false
@@ -674,6 +890,8 @@ impl DemoHarnessProduct {
             DemoTool::MemoryRead
             | DemoTool::FollowUpList
             | DemoTool::BriefingRead
+            | DemoTool::MentalHealthLog
+            | DemoTool::LingoCgmIngest
             | DemoTool::SkillView => {}
         }
         Ok(())
@@ -834,6 +1052,8 @@ impl DemoHarnessProduct {
             DemoTool::MemoryRead
             | DemoTool::FollowUpList
             | DemoTool::BriefingRead
+            | DemoTool::MentalHealthLog
+            | DemoTool::LingoCgmIngest
             | DemoTool::SkillView => {}
         }
         Ok(())
@@ -1264,6 +1484,89 @@ impl Product for DemoHarnessProduct {
                             "details": details,
                         })
                         .to_string(),
+                    ))
+                }
+                DemoTool::MentalHealthLog => {
+                    let payload: MentalHealthCheckInPayload =
+                        match serde_json::from_value(arguments) {
+                            Ok(p) => p,
+                            Err(err) => {
+                                return Ok(ToolOutcome::refused(format!(
+                                    "invalid mental_health_log arguments: {err}"
+                                )));
+                            }
+                        };
+                    let checkin = payload.into_checkin();
+                    if let Err(err) = checkin.validate() {
+                        return Ok(ToolOutcome::refused(err.to_string()));
+                    }
+                    let rec = {
+                        let _guard = session.store_lock.lock().await;
+                        match session
+                            .store
+                            .log_mental_health_checkin(&ws_id, &checkin)
+                            .await
+                        {
+                            Ok(r) => r,
+                            Err(DbError::InvalidCommand(msg)) => {
+                                return Ok(ToolOutcome::refused(msg));
+                            }
+                            Err(DbError::NotFound { kind, id }) => {
+                                return Ok(ToolOutcome::refused(format!(
+                                    "{kind} `{id}` not found"
+                                )));
+                            }
+                            Err(err) => return Err(ProductError::Failed(Box::new(err))),
+                        }
+                    };
+                    let _ = bus
+                        .publish(BusEvent::WorkspaceChanged {
+                            workspace_id: ws_id.clone(),
+                        })
+                        .await;
+                    Ok(ToolOutcome::Returned(
+                        mental_health_record_response(&rec, &checkin).to_string(),
+                    ))
+                }
+                DemoTool::LingoCgmIngest => {
+                    let payload: LingoCgmIngestPayload = match serde_json::from_value(arguments) {
+                        Ok(p) => p,
+                        Err(err) => {
+                            return Ok(ToolOutcome::refused(format!(
+                                "invalid lingo_cgm_ingest arguments: {err}"
+                            )));
+                        }
+                    };
+                    let (title, readings) = match payload.resolve_readings() {
+                        Ok(resolved) => resolved,
+                        Err(err) => return Ok(ToolOutcome::refused(err.to_string())),
+                    };
+                    let (rec, summary) = {
+                        let _guard = session.store_lock.lock().await;
+                        match session
+                            .store
+                            .ingest_lingo_cgm(&ws_id, &title, &readings)
+                            .await
+                        {
+                            Ok(res) => res,
+                            Err(DbError::InvalidCommand(msg)) => {
+                                return Ok(ToolOutcome::refused(msg));
+                            }
+                            Err(DbError::NotFound { kind, id }) => {
+                                return Ok(ToolOutcome::refused(format!(
+                                    "{kind} `{id}` not found"
+                                )));
+                            }
+                            Err(err) => return Err(ProductError::Failed(Box::new(err))),
+                        }
+                    };
+                    let _ = bus
+                        .publish(BusEvent::WorkspaceChanged {
+                            workspace_id: ws_id.clone(),
+                        })
+                        .await;
+                    Ok(ToolOutcome::Returned(
+                        lingo_cgm_record_response(&rec, &summary).to_string(),
                     ))
                 }
                 DemoTool::SkillView => match skills.execute_skill_view(&arguments) {
