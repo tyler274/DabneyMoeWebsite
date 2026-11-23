@@ -123,6 +123,65 @@ where
         .layer(from_fn(redirect_coda_directories))
 }
 
+/// Mount the self-hosted Ayagami model viewer, a static Trunk build that
+/// `scripts/sync-ayagami-demo.sh` writes to `public/vtuber/demo`, under
+/// `/vtuber/demo/`. The build's asset URLs are absolute under that prefix.
+#[cfg(feature = "ssr")]
+pub fn mount_vtuber_demo_static<S>(router: axum::Router<S>, site_root: &str) -> axum::Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    use axum::middleware::from_fn;
+    use std::path::PathBuf;
+
+    let demo_dir = PathBuf::from(site_root).join("vtuber/demo");
+    let demo_service = axum::Router::new()
+        .fallback_service(tower_http::services::ServeDir::new(demo_dir))
+        .layer(from_fn(vtuber_demo_headers))
+        .layer(tower_http::compression::CompressionLayer::new());
+
+    router.nest_service(ui::vtuber::DEMO_HREF.trim_end_matches('/'), demo_service)
+}
+
+/// Redirect the bare `/vtuber/demo` to the directory URL, and set caching:
+/// Trunk content-hashes the script and WebAssembly file names, so those are
+/// immutable, while the page and the notices are revalidated.
+#[cfg(feature = "ssr")]
+async fn vtuber_demo_headers(
+    axum::extract::OriginalUri(original): axum::extract::OriginalUri,
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{header, HeaderValue};
+    use axum::response::{IntoResponse, Redirect};
+
+    if original.path() == ui::vtuber::DEMO_HREF.trim_end_matches('/') {
+        return Redirect::permanent(&append_query(ui::vtuber::DEMO_HREF, original.query()))
+            .into_response();
+    }
+
+    // Nix store files all carry the same 1970 mtime, so it cannot validate a
+    // cached copy across deployments (see `coda_static_cache_headers`).
+    req.headers_mut().remove(header::IF_MODIFIED_SINCE);
+    req.headers_mut().remove(header::IF_UNMODIFIED_SINCE);
+    let content_hashed = [".js", ".wasm"]
+        .iter()
+        .any(|extension| req.uri().path().ends_with(extension));
+
+    let mut resp = next.run(req).await;
+    resp.headers_mut().remove(header::LAST_MODIFIED);
+    if resp.status().is_success() {
+        let cache_value = if content_hashed {
+            HeaderValue::from_static("public, max-age=31536000, immutable")
+        } else {
+            HeaderValue::from_static("no-cache")
+        };
+        resp.headers_mut()
+            .insert(header::CACHE_CONTROL, cache_value);
+    }
+    resp
+}
+
 #[cfg(feature = "ssr")]
 async fn coda_static_cache_headers(
     mut req: axum::extract::Request,
@@ -197,7 +256,7 @@ mod tests {
     use ui::App;
 
     use super::coda_proxy::CodaApiProxyConfig;
-    use super::{mount_coda_routes, mount_coda_static};
+    use super::{mount_coda_routes, mount_coda_static, mount_vtuber_demo_static};
 
     #[test]
     fn app_exposes_at_least_one_route() {
@@ -206,6 +265,198 @@ mod tests {
             !routes.is_empty(),
             "expected the router to expose at least one route"
         );
+    }
+
+    #[test]
+    fn vtuber_is_a_registered_route() {
+        let routes = generate_route_list(App);
+        assert!(
+            routes.iter().any(|route| route.path() == "/vtuber"),
+            "expected /vtuber among the registered routes"
+        );
+    }
+
+    #[tokio::test]
+    async fn vtuber_resume_is_server_rendered_and_linked_from_home() {
+        use leptos::prelude::LeptosOptions;
+        use leptos_axum::LeptosRoutes;
+
+        let options = LeptosOptions::builder().output_name("dabney").build();
+        let app = Router::new()
+            .leptos_routes(&options, generate_route_list(App), {
+                let options = options.clone();
+                move || ui::shell(options.clone())
+            })
+            .with_state(options);
+
+        for path in ["/vtuber", "/"] {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+            let html = String::from_utf8(body.to_vec())
+                .unwrap()
+                .replace("&#x27;", "'")
+                .replace("&#39;", "'")
+                .replace("&amp;", "&");
+            assert!(html.contains("href=\"/vtuber\""), "{path}");
+            assert!(html.contains("Coda Health"), "{path}");
+            assert!(html.contains("Senior System Software Engineer"), "{path}");
+            if path == "/vtuber" {
+                for text in [
+                    "VTuber-style Résumé",
+                    "Debut card",
+                    "Caltech CS '22",
+                    "This is Tyler Port's real résumé in a VTuber-style presentation. \
+                     There is no separate character and no avatar yet.",
+                    "Oct 2026 – Nov 2026",
+                    "Co-built, in a three-engineer team",
+                    "Wrote a from-scratch Rust rewrite of gssproxy",
+                    "Lore",
+                    "href=\"/resume.pdf\"",
+                    "href=\"/#contact\"",
+                    "href=\"/vtuber/demo/\"",
+                    "href=\"https://github.com/AyagamiDev/ayagami\"",
+                    "The Ayagami Project Contributors",
+                    "MIT or Apache-2.0",
+                    "compatible with the Live2D model format",
+                    "not affiliated with or endorsed by Live2D Inc.",
+                ] {
+                    assert!(html.contains(text), "missing vtuber text: {text}");
+                }
+                for project in ui::data::PROJECTS {
+                    assert!(html.contains(project.href), "missing {}", project.name);
+                }
+                for group in ui::data::SKILLS {
+                    assert!(html.contains(group.label), "missing {}", group.label);
+                }
+                assert!(!html.contains("<img"), "the page carries no avatar art");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn vtuber_demo_subpath_serves_the_viewer_its_notices_and_no_model() {
+        let public_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../public");
+        let app = mount_vtuber_demo_static(Router::<()>::new(), public_root.to_str().unwrap());
+
+        let redirect = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/vtuber/demo")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(redirect.status().is_redirection());
+        assert_eq!(
+            redirect
+                .headers()
+                .get(header::LOCATION)
+                .and_then(|v| v.to_str().ok()),
+            Some("/vtuber/demo/")
+        );
+
+        let fetch = |uri: String| {
+            let app = app.clone();
+            async move {
+                let resp = app
+                    .oneshot(
+                        Request::builder()
+                            .uri(&uri)
+                            .header(header::ACCEPT_ENCODING, "gzip")
+                            .header(header::IF_MODIFIED_SINCE, "Thu, 01 Jan 1970 00:00:01 GMT")
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status(), StatusCode::OK, "expected 200 OK for {uri}");
+                assert!(resp.headers().get(header::LAST_MODIFIED).is_none(), "{uri}");
+                resp
+            }
+        };
+
+        let index = fetch("/vtuber/demo/".to_owned()).await;
+        assert_eq!(
+            index
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("no-cache")
+        );
+        // The body is gzipped on the wire; read the page from disk to find
+        // the assets it loads, which must all sit under the mounted subpath.
+        let demo_dir = public_root.join("vtuber/demo");
+        let index_html = std::fs::read_to_string(demo_dir.join("index.html")).unwrap();
+        assert!(index_html.contains("<base href=\"/vtuber/demo/\""));
+        let mut assets = Vec::new();
+        for quoted in index_html.split(['\'', '"']) {
+            if let Some(name) = quoted.strip_prefix("/vtuber/demo/") {
+                if !name.is_empty() && !assets.contains(&name) {
+                    assets.push(name);
+                }
+            }
+        }
+        assert!(
+            assets.iter().any(|name| name.ends_with(".js"))
+                && assets.iter().any(|name| name.ends_with(".wasm")),
+            "expected the page to load its script and WebAssembly: {assets:?}"
+        );
+        for name in assets {
+            let asset = fetch(format!("/vtuber/demo/{name}")).await;
+            assert_eq!(
+                asset
+                    .headers()
+                    .get(header::CACHE_CONTROL)
+                    .and_then(|v| v.to_str().ok()),
+                Some("public, max-age=31536000, immutable"),
+                "{name}"
+            );
+            assert_eq!(
+                asset
+                    .headers()
+                    .get(header::CONTENT_ENCODING)
+                    .and_then(|v| v.to_str().ok()),
+                Some("gzip"),
+                "{name}"
+            );
+        }
+
+        for notice in [
+            "NOTICE.txt",
+            "COPYRIGHT.txt",
+            "LICENSE-MIT.txt",
+            "LICENSE-APACHE.txt",
+        ] {
+            fetch(format!("/vtuber/demo/{notice}")).await;
+        }
+        let notice = std::fs::read_to_string(demo_dir.join("NOTICE.txt")).unwrap();
+        for text in [
+            "https://github.com/AyagamiDev/ayagami",
+            "The Ayagami Project Contributors",
+            "not affiliated with",
+            "No model files are included",
+        ] {
+            assert!(notice.contains(text), "missing notice text: {text}");
+        }
+
+        // The viewer ships empty: only the app and its notices are published.
+        for entry in std::fs::read_dir(&demo_dir).unwrap() {
+            let name = entry.unwrap().file_name().into_string().unwrap();
+            assert!(
+                name == "index.html"
+                    || name.ends_with(".txt")
+                    || (name.starts_with("ayagami-demo-")
+                        && (name.ends_with(".js") || name.ends_with(".wasm"))),
+                "unexpected file in the published demo: {name}"
+            );
+        }
     }
 
     #[tokio::test]

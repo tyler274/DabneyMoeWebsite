@@ -26,6 +26,7 @@ pub mod portfolio_chart;
 pub mod privacy;
 pub mod sections;
 pub mod tools;
+pub mod vtuber;
 
 use leptos::prelude::*;
 #[cfg(feature = "csr")]
@@ -113,6 +114,7 @@ pub fn App() -> impl IntoView {
                     <Route path=StaticSegment("privacy") view=PrivacyPage />
                     <Route path=StaticSegment("mental-health") view=mental_health::MentalHealthPage />
                     <Route path=StaticSegment("koizetsu") view=koizetsu::KoizetsuPage />
+                    <Route path=StaticSegment("vtuber") view=vtuber::VtuberPage />
                     <Route path=StaticSegment("community-policy") view=CommunityPolicyPage />
                     <Route path=StaticSegment("community-activity") view=community_activity::CommunityActivityPage ssr=leptos_router::SsrMode::Async />
                     <Route
