@@ -41,8 +41,9 @@ use serde_json::{Value, json};
 use crate::DemoApiState;
 use crate::budget::{DemoBudgetExhausted, demo_budget_exhausted_response};
 use crate::harness_product::{
-    create_working_exchange, default_demo_timestamp, extract_prior_history, fallback_title,
-    run_reply_revision_with_provider,
+    LingoCgmIngestPayload, MentalHealthCheckInPayload, create_working_exchange,
+    default_demo_timestamp, extract_prior_history, fallback_title, lingo_cgm_record_response,
+    mental_health_record_response, run_reply_revision_with_provider,
 };
 use crate::sessions::VisitorSession;
 
@@ -266,6 +267,14 @@ pub fn build_router(state: DemoApiState) -> Router {
         .route(
             "/patient-workspaces/{workspace_id}/reviews/{review_id}/control",
             post(control_patient_review),
+        )
+        .route(
+            "/patient-workspaces/{workspace_id}/mental-health-checkins",
+            post(post_mental_health_checkin),
+        )
+        .route(
+            "/patient-workspaces/{workspace_id}/lingo-cgm",
+            post(post_lingo_cgm),
         )
         .route("/dictation", post(dictate))
         .route("/commands", post(command))
@@ -2115,5 +2124,60 @@ async fn handle_reply_revise(
         .await;
     Ok(no_store(
         Json(json!({ "ok": true, "draft_revision": next_rev })).into_response(),
+    ))
+}
+
+async fn post_mental_health_checkin(
+    State(state): State<DemoApiState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+    Json(payload): Json<MentalHealthCheckInPayload>,
+) -> Result<Response, ApiError> {
+    let session = require_session(&state, &headers)?;
+    check_workspace(&session, &workspace_id)?;
+    let checkin = payload.into_checkin();
+    checkin
+        .validate()
+        .map_err(|err| ApiError::BadRequest(err.to_string()))?;
+    let rec = {
+        let _guard = session.store_lock.lock().await;
+        session
+            .store
+            .log_mental_health_checkin(&workspace_id, &checkin)
+            .await?
+    };
+    let _ = state
+        .bus
+        .publish(BusEvent::WorkspaceChanged { workspace_id })
+        .await;
+    Ok(no_store(
+        Json(mental_health_record_response(&rec, &checkin)).into_response(),
+    ))
+}
+
+async fn post_lingo_cgm(
+    State(state): State<DemoApiState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+    Json(payload): Json<LingoCgmIngestPayload>,
+) -> Result<Response, ApiError> {
+    let session = require_session(&state, &headers)?;
+    check_workspace(&session, &workspace_id)?;
+    let (title, readings) = payload
+        .resolve_readings()
+        .map_err(|err| ApiError::BadRequest(err.to_string()))?;
+    let (rec, summary) = {
+        let _guard = session.store_lock.lock().await;
+        session
+            .store
+            .ingest_lingo_cgm(&workspace_id, &title, &readings)
+            .await?
+    };
+    let _ = state
+        .bus
+        .publish(BusEvent::WorkspaceChanged { workspace_id })
+        .await;
+    Ok(no_store(
+        Json(lingo_cgm_record_response(&rec, &summary)).into_response(),
     ))
 }

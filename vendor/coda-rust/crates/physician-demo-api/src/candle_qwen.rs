@@ -45,7 +45,8 @@ const DEFAULT_MAX_NEW_TOKENS: usize = 192;
 
 use crate::harness_product::{
     TOOL_BRIEFING_READ, TOOL_CHART_READ, TOOL_CHART_SEARCH, TOOL_FOLLOW_UP_CREATE,
-    TOOL_FOLLOW_UP_LIST, TOOL_MEMORY_READ, TOOL_MEMORY_SAVE,
+    TOOL_FOLLOW_UP_LIST, TOOL_LINGO_CGM_INGEST, TOOL_MEMORY_READ, TOOL_MEMORY_SAVE,
+    TOOL_MENTAL_HEALTH_LOG,
 };
 
 /// Errors raised while resolving, verifying, or running the Candle GGUF model.
@@ -528,6 +529,8 @@ fn is_workspace_tool(name: &str) -> bool {
             | TOOL_FOLLOW_UP_LIST
             | TOOL_FOLLOW_UP_CREATE
             | TOOL_BRIEFING_READ
+            | TOOL_MENTAL_HEALTH_LOG
+            | TOOL_LINGO_CGM_INGEST
     )
 }
 
@@ -1066,7 +1069,9 @@ fn normalize_answer_citations(
         || trimmed.contains("\"chart_read\"")
         || trimmed.contains("\"chart_search\"")
         || trimmed.contains("\"memory_save\"")
-        || trimmed.contains("\"follow_up_create\"");
+        || trimmed.contains("\"follow_up_create\"")
+        || trimmed.contains("\"mental_health_log\"")
+        || trimmed.contains("\"lingo_cgm_ingest\"");
     if looks_like_tool_json {
         if !excerpts.is_empty() {
             return excerpts

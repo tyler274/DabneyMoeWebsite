@@ -75,7 +75,11 @@ struct ExtractedRecord {
     raw_content: Option<String>,
 }
 
-/// Seeds `store` from `units_dir`, prioritizing pilot units (`unit-2013`, `unit-2188`, `unit-2797`).
+/// Synthetic workspace ID for Maya Lin (longitudinal mental health + Abbott Lingo CGM).
+pub const MAYA_LIN_WORKSPACE_ID: &str = "unit-lingo-mh-1";
+
+/// Seeds `store` from `units_dir`, prioritizing pilot units (`unit-2013`, `unit-2188`, `unit-2797`)
+/// and synthetic Abbott Lingo CGM + mental health patient Maya Lin (`unit-lingo-mh-1`).
 pub fn seed_from_units_dir(
     store: &DemoStore,
     units_dir: &Path,
@@ -83,8 +87,24 @@ pub fn seed_from_units_dir(
 ) -> Result<usize, SeedError> {
     store.init_schema()?;
     seed_practice_connections_and_matching(store)?;
+    let include_maya = limit == 0 || limit >= 4;
+    let unit_limit = if include_maya && limit > 0 {
+        limit - 1
+    } else {
+        limit
+    };
     let mut imported = 0usize;
-    for (idx, unit_dir) in collect_unit_dirs(units_dir, limit)?.iter().enumerate() {
+    let unit_dirs = collect_unit_dirs(units_dir, unit_limit)?;
+    for (raw_idx, unit_dir) in unit_dirs.iter().enumerate() {
+        if include_maya && raw_idx == 3 {
+            seed_maya_lin_workspace(store)?;
+            imported += 1;
+        }
+        let slot_idx = if include_maya && raw_idx >= 3 {
+            raw_idx + 1
+        } else {
+            raw_idx
+        };
         let unit_id = unit_dir
             .file_name()
             .and_then(|n| n.to_str())
@@ -95,9 +115,13 @@ pub fn seed_from_units_dir(
         }
         let ledger: Value = serde_json::from_str(&fs::read_to_string(&ledger_path)?)?;
         if let Some(patient) = jarr(&ledger, "patients").first() {
-            insert_patient_unit(store, idx, unit_id, patient)?;
+            insert_patient_unit(store, slot_idx, unit_id, patient)?;
             imported += 1;
         }
+    }
+    if include_maya && unit_dirs.len() <= 3 {
+        seed_maya_lin_workspace(store)?;
+        imported += 1;
     }
     store
         .driver()
@@ -1092,7 +1116,7 @@ fn seed_featured(
         0 => ("today", UpdateItemKindWire::ConcernRaised, waited),
         1 => ("today", UpdateItemKindWire::AssessedReview, waited),
         2 => ("today", UpdateItemKindWire::VisitBriefing, waited),
-        3 => (
+        3 | 4 => (
             "yesterday",
             UpdateItemKindWire::AssessedReview,
             "2026-08-26T18:10:00.000Z",
@@ -1566,4 +1590,527 @@ fn infer_sex_label(summary: &str) -> &'static str {
     } else {
         "Unspecified"
     }
+}
+
+#[allow(clippy::too_many_lines)]
+fn seed_maya_lin_workspace(store: &DemoStore) -> Result<(), SeedError> {
+    let ws_id = MAYA_LIN_WORKSPACE_ID;
+    let display_name = "Maya Lin";
+    let mrn = "MRN00004412";
+    let birth_date = "1992-04-18";
+    let summary = "34-year-old woman with generalized anxiety disorder (GAD-7 12/21, down from 15/21) and mild depressive symptoms (PHQ-9 8/27, down from 11/27) on escitalopram 10 mg daily, sharing 14-day Abbott Lingo CGM biosensor data and daily mental health check-ins through Duet Connected Care.";
+
+    let cgm_14d_body = "14-day Abbott Lingo CGM biosensor summary (2026-08-13 to 2026-08-26, n = 1,344 readings, 99% sensor wear): mean glucose 108.4 mg/dL, nadir 68.0 mg/dL, peak 176.0 mg/dL, SD 24.9 mg/dL, glycemic variability CV 23.0%, Time in Tight Range (70–140 mg/dL) 81.5%, Time in Range (70–180 mg/dL) 98.8%, 11 post-prandial excursions >140 mg/dL, 3 brief reactive dips <70 mg/dL, mean Lingo Count 64.0 pts/day.";
+    let corr_body = "Abbott Lingo CGM & Duet symptom correlation log (2026-08-19 to 2026-08-25): high-glycemic lunches (sweetened oat latte + white-rice bowl) produced peaks of 168–176 mg/dL within 50 minutes followed by rapid drops to 68–73 mg/dL between 2:30 PM and 3:30 PM, coinciding with acute palpitations, shakiness, and afternoon anxiety ratings of 8/10 on 5 of 7 days. On protein-first lunches (eggs, salmon, greens), post-meal glucose stayed <= 124 mg/dL and afternoon anxiety stayed 3/10.";
+    let scales_body = "Longitudinal PHQ-9 & GAD-7 mental health assessments (2026-08-24 vs 2026-07-10 baseline): GAD-7 total score 12/21 (Moderate, improved from 15/21 Severe on 2026-07-10); PHQ-9 total score 8/27 (Mild, improved from 11/27 Moderate on 2026-07-10; item-9 suicidal ideation score 0). Residual anxiety clusters in mid-afternoon workdays.";
+    let checkins_body = "7-day Duet daily mood, anxiety, energy, and sleep check-in rollup (2026-08-20 to 2026-08-26): mean mood 6.5/10, mean afternoon anxiety 6.8/10 (8/10 after <6.0 h sleep vs 3.5/10 after >=7.5 h sleep), mean daytime energy 5.8/10, mean sleep duration 6.4 h. Nights <6.0 h preceded higher next-day Lingo Count (78 pts vs 38 pts).";
+    let meds_body = "Psychiatry & integrative primary care follow-up note (2026-08-12): Escitalopram 10 mg PO daily started 2026-06-15, well tolerated without GI or sexual side effects. Biweekly CBT ongoing. Patient wearing Abbott Lingo upper-arm biosensor to evaluate afternoon adrenergic spells versus panic episodes; trial pairing carbohydrates with >=25 g protein + 10-minute post-lunch walk.";
+
+    let demo_records = vec![
+        DemoSourceRecord {
+            id: format!("rec-{ws_id}-plan"),
+            workspace_id: ws_id.into(),
+            group: "medications".into(),
+            title: "Escitalopram 10 mg & Behavioral Care Plan".into(),
+            recorded_at: "2026-08-12".into(),
+            body: meds_body.into(),
+            source_label: "Primary EHR".into(),
+            readable_parts: vec![CitedTextPartWire {
+                label: Some("Care Plan".into()),
+                text: meds_body.into(),
+            }],
+            fields: vec![CitedFieldWire {
+                key: "escitalopram_dose".into(),
+                name: "Escitalopram".into(),
+                value: "10".into(),
+                unit: Some("mg daily".into()),
+                range: None,
+                status: Some("Active".into()),
+            }],
+            record_status: "final".into(),
+            raw_content: None,
+        },
+        DemoSourceRecord {
+            id: format!("rec-{ws_id}-phq-gad"),
+            workspace_id: ws_id.into(),
+            group: "results".into(),
+            title: "Longitudinal GAD-7 & PHQ-9 Screening".into(),
+            recorded_at: "2026-08-24".into(),
+            body: scales_body.into(),
+            source_label: "Duet Mental Health Check-In".into(),
+            readable_parts: vec![CitedTextPartWire {
+                label: Some("Standardized Scales".into()),
+                text: scales_body.into(),
+            }],
+            fields: vec![
+                CitedFieldWire {
+                    key: "gad7_score".into(),
+                    name: "GAD-7 (Moderate)".into(),
+                    value: "12".into(),
+                    unit: Some("/21".into()),
+                    range: Some("0–4 Minimal (prior 15/21)".into()),
+                    status: Some("Moderate".into()),
+                },
+                CitedFieldWire {
+                    key: "phq9_score".into(),
+                    name: "PHQ-9 (Mild)".into(),
+                    value: "8".into(),
+                    unit: Some("/27".into()),
+                    range: Some("0–4 Minimal (prior 11/27)".into()),
+                    status: Some("Mild".into()),
+                },
+            ],
+            record_status: "final".into(),
+            raw_content: None,
+        },
+        DemoSourceRecord {
+            id: format!("rec-{ws_id}-corr"),
+            workspace_id: ws_id.into(),
+            group: "notes".into(),
+            title: "Post-Prandial Lingo Spikes & Afternoon Anxiety Correlation".into(),
+            recorded_at: "2026-08-25".into(),
+            body: corr_body.into(),
+            source_label: "Abbott Lingo CGM + Duet".into(),
+            readable_parts: vec![CitedTextPartWire {
+                label: Some("Symptom & Glucose Correlation".into()),
+                text: corr_body.into(),
+            }],
+            fields: vec![
+                CitedFieldWire {
+                    key: "afternoon_anxiety_spike".into(),
+                    name: "Afternoon Anxiety (post-spike days)".into(),
+                    value: "8".into(),
+                    unit: Some("/10".into()),
+                    range: Some("1–4".into()),
+                    status: Some("Elevated".into()),
+                },
+                CitedFieldWire {
+                    key: "reactive_glucose_nadir".into(),
+                    name: "Post-Lunch Reactive Nadir".into(),
+                    value: "68.0".into(),
+                    unit: Some("mg/dL".into()),
+                    range: Some(">= 70 mg/dL".into()),
+                    status: Some("Low".into()),
+                },
+            ],
+            record_status: "final".into(),
+            raw_content: None,
+        },
+        DemoSourceRecord {
+            id: format!("rec-{ws_id}-checkins"),
+            workspace_id: ws_id.into(),
+            group: "results".into(),
+            title: "7-Day Mood, Anxiety, Energy & Sleep Check-Ins".into(),
+            recorded_at: "2026-08-26".into(),
+            body: checkins_body.into(),
+            source_label: "Duet Mental Health Check-In".into(),
+            readable_parts: vec![CitedTextPartWire {
+                label: Some("7-Day Check-In Rollup".into()),
+                text: checkins_body.into(),
+            }],
+            fields: vec![
+                CitedFieldWire {
+                    key: "mean_mood".into(),
+                    name: "7-Day Mean Mood".into(),
+                    value: "6.5".into(),
+                    unit: Some("/10".into()),
+                    range: Some("6–10".into()),
+                    status: Some("Normal".into()),
+                },
+                CitedFieldWire {
+                    key: "mean_sleep".into(),
+                    name: "7-Day Mean Sleep".into(),
+                    value: "6.4".into(),
+                    unit: Some("h".into()),
+                    range: Some("7.0–9.0 h".into()),
+                    status: Some("Low".into()),
+                },
+            ],
+            record_status: "final".into(),
+            raw_content: None,
+        },
+        DemoSourceRecord {
+            id: format!("rec-{ws_id}-cgm-14d"),
+            workspace_id: ws_id.into(),
+            group: "results".into(),
+            title: "14-Day Abbott Lingo CGM Biosensor Summary".into(),
+            recorded_at: "2026-08-26".into(),
+            body: cgm_14d_body.into(),
+            source_label: "Abbott Lingo CGM".into(),
+            readable_parts: vec![CitedTextPartWire {
+                label: Some("14-Day Lingo Biosensor Summary".into()),
+                text: cgm_14d_body.into(),
+            }],
+            fields: vec![
+                CitedFieldWire {
+                    key: "lingo_mean_glucose".into(),
+                    name: "Mean Glucose (14d Lingo)".into(),
+                    value: "108.4".into(),
+                    unit: Some("mg/dL".into()),
+                    range: Some("70–115 mg/dL".into()),
+                    status: Some("Normal".into()),
+                },
+                CitedFieldWire {
+                    key: "lingo_peak_glucose".into(),
+                    name: "Peak Glucose".into(),
+                    value: "176.0".into(),
+                    unit: Some("mg/dL".into()),
+                    range: Some("<= 140 mg/dL".into()),
+                    status: Some("Elevated".into()),
+                },
+                CitedFieldWire {
+                    key: "lingo_cv_percent".into(),
+                    name: "Glycemic Variability (CV)".into(),
+                    value: "23.0".into(),
+                    unit: Some("%".into()),
+                    range: Some("< 20.0%".into()),
+                    status: Some("Elevated".into()),
+                },
+                CitedFieldWire {
+                    key: "lingo_tir_70_140".into(),
+                    name: "Time in Tight Range (70–140)".into(),
+                    value: "81.5".into(),
+                    unit: Some("%".into()),
+                    range: Some(">= 85.0%".into()),
+                    status: Some(crate::lingo::tight_tir_status(81.5).into()),
+                },
+                CitedFieldWire {
+                    key: "lingo_daily_count".into(),
+                    name: "Mean Daily Lingo Count".into(),
+                    value: "64.0".into(),
+                    unit: Some("pts/day".into()),
+                    range: Some("<= 45 pts/day".into()),
+                    status: Some("Elevated".into()),
+                },
+            ],
+            record_status: "final".into(),
+            raw_content: None,
+        },
+    ];
+
+    for rec in &demo_records {
+        store.insert_structured_source_record(rec)?;
+    }
+
+    let reason = "Abbott Lingo CGM post-lunch spikes (176 mg/dL) & reactive dips correlating with afternoon GAD-7 anxiety";
+    let waited = "2026-08-27T16:20:00.000Z";
+    let item_id = format!("today-{ws_id}");
+    let chat_id = format!("chat-{ws_id}-1");
+    let row_json = json!({
+        "patient_workspace_id": ws_id,
+        "patient_display_name": display_name,
+        "item_id": item_id,
+        "version_id": format!("ver-{ws_id}-1"),
+        "waiting_since": waited,
+        "urgency": "today",
+        "kind": "concern",
+        "title": reason,
+        "reason": reason,
+        "can_mark_done": true,
+        "linked_chat_id": chat_id,
+        "spruce_conversation_id": Value::Null,
+    });
+    store.driver().insert_row(
+        TodayItems::Table,
+        TodayItems::COLS,
+        [
+            item_id.as_str().into(),
+            ws_id.into(),
+            "today".into(),
+            waited.into(),
+            "concern".into(),
+            row_json.to_string().into(),
+            0.into(),
+            0.into(),
+        ],
+    )?;
+
+    let starts = "2026-08-27T21:00:00.000Z";
+    let ends = "2026-08-27T21:30:00.000Z";
+    let briefing_id = format!("briefing-{ws_id}");
+    let visit_label = "Mental health & Lingo CGM review";
+    let visit_json = json!({
+        "patient_display_name": display_name,
+        "patient_workspace_id": ws_id,
+        "label": visit_label,
+        "starts_at": starts,
+        "ends_at": ends,
+        "status": "scheduled",
+        "patient_time_zone": DEMO_ZONE,
+        "preparation": {
+            "state": "prepared",
+            "briefing_id": briefing_id,
+            "last_attempt": { "outcome": "completed" }
+        }
+    });
+    store.driver().insert_row(
+        PracticeVisits::Table,
+        PracticeVisits::COLS,
+        [
+            format!("visit-{ws_id}").into(),
+            starts.into(),
+            visit_json.to_string().into(),
+        ],
+    )?;
+
+    seed_visit_briefing(
+        store,
+        ws_id,
+        display_name,
+        &briefing_id,
+        visit_label,
+        starts,
+        ends,
+        summary,
+        &demo_records,
+    )?;
+
+    let update_item = UpdateItemWire {
+        item_id: format!("upd-{ws_id}"),
+        version_id: "1".into(),
+        patient_workspace_id: ws_id.into(),
+        patient_display_name: display_name.into(),
+        kind: UpdateItemKindWire::AssessedReview,
+        headline: reason.into(),
+        detail: truncate_detail(summary),
+        occurred_at: waited.into(),
+        standing: SeenStandingWire::Unseen,
+    };
+    store.driver().insert_row(
+        UpdatesFeed::Table,
+        UpdatesFeed::COLS,
+        [
+            update_item.item_id.as_str().into(),
+            ws_id.into(),
+            "today".into(),
+            waited.into(),
+            serde_json::to_string(&update_item)?.into(),
+        ],
+    )?;
+
+    seed_patient_reviews(store, 3, ws_id, reason, summary, &demo_records)?;
+
+    let fu = FollowUpWire {
+        follow_up_id: format!("fu-{ws_id}-1"),
+        patient_workspace_id: ws_id.into(),
+        version: 1,
+        summary: "2-week Abbott Lingo CGM & GAD-7 check-in after protein-paired lunch trial".into(),
+        standing: FollowUpStandingWire::Scheduled {
+            due_at: "2026-09-10T13:00:00Z".into(),
+            due_date_input: "2026-09-10".into(),
+        },
+        origin: FollowUpOriginWire::CodaCreated {
+            run_id: format!("run-{ws_id}-1"),
+        },
+        latest_note: Some(
+            "Reassess afternoon anxiety ratings, post-lunch glucose peaks <=140 mg/dL, and sleep continuity.".into(),
+        ),
+        updated_at: DEMO_NOW.into(),
+    };
+    store.driver().insert_row(
+        FollowUps::Table,
+        FollowUps::COLS,
+        [
+            fu.follow_up_id.as_str().into(),
+            ws_id.into(),
+            fu.standing.badge_label().into(),
+            fu.updated_at.as_str().into(),
+            serde_json::to_string(&fu)?.into(),
+        ],
+    )?;
+
+    let mem = PatientMemoryResponse {
+        patient_workspace_id: ws_id.into(),
+        durable: true,
+        summary: Some(MemoryDocumentWire {
+            version: 1,
+            saved_at: DEMO_DATE.into(),
+            markdown: format!("# {display_name}\n\n{summary}"),
+        }),
+        direction: Some(MemoryDocumentWire {
+            version: 1,
+            saved_at: DEMO_DATE.into(),
+            markdown: "Correlate afternoon anxiety spells with Abbott Lingo post-prandial glucose drops and <6 h sleep nights; maintain escitalopram 10 mg daily and biweekly CBT.".into(),
+        }),
+    };
+    store.driver().insert_row(
+        PatientMemory::Table,
+        PatientMemory::COLS,
+        [ws_id.into(), 0.into(), serde_json::to_string(&mem)?.into()],
+    )?;
+
+    let cited_recs: Vec<_> = demo_records.iter().rev().take(3).cloned().collect();
+    let reads: Vec<_> = cited_recs
+        .iter()
+        .map(|r| {
+            (
+                r.id.clone(),
+                RecordGroup::Results,
+                r.title.clone(),
+                r.recorded_at.clone(),
+            )
+        })
+        .collect();
+    let query = "lingo glucose spikes afternoon anxiety gad7 sleep";
+    let (answer_text, segments, basis, sources) =
+        synthesize_chart_answer_with_citations(query, &cited_recs, &format!("seed-{ws_id}"));
+    let snap = ChatSnapshot {
+        sources,
+        queued: Vec::new(),
+        archived: false,
+        transcript: vec![build_exchange_with_segments(
+            "seed",
+            ws_id,
+            (
+                format!("msg-seed-{ws_id}"),
+                "Correlate Maya's Abbott Lingo CGM patterns with her GAD-7, PHQ-9, and afternoon anxiety check-ins.".into(),
+                1_787_850_120,
+            ),
+            query,
+            &reads,
+            true,
+            (answer_text, segments, basis),
+        )],
+        feedback: SnapshotFeedback::Loaded,
+    };
+    store.driver().insert_row(
+        Chats::Table,
+        Chats::COLS,
+        [
+            chat_id.into(),
+            ws_id.into(),
+            "Mental health & Lingo CGM brief".into(),
+            waited.into(),
+            serde_json::to_string(&snap)?.into(),
+        ],
+    )?;
+
+    let synopsis_rec = &demo_records[4];
+    let workspace = PatientWorkspaceResponse {
+        patient_workspace_id: ws_id.into(),
+        display_name: display_name.into(),
+        membership: WorkspaceMembership::Allowed,
+        time_zone: Some(DEMO_ZONE.into()),
+        chats: Vec::new(),
+        identity: Some(PatientIdentity {
+            display_name: Some(display_name.into()),
+            birth_date: Some(birth_date.into()),
+            age_years: Some(34),
+            sex_or_gender: Some(SexOrGender {
+                value: Some("female".into()),
+                label: Some("Female".into()),
+            }),
+            medical_record_numbers: vec![MedicalRecordNumber {
+                value: Some(mrn.into()),
+            }],
+            email: None,
+            state: Some("available".into()),
+        }),
+        patient_synopsis: Some(PatientSynopsis {
+            version_id: format!("syn-{ws_id}-v1"),
+            authored_text: None,
+            segments: vec![
+                ClinicalSegment::Text {
+                    text: format!("{summary} "),
+                },
+                ClinicalSegment::Citation {
+                    state: "resolved".into(),
+                    display_label: Some(synopsis_rec.title.clone()),
+                    source: Some("abbott-lingo-cgm".into()),
+                    source_id: Some(ws_id.into()),
+                    handle: Some(synopsis_rec.id.clone()),
+                    source_presentation: Some(SourcePresentation {
+                        content: Some(SourcePreviewContent {
+                            text: synopsis_rec.body.clone(),
+                            as_of: synopsis_rec.recorded_at.clone(),
+                        }),
+                    }),
+                    destination: Some(CitationDestination {
+                        kind: "source_native".into(),
+                        source_label: Some(synopsis_rec.source_label.clone()),
+                        uri: None,
+                    }),
+                },
+            ],
+            authored_at: Some(DEMO_NOW.into()),
+        }),
+        automation_run: Some(AutomationRun {
+            kind: "visit_preparation".into(),
+            state: "finished".into(),
+            ended_cause: None,
+            purpose: Some(WorkPurpose {
+                headline: Some(reason.into()),
+            }),
+        }),
+        active_follow_ups: vec![FollowUp {
+            follow_up_id: fu.follow_up_id,
+            description: Some(fu.summary),
+        }],
+        has_past_work: true,
+        last_reviewed_at: Some(DEMO_NOW.into()),
+        connected_sources: vec![
+            ConnectedSource {
+                source_id: Some("synthetic-ehr".into()),
+                source_label: Some("Primary EHR".into()),
+                state: SourceConnectionState {
+                    state: "usable".into(),
+                    synchronized_at: Some(DEMO_NOW.into()),
+                    usable_snapshot: Some(SourceSnapshot {
+                        synchronized_at: Some(DEMO_NOW.into()),
+                    }),
+                },
+            },
+            ConnectedSource {
+                source_id: Some("abbott-lingo-cgm".into()),
+                source_label: Some("Abbott Lingo CGM (via Duet)".into()),
+                state: SourceConnectionState {
+                    state: "usable".into(),
+                    synchronized_at: Some(DEMO_NOW.into()),
+                    usable_snapshot: Some(SourceSnapshot {
+                        synchronized_at: Some(DEMO_NOW.into()),
+                    }),
+                },
+            },
+        ],
+        replies: Vec::new(),
+        superseded_replies: Vec::new(),
+        active_plan_items: vec![WorkspacePlanItem {
+            item_id: format!("plan-{ws_id}-1"),
+            patient_workspace_id: ws_id.into(),
+            title: "Protein-paired lunch + 10-min walk trial".into(),
+            detail: "Pair lunch carbohydrates with >=25 g protein + 10-minute walk and correlate afternoon anxiety check-ins against Abbott Lingo CGM.".into(),
+            decided_at: DEMO_NOW.into(),
+            source_recommendation_id: None,
+        }],
+        undecided_recommendations: build_recommendations(ws_id, 3),
+        connection_status: ConnectionStatusWire::Connected,
+        patient_link: Some(PatientLinkWire {
+            practice_id: "prac-coda-demo".into(),
+            patient_workspace_id: ws_id.into(),
+            duet_account_id: Some(format!("duet-{ws_id}")),
+            linked: true,
+            sharing_consented: true,
+            connection_status: ConnectionStatusWire::Connected,
+            consent_version: Some("v1".into()),
+            consented_at: Some(1_785_000_000),
+            revoked_at: None,
+            invited_email: None,
+            wrong_dob_attempts: 0,
+            locked_at: None,
+            delivery_failed_at: None,
+            delivery_error: None,
+        }),
+    };
+    store.driver().insert_row(
+        Patients::Table,
+        Patients::COLS,
+        [
+            ws_id.into(),
+            display_name.into(),
+            mrn.into(),
+            birth_date.into(),
+            serde_json::to_string(&workspace)?.into(),
+        ],
+    )?;
+    Ok(())
 }
