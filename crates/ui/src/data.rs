@@ -39,6 +39,9 @@ pub struct Project {
 pub const PROFILE_PHOTO: &str = "/photos/tyler-dunes.jpg";
 pub const ABOUT_PHOTO: &str = "/photos/tyler-travel.png";
 
+/// Degree and class year, shown as a badge.
+pub const ALMA_MATER: &str = "Caltech CS '22";
+
 pub const TAGLINE: &str = "Independent software engineer & freelance contractor";
 
 pub const SUMMARY: &str = "Caltech-trained software engineer specializing in Rust, GPU \
@@ -147,15 +150,16 @@ pub const EXPERIENCE: &[Role] = &[
         title: "Senior System Software Engineer",
         period: "Oct 2026 – Nov 2026",
         points: &[
-            "Engineered a 37-crate full-stack Rust workspace (Dioxus/WASM web, Axum services, \
+            "Co-built, in a three-engineer team, a 37-crate full-stack Rust workspace \
+             (Dioxus/WASM web, Axum services, \
              SeaORM/PostgreSQL with pgvector RLS, Valkey SSE fan-out, zero-PHI push, and Swift \
              HealthKit / Kotlin Health Connect bridges) powering the Chords clinician and Duet \
              patient apps.",
-            "Built a bounded LLM tool-execution harness, offline BGE semantic encoder, \
+            "Co-developed its bounded LLM tool-execution harness, offline BGE semantic encoder, \
              Poppler/Tesseract OCR, Epic/Oracle PKCE FHIR R4 + EHR/Spruce/Chrome adapters, and \
              Connected Care sync backed by TLA+ model checks, PostgreSQL crash-recovery suites, \
-             headless Android emulator tests, and Chromium E2E qualification.",
-            "Automated Nix distroless OCI images, 9 OpenTofu GCP roots (Cloud Run, GKE \
+             a headless Android emulator test, and Chromium E2E qualification.",
+            "Shared the automation of Nix distroless OCI images, 9 OpenTofu GCP roots (Cloud Run, GKE \
              Autopilot, Cloud SQL, IAP, Doppler), OpenTelemetry/Datadog/Langfuse telemetry, \
              Firecracker/act sandboxed CI, and live interactive WASM SQLite hosting at \
              dabney.moe/coda.",
@@ -184,7 +188,7 @@ pub const EXPERIENCE: &[Role] = &[
              (pure-Rust mimalloc v3 drop-in with always-on MI_SECURE mitigations and a \
              NixOS malloc provider), and ElyLD (GNU-ld-compatible incremental ELF linker \
              for Linux vmlinux, glibc DSOs, and NixOS stdenv).",
-            "Leading a from-scratch Rust rewrite of gssproxy, the GSSAPI/Kerberos proxy \
+            "Wrote a from-scratch Rust rewrite of gssproxy, the GSSAPI/Kerberos proxy \
              daemon and its mechglue interposer: a memory-safe, drop-in replacement across \
              a multi-crate workspace, with FFI to MIT krb5/GSSAPI and Kani formal \
              verification of the security-critical XDR/gssx wire codec.",

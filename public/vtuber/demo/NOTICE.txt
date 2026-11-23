@@ -1,0 +1,28 @@
+Model viewer at https://dabney.moe/vtuber/demo/
+
+This directory is an unmodified web build of the Ayagami demo app
+(ayagami-demo), from the Ayagami project:
+
+  Source:  https://github.com/AyagamiDev/ayagami
+  Commit:  0d1d7aa3efe57b1b363b72e672e353c52a9c15d6
+  Built:   trunk build --config Trunk.release.toml --release --locked --public-url /vtuber/demo/
+  By:      scripts/sync-ayagami-demo.sh in https://github.com/tyler274/DabneyMoeWebsite
+
+Ayagami is Copyright (c) The Ayagami Project Contributors and is dual-licensed
+under the Apache License, Version 2.0 and the MIT license. See COPYRIGHT.txt,
+LICENSE-APACHE.txt and LICENSE-MIT.txt beside this file. dabney.moe is not
+part of the Ayagami project and this copy is not maintained by it.
+
+The build statically links the Rust crates resolved in
+scripts/ayagami-demo.Cargo.lock of the repository above, each under its own
+licence, and embeds the Droid Sans Fallback font from the Ayagami tree
+(Apache License, Version 2.0).
+
+No model files are included. The viewer starts empty and reads only the files
+a visitor opens, in their own browser; its content security policy blocks
+network connections.
+
+Ayagami is compatible with models in the Live2D model format. It is an
+independent project that is not affiliated with, authorized by, endorsed by,
+or sponsored by Live2D Inc. "Live2D" and "Cubism" are trademarks of Live2D
+Inc., used here only to describe file-format compatibility.

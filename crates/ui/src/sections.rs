@@ -4,8 +4,8 @@ use leptos_router::components::A;
 use crate::commissions::CommissionsMenu;
 use crate::consent::OpenConsentButton;
 use crate::data::{
-    ABOUT, ABOUT_PHOTO, EXPERIENCE, EXPERTISE, PROFILE_PHOTO, PROJECTS, SERVICES, SKILLS, SUMMARY,
-    TAGLINE,
+    ABOUT, ABOUT_PHOTO, ALMA_MATER, EXPERIENCE, EXPERTISE, PROFILE_PHOTO, PROJECTS, SERVICES,
+    SKILLS, SUMMARY, TAGLINE,
 };
 use crate::tools::ToolsMenu;
 
@@ -107,6 +107,7 @@ pub fn NavBar() -> impl IntoView {
                     <a href="/#projects" class="transition hover:text-white">"Projects"</a>
                     <a href="/#experience" class="transition hover:text-white">"Experience"</a>
                     <a href="/#skills" class="transition hover:text-white">"Skills"</a>
+                    <a href="/vtuber" class="transition hover:text-white">"VTuber"</a>
                     <CommissionsMenu />
                     <ToolsMenu />
                     <a
@@ -142,6 +143,7 @@ pub fn NavBar() -> impl IntoView {
                         <a href="/#projects" class=MOBILE_NAV_LINK on:click=close_mobile>"Projects"</a>
                         <a href="/#experience" class=MOBILE_NAV_LINK on:click=close_mobile>"Experience"</a>
                         <a href="/#skills" class=MOBILE_NAV_LINK on:click=close_mobile>"Skills"</a>
+                        <a href="/vtuber" class=MOBILE_NAV_LINK on:click=close_mobile>"VTuber"</a>
 
                         <p class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">
                             "Commissions"
@@ -276,7 +278,7 @@ pub fn About() -> impl IntoView {
                     <p class="text-lg leading-relaxed text-slate-300">{ABOUT}</p>
                     <div class="mt-8 flex flex-wrap gap-3">
                         <span class="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-300">
-                            "Caltech CS '22"
+                            {ALMA_MATER}
                         </span>
                         <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-slate-300">
                             "GPU & HPC"
@@ -365,64 +367,72 @@ pub fn Services() -> impl IntoView {
 pub fn Projects() -> impl IntoView {
     view! {
         <Section id="projects" eyebrow="What I'm building" title="Projects">
-            <div class="space-y-6">
-                {PROJECTS
-                    .iter()
-                    .map(|p| {
-                        view! {
-                            <article class="rounded-2xl border border-white/10 bg-white/[0.02] p-6 transition hover:border-cyan-400/40 hover:bg-white/[0.04]">
-                                <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
-                                    <h3 class="text-lg font-semibold text-white">{p.name}</h3>
-                                    <div class="flex flex-wrap items-baseline gap-4">
-                                        {p.demo_href.map(|demo| {
-                                            view! {
-                                                <a
-                                                    href=demo
-                                                    target="_blank"
-                                                    rel="noopener"
-                                                    on:click=move |_ev| {
-                                                        #[cfg(any(feature = "csr", feature = "hydrate"))]
-                                                        if open_site_or_external(demo) {
-                                                            _ev.prevent_default();
-                                                        }
-                                                    }
-                                                    class="text-sm font-semibold text-cyan-300 transition hover:text-cyan-200"
-                                                >
-                                                    "Live Demo →"
-                                                </a>
-                                            }
-                                        })}
-                                        <a
-                                            href=p.href
-                                            target="_blank"
-                                            rel="noopener"
-                                            class="text-sm font-medium text-cyan-300 transition hover:text-cyan-200"
-                                        >
-                                            "GitHub →"
-                                        </a>
-                                    </div>
-                                </div>
-                                <p class="mt-3 text-sm leading-relaxed text-slate-400">
-                                    {p.blurb}
-                                </p>
-                                <ul class="mt-4 flex flex-wrap gap-2">
-                                    {p.tags
-                                        .iter()
-                                        .map(|tag| {
-                                            view! {
-                                                <li class="rounded-lg bg-white/5 px-2.5 py-1 text-xs text-slate-300">
-                                                    {*tag}
-                                                </li>
-                                            }
-                                        })
-                                        .collect_view()}
-                                </ul>
-                            </article>
-                        }
-                    })
-                    .collect_view()}
-            </div>
+            <ProjectCards />
         </Section>
+    }
+}
+
+/// The project cards alone, for pages that supply their own heading.
+#[component]
+pub fn ProjectCards() -> impl IntoView {
+    view! {
+        <div class="space-y-6">
+            {PROJECTS
+                .iter()
+                .map(|p| {
+                    view! {
+                        <article class="rounded-2xl border border-white/10 bg-white/[0.02] p-6 transition hover:border-cyan-400/40 hover:bg-white/[0.04]">
+                            <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
+                                <h3 class="text-lg font-semibold text-white">{p.name}</h3>
+                                <div class="flex flex-wrap items-baseline gap-4">
+                                    {p.demo_href.map(|demo| {
+                                        view! {
+                                            <a
+                                                href=demo
+                                                target="_blank"
+                                                rel="noopener"
+                                                on:click=move |_ev| {
+                                                    #[cfg(any(feature = "csr", feature = "hydrate"))]
+                                                    if open_site_or_external(demo) {
+                                                        _ev.prevent_default();
+                                                    }
+                                                }
+                                                class="text-sm font-semibold text-cyan-300 transition hover:text-cyan-200"
+                                            >
+                                                "Live Demo →"
+                                            </a>
+                                        }
+                                    })}
+                                    <a
+                                        href=p.href
+                                        target="_blank"
+                                        rel="noopener"
+                                        class="text-sm font-medium text-cyan-300 transition hover:text-cyan-200"
+                                    >
+                                        "GitHub →"
+                                    </a>
+                                </div>
+                            </div>
+                            <p class="mt-3 text-sm leading-relaxed text-slate-400">
+                                {p.blurb}
+                            </p>
+                            <ul class="mt-4 flex flex-wrap gap-2">
+                                {p.tags
+                                    .iter()
+                                    .map(|tag| {
+                                        view! {
+                                            <li class="rounded-lg bg-white/5 px-2.5 py-1 text-xs text-slate-300">
+                                                {*tag}
+                                            </li>
+                                        }
+                                    })
+                                    .collect_view()}
+                            </ul>
+                        </article>
+                    }
+                })
+                .collect_view()}
+        </div>
     }
 }
 
@@ -430,43 +440,51 @@ pub fn Projects() -> impl IntoView {
 pub fn Experience() -> impl IntoView {
     view! {
         <Section id="experience" eyebrow="Track record" title="Experience">
-            <ol class="relative space-y-10 border-l border-white/10 pl-6">
-                {EXPERIENCE
-                    .iter()
-                    .map(|r| {
-                        view! {
-                            <li class="relative">
-                                <span class="absolute -left-[31px] top-1.5 h-3 w-3 rounded-full border-2 border-cyan-400 bg-slate-950"></span>
-                                <div class="flex flex-wrap items-baseline justify-between gap-x-4">
-                                    <h3 class="text-lg font-semibold text-white">
-                                        {r.company}
-                                        <span class="text-slate-500">" · "</span>
-                                        <span class="text-slate-400">{r.location}</span>
-                                    </h3>
-                                    <span class="text-sm font-medium text-cyan-300">
-                                        {r.period}
-                                    </span>
-                                </div>
-                                <p class="mt-0.5 text-sm font-medium text-slate-300">{r.title}</p>
-                                <ul class="mt-3 space-y-2">
-                                    {r.points
-                                        .iter()
-                                        .map(|p| {
-                                            view! {
-                                                <li class="flex gap-3 text-sm leading-relaxed text-slate-400">
-                                                    <span class="mt-2 h-1 w-1 shrink-0 rounded-full bg-cyan-400"></span>
-                                                    <span>{*p}</span>
-                                                </li>
-                                            }
-                                        })
-                                        .collect_view()}
-                                </ul>
-                            </li>
-                        }
-                    })
-                    .collect_view()}
-            </ol>
+            <ExperienceTimeline />
         </Section>
+    }
+}
+
+/// The experience timeline alone, for pages that supply their own heading.
+#[component]
+pub fn ExperienceTimeline() -> impl IntoView {
+    view! {
+        <ol class="relative space-y-10 border-l border-white/10 pl-6">
+            {EXPERIENCE
+                .iter()
+                .map(|r| {
+                    view! {
+                        <li class="relative">
+                            <span class="absolute -left-[31px] top-1.5 h-3 w-3 rounded-full border-2 border-cyan-400 bg-slate-950"></span>
+                            <div class="flex flex-wrap items-baseline justify-between gap-x-4">
+                                <h3 class="text-lg font-semibold text-white">
+                                    {r.company}
+                                    <span class="text-slate-500">" · "</span>
+                                    <span class="text-slate-400">{r.location}</span>
+                                </h3>
+                                <span class="text-sm font-medium text-cyan-300">
+                                    {r.period}
+                                </span>
+                            </div>
+                            <p class="mt-0.5 text-sm font-medium text-slate-300">{r.title}</p>
+                            <ul class="mt-3 space-y-2">
+                                {r.points
+                                    .iter()
+                                    .map(|p| {
+                                        view! {
+                                            <li class="flex gap-3 text-sm leading-relaxed text-slate-400">
+                                                <span class="mt-2 h-1 w-1 shrink-0 rounded-full bg-cyan-400"></span>
+                                                <span>{*p}</span>
+                                            </li>
+                                        }
+                                    })
+                                    .collect_view()}
+                            </ul>
+                        </li>
+                    }
+                })
+                .collect_view()}
+        </ol>
     }
 }
 
@@ -474,33 +492,41 @@ pub fn Experience() -> impl IntoView {
 pub fn Skills() -> impl IntoView {
     view! {
         <Section id="skills" eyebrow="Toolbox" title="Skills">
-            <div class="grid gap-6 sm:grid-cols-3">
-                {SKILLS
-                    .iter()
-                    .map(|g| {
-                        view! {
-                            <div class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
-                                <h3 class="mb-4 text-sm font-semibold uppercase tracking-widest text-cyan-300">
-                                    {g.label}
-                                </h3>
-                                <ul class="flex flex-wrap gap-2">
-                                    {g.items
-                                        .iter()
-                                        .map(|item| {
-                                            view! {
-                                                <li class="rounded-lg bg-white/5 px-2.5 py-1 text-xs text-slate-300">
-                                                    {*item}
-                                                </li>
-                                            }
-                                        })
-                                        .collect_view()}
-                                </ul>
-                            </div>
-                        }
-                    })
-                    .collect_view()}
-            </div>
+            <SkillGroups />
         </Section>
+    }
+}
+
+/// The skill groups alone, for pages that supply their own heading.
+#[component]
+pub fn SkillGroups() -> impl IntoView {
+    view! {
+        <div class="grid gap-6 sm:grid-cols-3">
+            {SKILLS
+                .iter()
+                .map(|g| {
+                    view! {
+                        <div class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
+                            <h3 class="mb-4 text-sm font-semibold uppercase tracking-widest text-cyan-300">
+                                {g.label}
+                            </h3>
+                            <ul class="flex flex-wrap gap-2">
+                                {g.items
+                                    .iter()
+                                    .map(|item| {
+                                        view! {
+                                            <li class="rounded-lg bg-white/5 px-2.5 py-1 text-xs text-slate-300">
+                                                {*item}
+                                            </li>
+                                        }
+                                    })
+                                    .collect_view()}
+                            </ul>
+                        </div>
+                    }
+                })
+                .collect_view()}
+        </div>
     }
 }
 
