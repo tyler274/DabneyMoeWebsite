@@ -26,7 +26,7 @@ src-tauri          Tauri v2 app (desktop + mobile), serves dist/
 | `Cargo.toml` | Workspace + `[[workspace.metadata.leptos]]` config. |
 | `tailwind.config.js`, `style/input.css` | Tailwind CSS source. |
 | `package.json` | Bun-managed tooling (Tailwind CLI + scripts). |
-| `public/` | Static assets served at the site root (`resume.pdf`, `/coda/` static export + WASM SQLite demo via `scripts/sync-coda-site.sh`). |
+| `public/` | Static assets served at the site root (`resume.pdf`, `/coda/` static export + WASM SQLite demo via `scripts/sync-coda-site.sh`, `/vtuber/demo/` model viewer via `scripts/sync-ayagami-demo.sh`). |
 | `crates/icon-gen` | Small Rust dev tool that regenerates the source app icon. |
 
 ## Prerequisites
@@ -72,6 +72,30 @@ LEPTOS_SITE_PKG_DIR=pkg LEPTOS_SITE_ADDR=0.0.0.0:3039 ./target/release/web`.
 Keep the generated `hash.txt` beside the server executable: the SSR shell uses it
 to resolve the matching content-hashed JS, WASM, and CSS filenames. The Nix images
 package this manifest and enable hash resolution automatically.
+
+### Model viewer (`/vtuber/demo/`)
+
+The `/vtuber` page links to a model viewer served from `public/vtuber/demo/`.
+It is an unmodified web build of the demo app from
+[Ayagami](https://github.com/AyagamiDev/ayagami) (MIT or Apache-2.0), an
+open-source 2D puppet renderer, at the commit pinned in
+[`scripts/sync-ayagami-demo.sh`](scripts/sync-ayagami-demo.sh). The script
+fetches that commit, builds it with the dev shell's `trunk` under the
+`/vtuber/demo/` base path against the committed
+`scripts/ayagami-demo.Cargo.lock`, and writes the result beside Ayagami's
+copyright and licence notices. The output is checked in, like `public/coda/`,
+so the web build and the server image need neither network access nor a second
+toolchain.
+
+```bash
+./scripts/sync-ayagami-demo.sh                        # rebuild at the pinned commit
+AYAGAMI_UPDATE_LOCK=1 ./scripts/sync-ayagami-demo.sh  # after changing AYAGAMI_REV
+```
+
+The viewer ships with no model files; a visitor opens their own, and it is
+read in their browser. Keep it that way: models belong to their artists and
+carry their own licences. Ayagami is compatible with the Live2D model format
+and is not affiliated with or endorsed by Live2D Inc.
 
 ## Apps (Tauri)
 
