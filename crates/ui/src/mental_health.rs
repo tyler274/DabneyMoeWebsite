@@ -3,16 +3,26 @@
 use leptos::prelude::*;
 use leptos_meta::{Link, Meta, Title};
 
+use crate::mental_health_3d::LingoMood3DChart;
 use crate::mental_health_lingo::{
-    classify_gad7, classify_phq9, correlate_glucose_and_mood, parse_lingo_csv, sample_checkins,
-    summarize_lingo, LingoReading, MentalHealthCheckIn, SAMPLE_LINGO_CSV,
+    build_assessment_series, classify_gad7, classify_phq9, correlate_glucose_and_mood,
+    csv_data_uri, export_correlations_csv, parse_lingo_csv, sample_assessment_history,
+    sample_checkins, summarize_lingo, AssessmentPoint, LingoReading, MentalHealthCheckIn,
+    SAMPLE_LINGO_CSV,
 };
 use crate::sections::{Footer, NavBar};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChartViewMode {
+    WebGl3D,
+    Svg2D,
+}
 
 const CYAN: &str = "#22d3ee";
 const EMERALD: &str = "#34d399";
 const AMBER: &str = "#fbbf24";
 const ROSE: &str = "#fb7185";
+const VIOLET: &str = "#a78bfa";
 const SLATE_LIGHT: &str = "#94a3b8";
 
 #[component]
@@ -22,6 +32,7 @@ pub fn MentalHealthPage() -> impl IntoView {
     let csv_error = RwSignal::new(Option::<String>::None);
 
     let checkins = RwSignal::new(sample_checkins());
+    let chart_mode = RwSignal::new(ChartViewMode::WebGl3D);
 
     // Form state for adding a new mental health check-in.
     let mood_input = RwSignal::new(6u8);
@@ -205,7 +216,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                 }
             }}
 
-            // Interactive dual-axis SVG chart
+            // Interactive 3D WebGL2 / 2D SVG dual-axis chart
             <section class="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
                 <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <div>
@@ -213,10 +224,38 @@ pub fn MentalHealthPage() -> impl IntoView {
                             "Abbott Lingo Glucose & Mental State Timeline"
                         </h2>
                         <p class="text-sm text-slate-400">
-                            "Shaded band shows Lingo's 70–140 mg/dL metabolic zone; markers overlay mood (emerald) and anxiety (rose)."
+                            "Explore Lingo's 70–140 mg/dL metabolic zone with mood (emerald) and anxiety (rose) in pure-Rust WebGL2 3D or classic 2D SVG."
                         </p>
                     </div>
-                    <div class="flex flex-wrap gap-4 text-xs text-slate-300">
+                    <div class="flex flex-wrap items-center gap-4 text-xs text-slate-300">
+                        <div class="inline-flex rounded-full border border-white/15 bg-slate-900/80 p-0.5">
+                            <button
+                                type="button"
+                                on:click=move |_| chart_mode.set(ChartViewMode::WebGl3D)
+                                class=move || {
+                                    if chart_mode.get() == ChartViewMode::WebGl3D {
+                                        "rounded-full bg-cyan-500 px-3 py-1 font-semibold text-slate-950 transition"
+                                    } else {
+                                        "rounded-full px-3 py-1 font-medium text-slate-300 transition hover:text-white"
+                                    }
+                                }
+                            >
+                                "3D WebGL2"
+                            </button>
+                            <button
+                                type="button"
+                                on:click=move |_| chart_mode.set(ChartViewMode::Svg2D)
+                                class=move || {
+                                    if chart_mode.get() == ChartViewMode::Svg2D {
+                                        "rounded-full bg-cyan-500 px-3 py-1 font-semibold text-slate-950 transition"
+                                    } else {
+                                        "rounded-full px-3 py-1 font-medium text-slate-300 transition hover:text-white"
+                                    }
+                                }
+                            >
+                                "2D SVG"
+                            </button>
+                        </div>
                         <span class="flex items-center gap-1.5">
                             <span class="inline-block h-2.5 w-2.5 rounded-full bg-cyan-400"></span>
                             "Lingo glucose (mg/dL)"
@@ -231,8 +270,41 @@ pub fn MentalHealthPage() -> impl IntoView {
                         </span>
                     </div>
                 </div>
-                {move || view! {
-                    <LingoMoodTimelineChart readings=readings.get() checkins=checkins.get() />
+                {move || match chart_mode.get() {
+                    ChartViewMode::WebGl3D => view! {
+                        <LingoMood3DChart readings=readings.into() checkins=checkins.into() />
+                    }.into_any(),
+                    ChartViewMode::Svg2D => view! {
+                        <LingoMoodTimelineChart readings=readings.get() checkins=checkins.get() />
+                    }.into_any(),
+                }}
+            </section>
+
+            // Longitudinal PHQ-9 & GAD-7 Trend Chart
+            <section class="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
+                <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 class="text-lg font-semibold text-white">
+                            "PHQ-9 & GAD-7 Longitudinal Trajectory"
+                        </h2>
+                        <p class="text-sm text-slate-400">
+                            "Multi-week depression (PHQ-9, 0–27) and anxiety (GAD-7, 0–21) scores with Mild (5) and Moderate (10) clinical thresholds."
+                        </p>
+                    </div>
+                    <div class="flex flex-wrap gap-4 text-xs text-slate-300">
+                        <span class="flex items-center gap-1.5">
+                            <span class="inline-block h-2.5 w-2.5 rounded-full bg-violet-400"></span>
+                            "PHQ-9 (0–27)"
+                        </span>
+                        <span class="flex items-center gap-1.5">
+                            <span class="inline-block h-2.5 w-2.5 rounded-full bg-rose-400"></span>
+                            "GAD-7 (0–21)"
+                        </span>
+                    </div>
+                </div>
+                {move || {
+                    let series = build_assessment_series(&sample_assessment_history(), &checkins.get());
+                    view! { <Phq9Gad7TrendChart series=series /> }
                 }}
             </section>
 
@@ -393,10 +465,27 @@ pub fn MentalHealthPage() -> impl IntoView {
 
             // Correlated check-ins table
             <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
-                <h2 class="mb-1 text-lg font-semibold text-white">"Glucose–Mood Correlation Log"</h2>
-                <p class="mb-4 text-sm text-slate-400">
-                    "Each mental health check-in paired with nearest Abbott Lingo glucose and peak reading in the preceding 2 hours."
-                </p>
+                <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 class="mb-1 text-lg font-semibold text-white">"Glucose–Mood Correlation Log"</h2>
+                        <p class="text-sm text-slate-400">
+                            "Each mental health check-in paired with nearest Abbott Lingo glucose and peak reading in the preceding 2 hours."
+                        </p>
+                    </div>
+                    {move || {
+                        let corr = correlate_glucose_and_mood(&readings.get(), &checkins.get());
+                        let href = csv_data_uri(&export_correlations_csv(&corr));
+                        view! {
+                            <a
+                                href=href
+                                download="coda-mental-health-lingo.csv"
+                                class="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-4 py-2 text-xs font-medium text-slate-200 transition hover:bg-white/5"
+                            >
+                                "Download CSV"
+                            </a>
+                        }
+                    }}
+                </div>
                 <div class="overflow-x-auto">
                     <table class="w-full min-w-[600px] border-collapse text-left text-sm">
                         <thead>
@@ -587,6 +676,75 @@ fn LingoMoodTimelineChart(
     }
 }
 
+#[component]
+fn Phq9Gad7TrendChart(series: Vec<AssessmentPoint>) -> impl IntoView {
+    let width = 760.0_f64;
+    let height = 190.0_f64;
+    let pad_l = 44.0_f64;
+    let pad_r = 28.0_f64;
+    let pad_t = 16.0_f64;
+    let pad_b = 28.0_f64;
+    let plot_w = width - pad_l - pad_r;
+    let plot_h = height - pad_t - pad_b;
+    let max_score = 27.0_f64;
+
+    let count = series.len().max(2);
+    let x_for = |idx: usize| pad_l + (idx as f64 / (count - 1) as f64) * plot_w;
+    let y_for = |score: u8| pad_t + plot_h - (f64::from(score).min(max_score) / max_score) * plot_h;
+
+    let phq9_points: String = series
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| p.phq9.map(|v| format!("{:.1},{:.1}", x_for(i), y_for(v))))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let gad7_points: String = series
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| p.gad7.map(|v| format!("{:.1},{:.1}", x_for(i), y_for(v))))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let y_mild = y_for(5);
+    let y_mod = y_for(10);
+
+    view! {
+        <svg
+            viewBox="0 0 760 190"
+            class="w-full"
+            role="img"
+            aria-label="PHQ-9 and GAD-7 longitudinal score trajectory"
+        >
+            <line x1=pad_l y1=y_mod x2=width - pad_r y2=y_mod stroke="rgba(251, 191, 36, 0.35)" stroke-dasharray="4 4" />
+            <line x1=pad_l y1=y_mild x2=width - pad_r y2=y_mild stroke="rgba(52, 211, 153, 0.30)" stroke-dasharray="4 4" />
+
+            <text x="6" y=y_mod + 4.0 fill=AMBER font-size="10">"10"</text>
+            <text x="6" y=y_mild + 4.0 fill=EMERALD font-size="10">"5"</text>
+            <text x="6" y=pad_t + 6.0 fill=SLATE_LIGHT font-size="10">"27"</text>
+
+            <polyline fill="none" stroke=VIOLET stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points=phq9_points />
+            <polyline fill="none" stroke=ROSE stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points=gad7_points />
+
+            {series.into_iter().enumerate().map(|(i, p)| {
+                let cx = x_for(i);
+                let phq_circle = p.phq9.map(|v| view! {
+                    <circle cx=cx cy=y_for(v) r="4" fill=VIOLET stroke="#0f172a" stroke-width="1.5" />
+                });
+                let gad_circle = p.gad7.map(|v| view! {
+                    <circle cx=cx cy=y_for(v) r="4" fill=ROSE stroke="#0f172a" stroke-width="1.5" />
+                });
+                view! {
+                    <g>
+                        {phq_circle}
+                        {gad_circle}
+                        <text x=cx y=height - 8.0 text-anchor="middle" fill=SLATE_LIGHT font-size="10">{p.date}</text>
+                    </g>
+                }
+            }).collect_view()}
+        </svg>
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -604,5 +762,12 @@ mod tests {
         assert!(html.contains("<polyline"));
         assert!(html.contains("140"));
         assert!(html.contains("70"));
+
+        let trend_html = view! {
+            <Phq9Gad7TrendChart series=sample_assessment_history() />
+        }
+        .to_html();
+        assert!(trend_html.contains("PHQ-9 and GAD-7 longitudinal score trajectory"));
+        assert!(trend_html.contains("2026-10-31"));
     }
 }

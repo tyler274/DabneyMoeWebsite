@@ -24,7 +24,9 @@ web-sys = { version = "0.3", optional = true, features = [
   "FileList",
   "FileReader",
   "Headers",
+  "HtmlCanvasElement",
   "HtmlInputElement",
+  "MouseEvent",
   "PromiseRejectionEvent",
   "ProgressEvent",
   "Request",
@@ -32,9 +34,14 @@ web-sys = { version = "0.3", optional = true, features = [
   "RequestMode",
   "Response",
   "Storage",
+  "WebGl2RenderingContext",
   "Window",
 ] }
 wasm-bindgen = { workspace = true, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+glow = "0.18"
+glam = "0.30"
 
 [features]
 default = []
