@@ -159,6 +159,9 @@ pub fn NavBar() -> impl IntoView {
                         <p class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">
                             "Tools"
                         </p>
+                        <A href="/mental-health" on:click=close_mobile>
+                            <span class=MOBILE_NAV_SUBLINK>"Mental Health & Lingo CGM"</span>
+                        </A>
                         <a
                             href="/coda/"
                             class=MOBILE_NAV_SUBLINK
