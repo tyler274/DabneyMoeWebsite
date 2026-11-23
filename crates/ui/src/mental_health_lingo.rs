@@ -163,7 +163,7 @@ pub fn build_assessment_series(
 }
 
 /// Quote-aware RFC-4180 CSV row splitter supporting `"..."` and `""` escapes.
-fn split_csv_row(line: &str) -> Result<Vec<String>, String> {
+pub(crate) fn split_csv_row(line: &str) -> Result<Vec<String>, String> {
     let mut cols = Vec::new();
     let mut current = String::new();
     let mut chars = line.chars().peekable();

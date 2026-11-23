@@ -19,6 +19,7 @@ pub mod data;
 pub mod koizetsu;
 pub mod mental_health;
 pub mod mental_health_3d;
+pub mod mental_health_cgm;
 pub mod mental_health_episodes;
 pub mod mental_health_lingo;
 pub mod portfolio;
