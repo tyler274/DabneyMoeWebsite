@@ -4,7 +4,9 @@ use leptos::prelude::*;
 use leptos_meta::{Link, Meta, Title};
 
 use crate::mental_health_3d::LingoMood3DChart;
-use crate::mental_health_episodes::EpisodeActivationSection;
+use crate::mental_health_episodes::{
+    parse_self_activity_log, EpisodeActivationSection, TopCoolDownBanner, SAMPLE_SELF_ACTIVITY_CSV,
+};
 use crate::mental_health_lingo::{
     build_assessment_series, classify_gad7, classify_phq9, correlate_glucose_and_mood,
     csv_data_uri, export_correlations_csv, parse_lingo_csv, sample_assessment_history,
@@ -35,6 +37,8 @@ pub fn MentalHealthPage() -> impl IntoView {
     let checkins = RwSignal::new(sample_checkins());
     let chart_mode = RwSignal::new(ChartViewMode::WebGl3D);
     let asrm_score = RwSignal::new(Some(7u8));
+    let activity_events =
+        RwSignal::new(parse_self_activity_log(SAMPLE_SELF_ACTIVITY_CSV).unwrap_or_default());
 
     // Form state for adding a new mental health check-in.
     let mood_input = RwSignal::new(6u8);
@@ -165,6 +169,21 @@ pub fn MentalHealthPage() -> impl IntoView {
                     </button>
                 </div>
             </div>
+
+            // Top-of-page calm Cool-Down banner when activation signals stack up
+            <TopCoolDownBanner
+                events=activity_events.into()
+                asrm_score=asrm_score.into()
+                sleep_hours=Signal::derive(move || {
+                    sleep_input
+                        .get()
+                        .trim()
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|v| v.is_finite() && (0.0..=24.0).contains(v))
+                        .unwrap_or(7.0)
+                })
+            />
 
             // KPI summary strip
             {move || {
@@ -536,8 +555,9 @@ pub fn MentalHealthPage() -> impl IntoView {
                 </div>
             </section>
 
-            // Local-first Episode Activation (ASRM), Self-Activity Cadence & Cool-Down Plan
+            // Local-first Episode Activation (ASRM), Self-Activity Actogram & Cool-Down Plan
             <EpisodeActivationSection
+                events=activity_events
                 asrm_score=asrm_score
                 sleep_hours=Signal::derive(move || {
                     sleep_input
