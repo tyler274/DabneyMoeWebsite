@@ -4,14 +4,17 @@ use leptos::prelude::*;
 use leptos_meta::{Link, Meta, Title};
 
 use crate::mental_health_3d::LingoMood3DChart;
+use crate::mental_health_cgm::{
+    parse_commercial_glucose_csv, sample_csv_for_monitor, summarize_commercial_glucose,
+    AdaTimeInRangeBar, AgpPercentileChart, GlucoseMonitor, GlucoseUnit, MeasurementMethod,
+};
 use crate::mental_health_episodes::{
     parse_self_activity_log, EpisodeActivationSection, TopCoolDownBanner, SAMPLE_SELF_ACTIVITY_CSV,
 };
 use crate::mental_health_lingo::{
     build_assessment_series, classify_gad7, classify_phq9, correlate_glucose_and_mood,
-    csv_data_uri, export_correlations_csv, parse_lingo_csv, sample_assessment_history,
-    sample_checkins, summarize_lingo, AssessmentPoint, LingoReading, MentalHealthCheckIn,
-    SAMPLE_LINGO_CSV,
+    csv_data_uri, export_correlations_csv, sample_assessment_history, sample_checkins,
+    AssessmentPoint, LingoReading, MentalHealthCheckIn, SAMPLE_LINGO_CSV,
 };
 use crate::sections::{Footer, NavBar};
 
@@ -30,8 +33,28 @@ const SLATE_LIGHT: &str = "#94a3b8";
 
 #[component]
 pub fn MentalHealthPage() -> impl IntoView {
+    let initial_import = parse_commercial_glucose_csv(SAMPLE_LINGO_CSV, None).ok();
     let csv_input = RwSignal::new(SAMPLE_LINGO_CSV.to_string());
-    let readings = RwSignal::new(parse_lingo_csv(SAMPLE_LINGO_CSV).unwrap_or_default());
+    let monitor_hint = RwSignal::new(Option::<GlucoseMonitor>::None);
+    let detected_monitor = RwSignal::new(
+        initial_import
+            .as_ref()
+            .map(|i| i.monitor)
+            .unwrap_or(GlucoseMonitor::AbbottLingo),
+    );
+    let source_unit = RwSignal::new(
+        initial_import
+            .as_ref()
+            .map(|i| i.source_unit)
+            .unwrap_or(GlucoseUnit::MgDl),
+    );
+    let measurement_method = RwSignal::new(
+        initial_import
+            .as_ref()
+            .map(|i| i.method)
+            .unwrap_or(MeasurementMethod::InterstitialCgm),
+    );
+    let readings = RwSignal::new(initial_import.map(|i| i.readings).unwrap_or_default());
     let csv_error = RwSignal::new(Option::<String>::None);
 
     let checkins = RwSignal::new(sample_checkins());
@@ -51,21 +74,78 @@ pub fn MentalHealthPage() -> impl IntoView {
     let hour_input = RwSignal::new("18.0".to_string());
     let form_status = RwSignal::new(Option::<String>::None);
 
-    let apply_csv = move |_| match parse_lingo_csv(&csv_input.get()) {
-        Ok(parsed) => {
-            readings.set(parsed);
-            csv_error.set(None);
-        }
-        Err(err) => {
-            csv_error.set(Some(err));
+    let apply_glucose_text = move |raw: &str, hint: Option<GlucoseMonitor>| {
+        match parse_commercial_glucose_csv(raw, hint) {
+            Ok(parsed) => {
+                detected_monitor.set(parsed.monitor);
+                source_unit.set(parsed.source_unit);
+                measurement_method.set(parsed.method);
+                readings.set(parsed.readings);
+                csv_error.set(None);
+            }
+            Err(err) => {
+                csv_error.set(Some(err));
+            }
         }
     };
 
+    let apply_csv = move |_| {
+        let raw = csv_input.get();
+        apply_glucose_text(&raw, monitor_hint.get());
+    };
+
+    let on_cgm_file_change = move |ev: leptos::ev::Event| {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            use wasm_bindgen::closure::Closure;
+            use wasm_bindgen::JsCast;
+
+            let Some(target) = ev.target() else { return };
+            let Ok(input_el) = target.dyn_into::<web_sys::HtmlInputElement>() else {
+                return;
+            };
+            let Some(files) = input_el.files() else {
+                return;
+            };
+            let Some(file) = files.get(0) else { return };
+            let Ok(reader) = web_sys::FileReader::new() else {
+                csv_error.set(Some("Could not initialize browser FileReader.".into()));
+                return;
+            };
+            let onload = Closure::<dyn FnMut(web_sys::ProgressEvent)>::new(
+                move |pe: web_sys::ProgressEvent| {
+                    let Some(t) = pe.target() else { return };
+                    let Ok(r) = t.dyn_into::<web_sys::FileReader>() else {
+                        return;
+                    };
+                    if let Ok(val) = r.result() {
+                        if let Some(text) = val.as_string() {
+                            csv_input.set(text.clone());
+                            apply_glucose_text(&text, monitor_hint.get());
+                        }
+                    }
+                },
+            );
+            reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+            onload.forget();
+            if reader.read_as_text(&file).is_err() {
+                csv_error.set(Some("Could not read selected CSV file.".into()));
+            }
+        }
+        #[cfg(not(any(feature = "hydrate", feature = "csr")))]
+        let _ = ev;
+    };
+
+    let load_monitor_preset = move |monitor: GlucoseMonitor| {
+        let sample = sample_csv_for_monitor(monitor);
+        monitor_hint.set(None);
+        csv_input.set(sample.to_string());
+        apply_glucose_text(sample, None);
+    };
+
     let reset_sample = move |_| {
-        csv_input.set(SAMPLE_LINGO_CSV.to_string());
-        readings.set(parse_lingo_csv(SAMPLE_LINGO_CSV).unwrap_or_default());
+        load_monitor_preset(GlucoseMonitor::AbbottLingo);
         checkins.set(sample_checkins());
-        csv_error.set(None);
         form_status.set(None);
     };
 
@@ -130,10 +210,10 @@ pub fn MentalHealthPage() -> impl IntoView {
     };
 
     view! {
-        <Title text="Coda Health — Mental Health & Abbott Lingo CGM Tracking | dabney.moe" />
+        <Title text="Coda Health — Mental Health & Comprehensive Commercial CGM Tracking | dabney.moe" />
         <Meta
             name="description"
-            content="Local-first mental health tracking paired with Abbott Lingo continuous glucose monitoring (CGM), PHQ-9/GAD-7 scoring, and Coda Health clinical workspace integration."
+            content="Local-first mental health and comprehensive glucose tracking for all major commercial CGMs & BGMs (Abbott Lingo, FreeStyle Libre, Dexcom Clarity/Stelo, Medtronic CareLink, Eversense, Tandem, Omnipod/Glooko/Tidepool) with ADA 5-band TIR, AGP, GMI, GRI, and WebGL2 3D charts."
         />
         <Link rel="canonical" href="https://dabney.moe/mental-health" />
 
@@ -144,13 +224,13 @@ pub fn MentalHealthPage() -> impl IntoView {
             <div class="mb-10 flex flex-col gap-6 border-b border-white/10 pb-8 md:flex-row md:items-end md:justify-between">
                 <div class="max-w-2xl">
                     <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-cyan-400">
-                        "Coda Health · Metabolic Psychiatry & CGM"
+                        "Coda Health · Metabolic Psychiatry & All Commercial CGMs"
                     </p>
                     <h1 class="text-3xl font-bold tracking-tight text-white sm:text-4xl">
-                        "Mental Health & Abbott Lingo CGM"
+                        "Mental Health & Comprehensive Glucose Tracking"
                     </h1>
                     <p class="mt-3 text-base leading-relaxed text-slate-300">
-                        "Track daily mood, anxiety, energy, sleep, PHQ-9, and GAD-7 alongside continuous interstitial glucose from Abbott Lingo. Everything parses in pure Rust in your browser—nothing leaves your device unless you open the Coda clinical workspace."
+                        "Auto-detect and analyze exports from Abbott Lingo, FreeStyle Libre (LibreView), Dexcom G6/G7/Stelo (Clarity), Medtronic CareLink, Senseonics Eversense, Tandem, Omnipod/Glooko/Tidepool, and fingerstick BGMs in mg/dL or mmol/L—paired with mood, anxiety, PHQ-9, GAD-7, and ASRM locally in pure Rust."
                     </p>
                 </div>
                 <div class="flex flex-wrap gap-3">
@@ -185,38 +265,43 @@ pub fn MentalHealthPage() -> impl IntoView {
                 })
             />
 
-            // KPI summary strip
+            // KPI summary strip (ADA/ATTD clinical metrics across all commercial monitors)
             {move || {
                 let current_readings = readings.get();
                 let current_checkins = checkins.get();
-                let summary = summarize_lingo(&current_readings);
+                let summary = summarize_commercial_glucose(
+                    &current_readings,
+                    detected_monitor.get(),
+                    source_unit.get(),
+                    measurement_method.get(),
+                );
                 let latest_phq9 = current_checkins.iter().rev().find_map(|c| c.phq9);
                 let latest_gad7 = current_checkins.iter().rev().find_map(|c| c.gad7);
 
                 view! {
                     <div class="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
                         <MetricCard
-                            label="Mean glucose"
-                            value=summary.as_ref().map(|s| format!("{:.0} mg/dL", s.mean_mg_dl)).unwrap_or_else(|| "—".to_string())
-                            detail=summary.as_ref().map(|s| format!("Range {:.0}–{:.0}", s.min_mg_dl, s.max_mg_dl)).unwrap_or_default()
+                            label="Mean / GMI (est. A1C)"
+                            value=summary.as_ref().map(|s| format!("{:.0} mg/dL · {:.1}%", s.mean_mg_dl, s.gmi_percent)).unwrap_or_else(|| "—".to_string())
+                            detail=summary.as_ref().map(|s| format!("Median {:.0} · Range {:.0}–{:.0}", s.median_mg_dl, s.min_mg_dl, s.max_mg_dl)).unwrap_or_default()
                             accent="text-cyan-300"
                         />
                         <MetricCard
-                            label="Lingo TIR (70–140)"
-                            value=summary.as_ref().map(|s| format!("{:.0}%", s.tir_metabolic_pct)).unwrap_or_else(|| "—".to_string())
-                            detail=summary.as_ref().map(|s| format!("Clinical 70–180: {:.0}%", s.tir_clinical_pct)).unwrap_or_default()
+                            label="TIR 70–180 / Tight"
+                            value=summary.as_ref().map(|s| format!("{:.0}% / {:.0}%", s.tir_70_180_pct, s.titr_70_140_pct)).unwrap_or_else(|| "—".to_string())
+                            detail=summary.as_ref().map(|s| format!("Wear {:.0}% · {} readings", s.estimated_active_wear_pct, s.reading_count)).unwrap_or_default()
                             accent="text-emerald-300"
                         />
                         <MetricCard
-                            label="Variability (CV%)"
-                            value=summary.as_ref().map(|s| format!("{:.1}%", s.cv_percent)).unwrap_or_else(|| "—".to_string())
-                            detail=summary.as_ref().map(|s| format!("SD {:.1} mg/dL", s.std_dev_mg_dl)).unwrap_or_default()
+                            label="CV% / MAGE"
+                            value=summary.as_ref().map(|s| format!("{:.1}% · {:.0}", s.cv_percent, s.mage_mg_dl)).unwrap_or_else(|| "—".to_string())
+                            detail=summary.as_ref().map(|s| format!("SD {:.1} mg/dL (target <36%)", s.std_dev_mg_dl)).unwrap_or_default()
                             accent="text-amber-300"
                         />
                         <MetricCard
-                            label="Lingo Count"
-                            value=summary.as_ref().map(|s| format!("{:.0}", s.total_lingo_count)).unwrap_or_else(|| "—".to_string())
-                            detail=summary.as_ref().map(|s| format!("{} spike readings (>140)", s.spike_readings)).unwrap_or_default()
+                            label="GRI (Risk Index)"
+                            value=summary.as_ref().map(|s| format!("{:.0} / 100", s.gri_score)).unwrap_or_else(|| "—".to_string())
+                            detail=summary.as_ref().map(|s| format!("{} · {} spikes >140", s.gri_zone.label(), s.spike_readings_gt_140)).unwrap_or_default()
                             accent="text-rose-300"
                         />
                         <MetricCard
@@ -242,10 +327,10 @@ pub fn MentalHealthPage() -> impl IntoView {
                 <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <div>
                         <h2 class="text-lg font-semibold text-white">
-                            "Abbott Lingo Glucose & Mental State Timeline"
+                            {move || format!("{} — Glucose & Mental State Timeline", detected_monitor.get().display_name())}
                         </h2>
                         <p class="text-sm text-slate-400">
-                            "Explore Lingo's 70–140 mg/dL metabolic zone with mood (emerald) and anxiety (rose) in pure-Rust WebGL2 3D or classic 2D SVG."
+                            "Explore the 70–140 mg/dL tight zone with mood (emerald) and anxiety (rose) in pure-Rust WebGL2 3D or classic 2D SVG."
                         </p>
                     </div>
                     <div class="flex flex-wrap items-center gap-4 text-xs text-slate-300">
@@ -300,6 +385,50 @@ pub fn MentalHealthPage() -> impl IntoView {
                     }.into_any(),
                 }}
             </section>
+
+            // Clinical ADA 5-Band Time-in-Range + 24-Hour Ambulatory Glucose Profile (AGP)
+            {move || {
+                summarize_commercial_glucose(
+                    &readings.get(),
+                    detected_monitor.get(),
+                    source_unit.get(),
+                    measurement_method.get(),
+                )
+                .map(|summary| {
+                    let bins = summary.agp_hourly.clone();
+                    let device_badge = format!(
+                        "{} · {} · source {}",
+                        summary.monitor.display_name(),
+                        summary.method.label(),
+                        summary.source_unit.label(),
+                    );
+                    view! {
+                        <section class="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-5">
+                            <div class="flex flex-wrap items-center justify-between gap-3">
+                                <div>
+                                    <h2 class="text-lg font-semibold text-white">
+                                        "ADA 5-Band Time-in-Range & 24-Hour Ambulatory Glucose Profile (AGP)"
+                                    </h2>
+                                    <p class="text-sm text-slate-400">
+                                        "International consensus glucose distribution (TBR <54 / 54–69, TIR 70–180, TITR 70–140, TAR 181–250 / >250) and 5th–95th / 25th–75th / median hourly AGP curve."
+                                    </p>
+                                </div>
+                                <span class="inline-flex rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-300">
+                                    {device_badge}
+                                </span>
+                            </div>
+                            <AdaTimeInRangeBar summary=summary />
+                            <div class="rounded-xl border border-white/10 bg-slate-950/60 p-4">
+                                <div class="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+                                    <span class="font-medium text-slate-200">"24-Hour AGP Percentile Ribbon (p5–p95 outer · p25–p75 IQR · p50 median)"</span>
+                                    <span>"Clock hour (00:00–23:00)"</span>
+                                </div>
+                                <AgpPercentileChart bins=bins />
+                            </div>
+                        </section>
+                    }
+                })
+            }}
 
             // Longitudinal PHQ-9 & GAD-7 Trend Chart
             <section class="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
@@ -459,12 +588,80 @@ pub fn MentalHealthPage() -> impl IntoView {
                 </section>
 
                 <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
-                    <h2 class="mb-1 text-lg font-semibold text-white">"Abbott Lingo CGM CSV Import"</h2>
-                    <p class="mb-4 text-sm text-slate-400">
-                        "Paste `timestamp,glucose_mg_dl[,lingo_count[,tag]]` rows from your Lingo export to recompute TIR, CV%, and spike correlations locally."
+                    <div class="mb-1 flex flex-wrap items-center justify-between gap-2">
+                        <h2 class="text-lg font-semibold text-white">"Commercial CGM & BGM Import"</h2>
+                        <span class="rounded-full border border-white/10 bg-slate-900 px-2.5 py-0.5 text-[11px] text-cyan-300">
+                            {move || format!("{} ({})", detected_monitor.get().display_name(), source_unit.get().label())}
+                        </span>
+                    </div>
+                    <p class="mb-3 text-sm text-slate-400">
+                        "Upload or paste CSV exports from Abbott Lingo, FreeStyle LibreView, Dexcom G6/G7/Stelo Clarity, Medtronic CareLink, Eversense, Tandem, Omnipod/Glooko/Tidepool, or fingerstick BGMs (mg/dL or mmol/L)."
                     </p>
+                    <div class="mb-3 flex flex-wrap gap-1.5">
+                        <button
+                            type="button"
+                            on:click=move |_| load_monitor_preset(GlucoseMonitor::AbbottLingo)
+                            class="rounded-full border border-white/15 px-2.5 py-1 text-[11px] text-slate-200 transition hover:bg-white/10"
+                        >
+                            "Abbott Lingo"
+                        </button>
+                        <button
+                            type="button"
+                            on:click=move |_| load_monitor_preset(GlucoseMonitor::DexcomClarity)
+                            class="rounded-full border border-white/15 px-2.5 py-1 text-[11px] text-slate-200 transition hover:bg-white/10"
+                        >
+                            "Dexcom G7 Clarity"
+                        </button>
+                        <button
+                            type="button"
+                            on:click=move |_| load_monitor_preset(GlucoseMonitor::AbbottFreeStyleLibre)
+                            class="rounded-full border border-white/15 px-2.5 py-1 text-[11px] text-slate-200 transition hover:bg-white/10"
+                        >
+                            "Libre 3 (mmol/L)"
+                        </button>
+                        <button
+                            type="button"
+                            on:click=move |_| load_monitor_preset(GlucoseMonitor::MedtronicCareLink)
+                            class="rounded-full border border-white/15 px-2.5 py-1 text-[11px] text-slate-200 transition hover:bg-white/10"
+                        >
+                            "Medtronic CareLink"
+                        </button>
+                        <button
+                            type="button"
+                            on:click=move |_| load_monitor_preset(GlucoseMonitor::FingerstickBgm)
+                            class="rounded-full border border-white/15 px-2.5 py-1 text-[11px] text-slate-200 transition hover:bg-white/10"
+                        >
+                            "Fingerstick BGM"
+                        </button>
+                    </div>
+                    <div class="mb-3 grid gap-2 sm:grid-cols-2">
+                        <label class="block text-[11px] text-slate-300">
+                            "Monitor format"
+                            <select
+                                on:change=move |ev| {
+                                    let val = event_target_value(&ev);
+                                    monitor_hint.set(GlucoseMonitor::from_slug(&val));
+                                }
+                                class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white"
+                            >
+                                <option value="auto">"Auto-detect (all 10 monitors)"</option>
+                                {GlucoseMonitor::ALL.into_iter().map(|m| view! {
+                                    <option value=m.slug()>{m.display_name()}</option>
+                                }).collect_view()}
+                            </select>
+                        </label>
+                        <label class="block text-[11px] text-slate-300">
+                            "Upload CSV file (stays in browser)"
+                            <input
+                                type="file"
+                                accept=".csv,.txt"
+                                on:change=on_cgm_file_change
+                                class="mt-1 block w-full text-xs text-slate-300 file:mr-2 file:rounded-full file:border-0 file:bg-cyan-500 file:px-3 file:py-1 file:text-xs file:font-semibold file:text-slate-950 hover:file:bg-cyan-400"
+                            />
+                        </label>
+                    </div>
                     <textarea
-                        rows="8"
+                        rows="6"
                         prop:value=move || csv_input.get()
                         on:input=move |ev| csv_input.set(event_target_value(&ev))
                         class="w-full rounded-xl border border-white/10 bg-slate-950 p-3 font-mono text-xs text-slate-200"
@@ -475,7 +672,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                             on:click=apply_csv
                             class="rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
                         >
-                            "Parse Lingo CSV"
+                            "Parse Glucose CSV"
                         </button>
                         {move || csv_error.get().map(|err| view! {
                             <span class="text-xs text-rose-400">{err}</span>
@@ -788,7 +985,9 @@ mod tests {
 
     #[test]
     fn mental_health_chart_and_metrics_render_cleanly() {
-        let readings = parse_lingo_csv(SAMPLE_LINGO_CSV).unwrap();
+        let readings = parse_commercial_glucose_csv(SAMPLE_LINGO_CSV, None)
+            .unwrap()
+            .readings;
         let checkins = sample_checkins();
         let html = view! {
             <LingoMoodTimelineChart readings=readings checkins=checkins />
