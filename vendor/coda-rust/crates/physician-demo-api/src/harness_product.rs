@@ -171,6 +171,8 @@ pub(crate) struct MentalHealthCheckInPayload {
     #[serde(default)]
     pub(crate) gad7_score: Option<u8>,
     #[serde(default)]
+    pub(crate) asrm_score: Option<u8>,
+    #[serde(default)]
     pub(crate) note: Option<String>,
 }
 
@@ -191,6 +193,7 @@ impl MentalHealthCheckInPayload {
             sleep_hours: self.sleep_hours,
             phq9_score: self.phq9_score,
             gad7_score: self.gad7_score,
+            asrm_score: self.asrm_score,
             note: self.note.unwrap_or_default(),
         }
     }
@@ -574,7 +577,7 @@ pub(crate) fn chart_recipe(model: &str, skills: &Package) -> RequestRecipe {
          For clinical chart questions, first search the chart with `chart_search`, then read all relevant records with `chart_read` before answering.\n\
          When multiple records are read, cite EVERY relevant `citation_number` inline ([1], [2], [3], ...) beside each clinical claim.\n\
          Do not cite numbers not returned by `chart_read`, and do not fabricate clinical values absent from read records.\n\
-         Use `memory_read` / `memory_save` to read or append durable physician notes in Patient Memory, `follow_up_list` / `follow_up_create` to inspect or schedule patient follow-ups, `briefing_read` to read pre-visit briefings, `mental_health_log` to record structured mental health check-ins (mood, anxiety, energy, sleep, PHQ-9, GAD-7), and `cgm_ingest` (or `lingo_cgm_ingest`) to ingest commercial CGM or BGM exports (Abbott Lingo, FreeStyle Libre, Dexcom Clarity, Dexcom Stelo, Medtronic CareLink, Eversense, Tandem, Glooko/Tidepool, fingerstick BGM) with 5-band TIR, GMI, GRI, and 24-hour AGP analytics.",
+         Use `memory_read` / `memory_save` to read or append durable physician notes in Patient Memory, `follow_up_list` / `follow_up_create` to inspect or schedule patient follow-ups, `briefing_read` to read pre-visit briefings, `mental_health_log` to record structured mental health check-ins (mood, anxiety, energy, sleep, PHQ-9, GAD-7, ASRM), and `cgm_ingest` (or `lingo_cgm_ingest`) to ingest commercial CGM or BGM exports (Abbott Lingo, FreeStyle Libre, Dexcom Clarity, Dexcom Stelo, Medtronic CareLink, Eversense, Tandem, Glooko/Tidepool, fingerstick BGM) with 5-band TIR, GMI, GRI, and 24-hour AGP analytics.",
     );
     let catalog = skills.catalog_instructions();
     if !catalog.is_empty() {
@@ -727,7 +730,7 @@ fn briefing_read_tool() -> Tool {
 fn mental_health_log_tool() -> Tool {
     Tool {
         name: TOOL_MENTAL_HEALTH_LOG.to_owned(),
-        description: "Record a structured mental health check-in for the active patient (mood, anxiety, energy on 1..=10, prior-night sleep hours, and optional PHQ-9 / GAD-7 scores) as a cited chart source record.".to_owned(),
+        description: "Record a structured mental health check-in for the active patient (mood, anxiety, energy on 1..=10, prior-night sleep hours, and optional PHQ-9 / GAD-7 / ASRM scores) as a cited chart source record.".to_owned(),
         parameters: json!({
             "type": "object",
             "properties": {
@@ -770,6 +773,12 @@ fn mental_health_log_tool() -> Tool {
                     "minimum": 0,
                     "maximum": 21,
                     "description": "Optional GAD-7 anxiety total score (0..=21)."
+                },
+                "asrm_score": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 20,
+                    "description": "Optional Altman Self-Rating Mania Scale (ASRM) total score (0..=20; 0..=5 Baseline, 6..=20 Elevated activation)."
                 },
                 "note": {
                     "type": "string",

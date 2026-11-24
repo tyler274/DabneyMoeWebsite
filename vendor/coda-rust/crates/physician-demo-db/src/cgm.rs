@@ -2003,6 +2003,141 @@ fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
     era * 146_097 + (doe as i64) - 719_468
 }
 
+/// Computes [`CgmClinicalSummary`] (5-band TIR + TITR, GMI, GRI + Zone, MAGE, active wear %,
+/// and 24-hour AGP) from a [`ParsedGlucoseImport`] and constructs a structured
+/// [`DemoSourceRecord`] with [`CitedFieldWire`] measurements.
+pub(crate) fn build_commercial_cgm_record(
+    workspace_id: &str,
+    record_id: String,
+    summary_title: &str,
+    import: &ParsedGlucoseImport,
+) -> Result<(DemoSourceRecord, CgmClinicalSummary), CgmParseError> {
+    let summary = CgmClinicalSummary::from_import(import)?;
+
+    let monitor_label = import.monitor.display_name();
+    let title = match summary_title.trim() {
+        "" => format!("{monitor_label} — AGP & Glycemic Summary"),
+        clean => clean.to_owned(),
+    };
+    let recorded_at = parse_timestamp_parts(&summary.end_timestamp)
+        .map(|ts| ts.iso_date)
+        .unwrap_or_else(|| DEMO_DATE.to_owned());
+
+    let fields = summary.to_cited_fields();
+    let tbr_total = round1(summary.tbr_very_low_lt_54_percent + summary.tbr_low_54_69_percent);
+    let tar_total = round1(summary.tar_high_181_250_percent + summary.tar_very_high_gt_250_percent);
+
+    let lingo_clause = summary
+        .total_lingo_count
+        .map(|lc| format!(" Total Lingo Count: {lc:.1} pts."))
+        .unwrap_or_default();
+    let summary_prose = format!(
+        "{monitor_label} summary ({} to {}, n = {} readings, source unit {}, active wear {:.1}%): mean glucose {:.1} mg/dL, median {:.1} mg/dL, range {:.1}–{:.1} mg/dL, SD {:.1} mg/dL, CV {:.1}%, GMI {:.1}%, GRI {:.1}/100 ({}), MAGE {:.1} mg/dL. Time in Ranges: TITR (70–140 mg/dL) {:.1}%, TIR (70–180 mg/dL) {:.1}%, TBR <70 mg/dL {:.1}% (<54 mg/dL: {:.1}%), TAR >180 mg/dL {:.1}% (>250 mg/dL: {:.1}%).{lingo_clause}",
+        summary.start_timestamp,
+        summary.end_timestamp,
+        summary.count,
+        summary.source_unit.label(),
+        summary.estimated_active_wear_percent,
+        summary.mean_mg_dl,
+        summary.median_mg_dl,
+        summary.min_mg_dl,
+        summary.max_mg_dl,
+        summary.std_dev_mg_dl,
+        summary.cv_percent,
+        summary.gmi_percent,
+        summary.gri,
+        summary.gri_zone.label(),
+        summary.mage_mg_dl,
+        summary.titr_70_140_percent,
+        summary.tir_70_180_percent,
+        tbr_total,
+        summary.tbr_very_low_lt_54_percent,
+        tar_total,
+        summary.tar_very_high_gt_250_percent,
+    );
+
+    let agp_lines: Vec<String> = summary
+        .agp_hourly
+        .iter()
+        .map(|b| {
+            format!(
+                "{:02}:00 (n={}): p5 {:.1}, p25 {:.1}, median {:.1}, p75 {:.1}, p95 {:.1} mg/dL",
+                b.hour, b.count, b.p5, b.p25, b.p50, b.p75, b.p95
+            )
+        })
+        .collect();
+    let agp_prose = if agp_lines.is_empty() {
+        "24-Hour AGP: timestamps lacked time-of-day hours.".to_owned()
+    } else {
+        format!(
+            "24-Hour Ambulatory Glucose Profile (AGP):\n- {}",
+            agp_lines.join("\n- ")
+        )
+    };
+
+    let mut body = format!("{summary_prose}\n\n{agp_prose}");
+    let clipped_low = import
+        .readings
+        .iter()
+        .filter(|r| r.bound == GlucoseReadingBound::BelowSensorFloor)
+        .count();
+    let clipped_high = import
+        .readings
+        .iter()
+        .filter(|r| r.bound == GlucoseReadingBound::AboveSensorCeiling)
+        .count();
+    let boundary_prose = (clipped_low > 0 || clipped_high > 0).then(|| {
+        format!(
+            "Sensor boundary events: {clipped_low} below sensor floor, {clipped_high} above sensor ceiling."
+        )
+    });
+    if let Some(ref bprose) = boundary_prose {
+        body.push_str("\n\n");
+        body.push_str(bprose);
+    }
+
+    let mut readable_parts = vec![CitedTextPartWire {
+        label: Some(format!("{monitor_label} Clinical Summary")),
+        text: summary_prose,
+    }];
+    if !agp_lines.is_empty() {
+        readable_parts.push(CitedTextPartWire {
+            label: Some("24-Hour Ambulatory Glucose Profile (AGP)".into()),
+            text: agp_prose,
+        });
+    }
+    if let Some(bprose) = boundary_prose {
+        readable_parts.push(CitedTextPartWire {
+            label: Some("Sensor Boundary Events".into()),
+            text: bprose,
+        });
+    }
+
+    let raw_content = json!({
+        "source": import.monitor.slug(),
+        "source_unit": import.source_unit,
+        "method": import.method,
+        "summary": &summary,
+        "sample_readings": import.readings.iter().take(24).collect::<Vec<_>>(),
+    })
+    .to_string();
+
+    let rec = DemoSourceRecord {
+        id: record_id,
+        workspace_id: workspace_id.to_owned(),
+        group: "results".into(),
+        title,
+        recorded_at,
+        body,
+        source_label: monitor_label.into(),
+        readable_parts,
+        fields,
+        record_status: "final".into(),
+        raw_content: Some(raw_content),
+    };
+    Ok((rec, summary))
+}
+
 impl DemoStore {
     /// Computes [`CgmClinicalSummary`] (5-band TIR + TITR, GMI, GRI + Zone, MAGE, active wear %,
     /// and 24-hour AGP) from a [`ParsedGlucoseImport`] and files a structured `SourceRecords`
@@ -2015,117 +2150,10 @@ impl DemoStore {
     ) -> Result<(DemoSourceRecord, CgmClinicalSummary), DbError> {
         self.ensure_ready().await?;
         let _ = self.load_patient_name(workspace_id)?;
-        let summary = CgmClinicalSummary::from_import(import)
-            .map_err(|err| DbError::InvalidCommand(err.to_string()))?;
-
-        let monitor_label = import.monitor.display_name();
-        let title = match summary_title.trim() {
-            "" => format!("{monitor_label} — AGP & Glycemic Summary"),
-            clean => clean.to_owned(),
-        };
-        let recorded_at = parse_timestamp_parts(&summary.end_timestamp)
-            .map(|ts| ts.iso_date)
-            .unwrap_or_else(|| DEMO_DATE.to_owned());
-
-        let fields = summary.to_cited_fields();
-        let tbr_total = round1(summary.tbr_very_low_lt_54_percent + summary.tbr_low_54_69_percent);
-        let tar_total =
-            round1(summary.tar_high_181_250_percent + summary.tar_very_high_gt_250_percent);
-
-        let summary_prose = format!(
-            "{monitor_label} summary ({} to {}, n = {} readings, source unit {}, active wear {:.1}%): mean glucose {:.1} mg/dL, median {:.1} mg/dL, range {:.1}–{:.1} mg/dL, SD {:.1} mg/dL, CV {:.1}%, GMI {:.1}%, GRI {:.1}/100 ({}), MAGE {:.1} mg/dL. Time in Ranges: TITR (70–140 mg/dL) {:.1}%, TIR (70–180 mg/dL) {:.1}%, TBR <70 mg/dL {:.1}% (<54 mg/dL: {:.1}%), TAR >180 mg/dL {:.1}% (>250 mg/dL: {:.1}%).",
-            summary.start_timestamp,
-            summary.end_timestamp,
-            summary.count,
-            summary.source_unit.label(),
-            summary.estimated_active_wear_percent,
-            summary.mean_mg_dl,
-            summary.median_mg_dl,
-            summary.min_mg_dl,
-            summary.max_mg_dl,
-            summary.std_dev_mg_dl,
-            summary.cv_percent,
-            summary.gmi_percent,
-            summary.gri,
-            summary.gri_zone.label(),
-            summary.mage_mg_dl,
-            summary.titr_70_140_percent,
-            summary.tir_70_180_percent,
-            tbr_total,
-            summary.tbr_very_low_lt_54_percent,
-            tar_total,
-            summary.tar_very_high_gt_250_percent,
-        );
-
-        let agp_lines: Vec<String> = summary
-            .agp_hourly
-            .iter()
-            .map(|b| {
-                format!(
-                    "{:02}:00 (n={}): p5 {:.1}, p25 {:.1}, median {:.1}, p75 {:.1}, p95 {:.1} mg/dL",
-                    b.hour, b.count, b.p5, b.p25, b.p50, b.p75, b.p95
-                )
-            })
-            .collect();
-        let agp_prose = if agp_lines.is_empty() {
-            "24-Hour AGP: timestamps lacked time-of-day hours.".to_owned()
-        } else {
-            format!(
-                "24-Hour Ambulatory Glucose Profile (AGP):\n- {}",
-                agp_lines.join("\n- ")
-            )
-        };
-
-        let mut body = format!("{summary_prose}\n\n{agp_prose}");
-        let clipped_low = import
-            .readings
-            .iter()
-            .filter(|r| r.bound == GlucoseReadingBound::BelowSensorFloor)
-            .count();
-        let clipped_high = import
-            .readings
-            .iter()
-            .filter(|r| r.bound == GlucoseReadingBound::AboveSensorCeiling)
-            .count();
-        if clipped_low > 0 || clipped_high > 0 {
-            body.push_str(&format!(
-                "\n\nSensor boundary events: {clipped_low} below sensor floor, {clipped_high} above sensor ceiling."
-            ));
-        }
-
-        let mut readable_parts = vec![CitedTextPartWire {
-            label: Some(format!("{monitor_label} Clinical Summary")),
-            text: summary_prose,
-        }];
-        if !agp_lines.is_empty() {
-            readable_parts.push(CitedTextPartWire {
-                label: Some("24-Hour Ambulatory Glucose Profile (AGP)".into()),
-                text: agp_prose,
-            });
-        }
-
-        let raw_content = json!({
-            "source": import.monitor.slug(),
-            "source_unit": import.source_unit,
-            "method": import.method,
-            "summary": &summary,
-            "sample_readings": import.readings.iter().take(24).collect::<Vec<_>>(),
-        })
-        .to_string();
-
-        let rec = DemoSourceRecord {
-            id: format!("rec-{workspace_id}-cgm-{}", next_seq()),
-            workspace_id: workspace_id.to_owned(),
-            group: "results".into(),
-            title,
-            recorded_at,
-            body,
-            source_label: monitor_label.into(),
-            readable_parts,
-            fields,
-            record_status: "final".into(),
-            raw_content: Some(raw_content),
-        };
+        let record_id = format!("rec-{workspace_id}-cgm-{}", next_seq());
+        let (rec, summary) =
+            build_commercial_cgm_record(workspace_id, record_id, summary_title, import)
+                .map_err(|err| DbError::InvalidCommand(err.to_string()))?;
         self.insert_structured_source_record(&rec)?;
         Ok((rec, summary))
     }
@@ -2414,6 +2442,31 @@ timestamp,glucose_mg_dl
                 .iter()
                 .any(|f| f.key == "cgm_gri" && f.status.as_deref() == Some("High"))
         );
+    }
+
+    #[test]
+    fn build_commercial_cgm_record_preserves_sensor_boundary_readable_parts_parity() {
+        let dexcom_csv = "\
+Index,Timestamp (YYYY-MM-DDThh:mm:ss),Event Type,Source Device ID,Glucose Value (mg/dL),Glucose Rate of Change (mg/dL/min)
+1,2026-08-27T04:00:00,EGV,DX-G7,Low,-1.5
+2,2026-08-27T08:00:00,EGV,DX-G7,104,0.2
+3,2026-08-27T14:00:00,EGV,DX-G7,High,2.4
+";
+        let import = parse_commercial_glucose_csv(dexcom_csv, None).expect("parse dexcom");
+        let (rec, _summary) = build_commercial_cgm_record(
+            "unit-wellness-asrm-1",
+            "rec-test-clipped".into(),
+            "Clipped Dexcom Trace",
+            &import,
+        )
+        .expect("build record");
+        assert!(rec.body.contains("Sensor boundary events:"));
+        for line in rec.body.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            assert!(
+                rec.readable_parts.iter().any(|p| p.text.contains(line)),
+                "every body line including sensor boundary events must appear verbatim in readable_parts: {line:?}"
+            );
+        }
     }
 
     #[test]

@@ -1,27 +1,33 @@
 ---
 name: mental-health-lingo-cgm
-description: Use when reviewing PHQ-9, GAD-7, mood, anxiety, energy, or sleep check-ins alongside continuous glucose monitoring (CGM) or capillary blood glucose meter (BGM) data from Abbott Lingo, FreeStyle Libre, Dexcom Clarity, Dexcom Stelo, Medtronic CareLink, Eversense, Tandem, Glooko, Tidepool, or fingerstick meters.
+description: Use when reviewing PHQ-9, GAD-7, ASRM, mood, anxiety, energy, sleep check-ins, or patient-shared Wellness & Safety Plans alongside continuous glucose monitoring (CGM) or capillary blood glucose meter (BGM) data from Abbott Lingo, FreeStyle Libre, Dexcom Clarity, Dexcom Stelo, Medtronic CareLink, Eversense, Tandem, Glooko, Tidepool, or fingerstick meters.
 ---
 
 # Mental Health and Commercial CGM / BGM Correlation
 
 Use this guidance when a question, briefing, or patient update involves mental health tracking
-(PHQ-9, GAD-7, daily mood, anxiety, energy, or sleep check-ins) or continuous glucose monitoring
-(CGM) and capillary blood glucose meter (BGM) exports across commercial devices (Abbott Lingo,
-Abbott FreeStyle Libre / LibreView, Dexcom G6/G7/ONE+ Clarity, Dexcom Stelo, Medtronic CareLink /
-Guardian / Simplera, Senseonics Eversense, Tandem Source, Omnipod / Glooko / Tidepool, and
-fingerstick meters).
+(PHQ-9, GAD-7, ASRM, daily mood, anxiety, energy, or sleep check-ins, or a clinician-reviewed
+patient-shared Wellness & Safety Plan) or continuous glucose monitoring (CGM) and capillary blood
+glucose meter (BGM) exports across commercial devices (Abbott Lingo, Abbott FreeStyle Libre /
+LibreView, Dexcom G6/G7/ONE+ Clarity, Dexcom Stelo, Medtronic CareLink / Guardian / Simplera,
+Senseonics Eversense, Tandem Source, Omnipod / Glooko / Tidepool, and fingerstick meters).
 
 ## Evidence and Citation Discipline
 
-- Retrieve both the mental health records and the CGM or BGM records before synthesizing an
-  answer. Cite every numerical score, glucose value, percentage, percentile, timestamp, device
-  provenance, and medication inline (`[1]`, `[2]`, ...) from the exact records read in the current
-  run.
+- Retrieve both the mental health records (including any patient-shared Wellness & Safety Plan) and
+  the CGM or BGM records before synthesizing an answer. Cite every numerical score, glucose value,
+  percentage, percentile, timestamp, device provenance, and medication inline (`[1]`, `[2]`, ...)
+  from the exact records read in the current run.
 - Keep standardized screening scores tied to their validated scales and dates:
   - **PHQ-9 (`0–27`):** Minimal (`0–4`), Mild (`5–9`), Moderate (`10–14`), Moderately severe
     (`15–19`), Severe (`20–27`). Always note item-9 safety context when documented.
   - **GAD-7 (`0–21`):** Minimal (`0–4`), Mild (`5–9`), Moderate (`10–14`), Severe (`15–21`).
+  - **ASRM (`0–20`):** Baseline (`0–5`), Elevated activation (`6–20`, warrants clinician follow-up
+    and review alongside sleep continuity and medication adherence).
+- Treat a patient-shared **Wellness & Safety Plan** strictly as a collaborative, consented
+  outpatient reference for the patient's own early-warning cues, coping steps, consented support and
+  care-team contacts, and verified non-police crisis resources (`988` Suicide & Crisis Lifeline).
+  Never frame it as continuous monitoring, automated outreach, or law-enforcement dispatch.
 - Keep ADA/ATTD International Consensus CGM and Ambulatory Glucose Profile (AGP) metrics tied to
   device provenance, source unit (`mg/dL` or `mmol/L`), sample count, and active sensor wear
   (`>= 70%` target for interstitial CGM):

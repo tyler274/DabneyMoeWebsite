@@ -1,11 +1,11 @@
 /* @ts-self-types="./physician-app.d.ts" */
-import { RawInterpreter } from './snippets/dioxus-interpreter-js-20451f6aefec841d/inline0.js?v=a1eb9df680d9';
-import { setAttributeInner } from './snippets/dioxus-interpreter-js-20451f6aefec841d/src/js/set_attribute.js?v=a1eb9df680d9';
-import { get_select_data } from './snippets/dioxus-web-eae67878b22d6805/inline0.js?v=a1eb9df680d9';
-import { WebDioxusChannel } from './snippets/dioxus-web-eae67878b22d6805/src/js/eval.js?v=a1eb9df680d9';
-import { initDemoDb, resetDemoDb } from './snippets/physician-demo-db-13f936ffafd9cbe1/assets/sqlite_bridge.js?v=a1eb9df680d9';
-import { ask, fire, listen, stop } from './snippets/ui-61ce48900b6d97a6/assets/behaviour.js?v=a1eb9df680d9';
-import * as import1 from "./snippets/physician-demo-db-13f936ffafd9cbe1/assets/sqlite_bridge.js?v=a1eb9df680d9"
+import { RawInterpreter } from './snippets/dioxus-interpreter-js-20451f6aefec841d/inline0.js?v=6395c41af5d7';
+import { setAttributeInner } from './snippets/dioxus-interpreter-js-20451f6aefec841d/src/js/set_attribute.js?v=6395c41af5d7';
+import { get_select_data } from './snippets/dioxus-web-eae67878b22d6805/inline0.js?v=6395c41af5d7';
+import { WebDioxusChannel } from './snippets/dioxus-web-eae67878b22d6805/src/js/eval.js?v=6395c41af5d7';
+import { initDemoDb, resetDemoDb } from './snippets/physician-demo-db-13f936ffafd9cbe1/assets/sqlite_bridge.js?v=6395c41af5d7';
+import { ask, fire, listen, stop } from './snippets/ui-61ce48900b6d97a6/assets/behaviour.js?v=6395c41af5d7';
+import * as import1 from "./snippets/physician-demo-db-13f936ffafd9cbe1/assets/sqlite_bridge.js?v=6395c41af5d7"
 
 
 export class JSOwner {
@@ -2211,7 +2211,7 @@ async function __wbg_init(module_or_path) {
     }
 
     if (module_or_path === undefined) {
-        module_or_path = new URL('physician-app_bg.wasm?v=a1eb9df680d9', import.meta.url);
+        module_or_path = new URL('physician-app_bg.wasm?v=6395c41af5d7', import.meta.url);
     }
     const imports = __wbg_get_imports();
 

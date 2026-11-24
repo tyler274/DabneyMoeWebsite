@@ -13,6 +13,7 @@ pub mod sources_admin;
 pub mod spruce;
 pub mod store;
 pub mod updates_briefings;
+pub mod wellness;
 
 pub use cgm::{
     AgpHourBin, CgmClinicalSummary, CgmParseError, GlucoseMonitor, GlucoseReading,
@@ -21,12 +22,15 @@ pub use cgm::{
 };
 pub use driver::{DbError, SqliteDriver};
 pub use lingo::{
-    Gad7Severity, LingoCgmSummary, LingoParseError, LingoReading, MentalHealthCheckIn,
-    MentalHealthValidationError, Phq9Severity, parse_lingo_csv,
+    AsrmSeverity, Gad7Severity, LingoCgmSummary, LingoParseError, LingoReading,
+    MentalHealthCheckIn, MentalHealthValidationError, Phq9Severity, parse_lingo_csv,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use store::ChatWorkLocation;
 pub use store::{DemoSourceRecord, DemoStore, DraftSaveOutcome};
+pub use wellness::{
+    WELLNESS_PLAN_SOURCE_LABEL, WellnessSafetyPlan, WellnessSafetyPlanValidationError,
+};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
@@ -715,6 +719,7 @@ mod tests {
             sleep_hours: 7.5,
             phq9_score: Some(6),
             gad7_score: Some(9),
+            asrm_score: None,
             note: "Steady afternoon energy after protein-first lunch.".into(),
         };
         let mh_rec = store
@@ -766,5 +771,287 @@ mod tests {
         assert!(fetched_dex.fields.iter().any(|f| f.key == "cgm_gri"));
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn maya_lin_and_samira_patel_compute_cgm_via_cgm_rs_and_preserve_slots() {
+        // 1) Limit = 6: 3 pilot units + Maya Lin (slot 3) + unit-1672 (slot 4 -> yesterday)
+        //    + Samira Patel (slot 5 -> today). Today stays exactly 6 rows.
+        let (dir6, store6) = seeded_active_store("cgm-seed-6", 6);
+
+        // Verify Maya Lin's seeded Abbott Lingo CGM metrics come directly from crate::cgm.
+        let maya_csv = seed::maya_lin_abbott_lingo_csv();
+        let maya_import = parse_commercial_glucose_csv(&maya_csv, None).unwrap();
+        assert_eq!(maya_import.monitor, GlucoseMonitor::AbbottLingo);
+        let maya_expected = CgmClinicalSummary::from_import(&maya_import).unwrap();
+        assert!(maya_expected.estimated_active_wear_percent >= 95.0);
+        assert_eq!(maya_expected.agp_hourly.len(), 24);
+        assert_eq!(maya_expected.max_mg_dl, 176.0);
+        assert_eq!(maya_expected.min_mg_dl, 68.0);
+        assert!(maya_expected.titr_70_140_percent < 85.0);
+        assert!(maya_expected.tir_70_180_percent >= 95.0);
+        assert!(maya_expected.total_lingo_count.is_some());
+
+        let maya_cgm_rec = store6
+            .source_record(seed::MAYA_LIN_WORKSPACE_ID, "rec-unit-lingo-mh-1-cgm-14d")
+            .await
+            .unwrap();
+        assert_eq!(maya_cgm_rec.fields, maya_expected.to_cited_fields());
+        let maya_raw: serde_json::Value =
+            serde_json::from_str(maya_cgm_rec.raw_content.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            serde_json::from_value::<CgmClinicalSummary>(maya_raw["summary"].clone()).unwrap(),
+            maya_expected
+        );
+
+        // Verify Maya Lin's Clinician-Reviewed Wellness & Safety Plan record + seeded chat citations.
+        let maya_plan_rec = store6
+            .source_record(
+                seed::MAYA_LIN_WORKSPACE_ID,
+                "rec-unit-lingo-mh-1-wellness-plan",
+            )
+            .await
+            .unwrap();
+        assert_eq!(maya_plan_rec.group, "forms");
+        assert_eq!(maya_plan_rec.record_status, "final");
+        assert_eq!(maya_plan_rec.source_label, WELLNESS_PLAN_SOURCE_LABEL);
+        assert_eq!(maya_plan_rec.readable_parts.len(), 5);
+        assert!(
+            maya_plan_rec
+                .fields
+                .iter()
+                .any(|f| f.key == "crisis_resource_988" && f.value.contains("988"))
+        );
+        assert!(!maya_plan_rec.raw_content.as_deref().unwrap().contains('\n'));
+        let maya_chat = store6
+            .chat_snapshot(seed::MAYA_LIN_WORKSPACE_ID, "chat-unit-lingo-mh-1-1")
+            .await
+            .unwrap()
+            .snapshot;
+        let AnswerState::Finished {
+            segments: maya_segs,
+            basis: Some(maya_basis),
+            ..
+        } = &maya_chat.transcript[0].answer
+        else {
+            panic!("expected Maya seeded chat finished answer with basis");
+        };
+        assert_segments_verbatim_passages("maya seeded segments", maya_segs, &maya_chat.sources);
+        assert_segments_verbatim_passages("maya seeded basis", maya_basis, &maya_chat.sources);
+
+        // Verify Samira Patel (`unit-wellness-asrm-1`, MRN00004421) search, workspace, Dexcom G7
+        // Clarity CGM computed through crate::cgm, longitudinal ASRM/PHQ-9/GAD-7, and Wellness Plan.
+        let search_name = store6.search("Samira Patel").await.unwrap();
+        assert_eq!(
+            search_name.patients[0].patient_workspace_id,
+            seed::SAMIRA_PATEL_WORKSPACE_ID
+        );
+        let search_mrn = store6.search("MRN00004421").await.unwrap();
+        assert_eq!(
+            search_mrn.patients[0].patient_workspace_id,
+            seed::SAMIRA_PATEL_WORKSPACE_ID
+        );
+
+        let samira_ws = store6
+            .workspace(seed::SAMIRA_PATEL_WORKSPACE_ID)
+            .await
+            .unwrap();
+        assert_eq!(samira_ws.display_name, "Samira Patel");
+        assert!(!samira_ws.active_follow_ups.is_empty());
+
+        let samira_csv = seed::samira_patel_dexcom_clarity_csv();
+        let samira_import = parse_commercial_glucose_csv(&samira_csv, None).unwrap();
+        assert_eq!(samira_import.monitor, GlucoseMonitor::DexcomClarity);
+        let samira_expected = CgmClinicalSummary::from_import(&samira_import).unwrap();
+        assert!(samira_expected.estimated_active_wear_percent >= 95.0);
+        assert_eq!(samira_expected.agp_hourly.len(), 24);
+        assert_eq!(samira_expected.max_mg_dl, 206.0);
+        assert_eq!(samira_expected.low_count_under_70, 0);
+        assert!(samira_expected.high_count_over_180 > 0);
+        assert!(samira_expected.total_lingo_count.is_none());
+
+        let samira_cgm_rec = store6
+            .source_record(
+                seed::SAMIRA_PATEL_WORKSPACE_ID,
+                "rec-unit-wellness-asrm-1-cgm-14d",
+            )
+            .await
+            .unwrap();
+        assert_eq!(samira_cgm_rec.source_label, "Dexcom Clarity CGM");
+        assert_eq!(samira_cgm_rec.fields, samira_expected.to_cited_fields());
+        let samira_raw: serde_json::Value =
+            serde_json::from_str(samira_cgm_rec.raw_content.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            serde_json::from_value::<CgmClinicalSummary>(samira_raw["summary"].clone()).unwrap(),
+            samira_expected
+        );
+
+        let samira_baseline_mh = store6
+            .source_record(
+                seed::SAMIRA_PATEL_WORKSPACE_ID,
+                "rec-unit-wellness-asrm-1-mh-baseline",
+            )
+            .await
+            .unwrap();
+        assert!(samira_baseline_mh.fields.iter().any(|f| {
+            f.key == "asrm_score"
+                && f.name == "ASRM (Baseline)"
+                && f.value == "2"
+                && f.status.as_deref() == Some("Normal")
+        }));
+        let samira_latest_mh = store6
+            .source_record(
+                seed::SAMIRA_PATEL_WORKSPACE_ID,
+                "rec-unit-wellness-asrm-1-mh-20260826",
+            )
+            .await
+            .unwrap();
+        assert!(samira_latest_mh.fields.iter().any(|f| {
+            f.key == "asrm_score"
+                && f.name == "ASRM (Elevated activation)"
+                && f.value == "9"
+                && f.status.as_deref() == Some("Elevated")
+        }));
+        assert!(
+            samira_latest_mh
+                .fields
+                .iter()
+                .any(|f| f.key == "sleep_hours"
+                    && f.value == "4.8"
+                    && f.status.as_deref() == Some("Low"))
+        );
+
+        let samira_plan_rec = store6
+            .source_record(
+                seed::SAMIRA_PATEL_WORKSPACE_ID,
+                "rec-unit-wellness-asrm-1-wellness-plan",
+            )
+            .await
+            .unwrap();
+        assert_eq!(samira_plan_rec.group, "forms");
+        assert_eq!(samira_plan_rec.record_status, "final");
+        assert_eq!(samira_plan_rec.source_label, WELLNESS_PLAN_SOURCE_LABEL);
+        assert!(
+            samira_plan_rec
+                .fields
+                .iter()
+                .any(|f| f.key == "early_warning_sleep" && f.value == "< 5.5")
+        );
+        assert!(
+            samira_plan_rec
+                .fields
+                .iter()
+                .any(|f| f.key == "early_warning_scale" && f.value == "ASRM >= 6")
+        );
+        assert!(
+            samira_plan_rec
+                .fields
+                .iter()
+                .any(|f| f.key == "crisis_resource_988" && f.value.contains("988"))
+        );
+
+        let samira_chat = store6
+            .chat_snapshot(
+                seed::SAMIRA_PATEL_WORKSPACE_ID,
+                "chat-unit-wellness-asrm-1-1",
+            )
+            .await
+            .unwrap()
+            .snapshot;
+        let AnswerState::Finished {
+            segments: samira_segs,
+            basis: Some(samira_basis),
+            ..
+        } = &samira_chat.transcript[0].answer
+        else {
+            panic!("expected Samira seeded chat finished answer with basis");
+        };
+        assert_segments_verbatim_passages(
+            "samira seeded segments",
+            samira_segs,
+            &samira_chat.sources,
+        );
+        assert_segments_verbatim_passages(
+            "samira seeded basis",
+            samira_basis,
+            &samira_chat.sources,
+        );
+
+        let briefings = store6
+            .workspace_briefings(seed::SAMIRA_PATEL_WORKSPACE_ID)
+            .await
+            .unwrap();
+        assert!(
+            briefings
+                .briefings
+                .iter()
+                .any(|b| b.visit_label == "Wellness plan, ASRM & Dexcom G7 review")
+        );
+        let mem = store6
+            .patient_memory(seed::SAMIRA_PATEL_WORKSPACE_ID)
+            .await
+            .unwrap();
+        assert!(
+            mem.summary
+                .as_ref()
+                .is_some_and(|d| d.markdown.contains("Dexcom G7 Clarity"))
+        );
+
+        // Today == 6, yesterday Updates bucket populated, and ASRM > 20 rejected on store API.
+        let today6 = store6.today().await.unwrap();
+        assert_eq!(today6.rows.len(), 6);
+        assert!(
+            today6
+                .rows
+                .iter()
+                .any(|r| r.patient_workspace_id == seed::SAMIRA_PATEL_WORKSPACE_ID)
+        );
+        let updates6 = store6.updates().await.unwrap();
+        assert!(!updates6.today_items.is_empty());
+        assert!(
+            !updates6.earlier_days.is_empty(),
+            "limit=6 must keep the yesterday updates bucket populated"
+        );
+
+        let bad_asrm_checkin = MentalHealthCheckIn {
+            recorded_at: "2026-08-27T09:00:00Z".into(),
+            mood_1_to_10: 7,
+            anxiety_1_to_10: 4,
+            energy_1_to_10: 7,
+            sleep_hours: 7.0,
+            phq9_score: Some(3),
+            gad7_score: Some(4),
+            asrm_score: Some(21),
+            note: "Out-of-range ASRM test".into(),
+        };
+        assert!(matches!(
+            store6
+                .log_mental_health_checkin(seed::SAMIRA_PATEL_WORKSPACE_ID, &bad_asrm_checkin)
+                .await,
+            Err(DbError::InvalidCommand(msg)) if msg.contains("asrm_score")
+        ));
+
+        // 2) Limit = 4: Maya included, Samira omitted, Today == 4.
+        let (dir4, store4) = seeded_active_store("cgm-seed-4", 4);
+        assert_eq!(store4.today().await.unwrap().rows.len(), 4);
+        assert!(store4.workspace(seed::MAYA_LIN_WORKSPACE_ID).await.is_ok());
+        assert!(
+            store4
+                .workspace(seed::SAMIRA_PATEL_WORKSPACE_ID)
+                .await
+                .is_err()
+        );
+
+        // 3) Limit = 10: Today stays capped at 6 while yesterday and quiet updates both populate.
+        let (dir10, store10) = seeded_active_store("cgm-seed-10", 10);
+        assert_eq!(store10.today().await.unwrap().rows.len(), 6);
+        let updates10 = store10.updates().await.unwrap();
+        assert!(!updates10.today_items.is_empty());
+        assert!(!updates10.earlier_days.is_empty());
+        assert!(!updates10.reviewed_nothing_for_you.is_empty());
+
+        let _ = std::fs::remove_dir_all(dir6);
+        let _ = std::fs::remove_dir_all(dir4);
+        let _ = std::fs::remove_dir_all(dir10);
     }
 }

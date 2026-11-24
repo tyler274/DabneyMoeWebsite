@@ -573,6 +573,41 @@ impl Gad7Severity {
     }
 }
 
+/// Altman Self-Rating Mania Scale (ASRM) activation band (`0..=20`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AsrmSeverity {
+    /// Score `0..=5` (within baseline range).
+    Baseline,
+    /// Score `6..=20` (elevated activation; warrants clinician review).
+    ElevatedActivation,
+}
+
+impl AsrmSeverity {
+    /// Maps a validated ASRM score (`0..=20`) to its clinical activation band.
+    pub fn from_score(score: u8) -> Result<Self, MentalHealthValidationError> {
+        match score {
+            0..=5 => Ok(Self::Baseline),
+            6..=20 => Ok(Self::ElevatedActivation),
+            other => Err(MentalHealthValidationError::AsrmOutOfRange(other)),
+        }
+    }
+
+    /// Physician-facing activation band label.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Baseline => "Baseline",
+            Self::ElevatedActivation => "Elevated activation",
+        }
+    }
+
+    fn field_status(self) -> &'static str {
+        match self {
+            Self::Baseline => "Normal",
+            Self::ElevatedActivation => "Elevated",
+        }
+    }
+}
+
 /// Validation errors for [`MentalHealthCheckIn`].
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum MentalHealthValidationError {
@@ -597,9 +632,12 @@ pub enum MentalHealthValidationError {
     /// `gad7_score` was outside `0..=21`.
     #[error("`gad7_score` must be in 0..=21, got {0}")]
     Gad7OutOfRange(u8),
+    /// `asrm_score` was outside `0..=20`.
+    #[error("`asrm_score` must be in 0..=20, got {0}")]
+    AsrmOutOfRange(u8),
 }
 
-/// Structured patient mental health check-in with optional PHQ-9 / GAD-7 screening scores.
+/// Structured patient mental health check-in with optional PHQ-9 / GAD-7 / ASRM screening scores.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MentalHealthCheckIn {
     /// ISO date or timestamp when the check-in was recorded.
@@ -618,13 +656,16 @@ pub struct MentalHealthCheckIn {
     /// Optional GAD-7 generalized anxiety total score (`0..=21`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gad7_score: Option<u8>,
+    /// Optional Altman Self-Rating Mania Scale (ASRM) total score (`0..=20`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asrm_score: Option<u8>,
     /// Free-text symptom or context note from the check-in.
     #[serde(default)]
     pub note: String,
 }
 
 impl MentalHealthCheckIn {
-    /// Validates all rating scales, sleep hours, and optional PHQ-9 / GAD-7 totals.
+    /// Validates all rating scales, sleep hours, and optional PHQ-9 / GAD-7 / ASRM totals.
     pub fn validate(&self) -> Result<(), MentalHealthValidationError> {
         if self.recorded_at.trim().is_empty() {
             return Err(MentalHealthValidationError::MissingRecordedAt);
@@ -656,6 +697,9 @@ impl MentalHealthCheckIn {
         if let Some(gad7) = self.gad7_score {
             let _ = Gad7Severity::from_score(gad7)?;
         }
+        if let Some(asrm) = self.asrm_score {
+            let _ = AsrmSeverity::from_score(asrm)?;
+        }
         Ok(())
     }
 
@@ -682,6 +726,17 @@ impl MentalHealthCheckIn {
                 value: gad7.to_string(),
                 unit: Some("/21".into()),
                 range: Some("0–4 Minimal".into()),
+                status: Some(sev.field_status().into()),
+            });
+        }
+        if let Some(asrm) = self.asrm_score {
+            let sev = AsrmSeverity::from_score(asrm)?;
+            fields.push(CitedFieldWire {
+                key: "asrm_score".into(),
+                name: format!("ASRM ({})", sev.label()),
+                value: asrm.to_string(),
+                unit: Some("/20".into()),
+                range: Some("0–5 Baseline".into()),
                 status: Some(sev.field_status().into()),
             });
         }
@@ -734,6 +789,86 @@ impl MentalHealthCheckIn {
             }),
         });
         Ok(fields)
+    }
+
+    /// Validates this check-in and builds a structured [`DemoSourceRecord`] with
+    /// PHQ-9, GAD-7, ASRM, mood, anxiety, energy, and sleep [`CitedFieldWire`] measurements.
+    pub fn to_source_record(
+        &self,
+        record_id: String,
+        workspace_id: &str,
+    ) -> Result<DemoSourceRecord, MentalHealthValidationError> {
+        let fields = self.to_cited_fields()?;
+
+        let recorded_date = self
+            .recorded_at
+            .trim()
+            .get(..10)
+            .filter(|d| d.len() == 10)
+            .unwrap_or_else(|| self.recorded_at.trim())
+            .to_owned();
+
+        let mut scales = Vec::new();
+        if let Some(phq9) = self.phq9_score {
+            let sev = Phq9Severity::from_score(phq9)?;
+            scales.push(format!("PHQ-9 {phq9}/27 ({})", sev.label()));
+        }
+        if let Some(gad7) = self.gad7_score {
+            let sev = Gad7Severity::from_score(gad7)?;
+            scales.push(format!("GAD-7 {gad7}/21 ({})", sev.label()));
+        }
+        if let Some(asrm) = self.asrm_score {
+            let sev = AsrmSeverity::from_score(asrm)?;
+            scales.push(format!("ASRM {asrm}/20 ({})", sev.label()));
+        }
+        let title = if scales.is_empty() {
+            "Mental Health Daily Check-In".to_owned()
+        } else {
+            format!("Mental Health Check-In — {}", scales.join(", "))
+        };
+        let scales_clause = if scales.is_empty() {
+            String::new()
+        } else {
+            format!(" Standardized scales: {}.", scales.join("; "))
+        };
+        let note_clean = self.note.trim();
+        let note_clause = if note_clean.is_empty() {
+            String::new()
+        } else {
+            format!(" Patient note: {note_clean}")
+        };
+        let body = format!(
+            "Mental health check-in ({}): mood {}/10, anxiety {}/10, energy {}/10, prior-night sleep {:.1} h.{}{}",
+            self.recorded_at.trim(),
+            self.mood_1_to_10,
+            self.anxiety_1_to_10,
+            self.energy_1_to_10,
+            self.sleep_hours,
+            scales_clause,
+            note_clause,
+        );
+        let readable_parts = vec![CitedTextPartWire {
+            label: Some(title.clone()),
+            text: body.clone(),
+        }];
+        let raw_content = json!({
+            "source": "duet_mental_health_checkin",
+            "checkin": self,
+        })
+        .to_string();
+        Ok(DemoSourceRecord {
+            id: record_id,
+            workspace_id: workspace_id.to_owned(),
+            group: "results".into(),
+            title,
+            recorded_at: recorded_date,
+            body,
+            source_label: "Duet Mental Health Check-In".into(),
+            readable_parts,
+            fields,
+            record_status: "final".into(),
+            raw_content: Some(raw_content),
+        })
     }
 }
 
@@ -821,7 +956,7 @@ impl DemoStore {
     }
 
     /// Validates `checkin` and files a structured mental health check-in `SourceRecords` entry
-    /// with PHQ-9, GAD-7, mood, anxiety, energy, and sleep `CitedFieldWire` measurements.
+    /// with PHQ-9, GAD-7, ASRM, mood, anxiety, energy, and sleep `CitedFieldWire` measurements.
     pub async fn log_mental_health_checkin(
         &self,
         workspace_id: &str,
@@ -829,77 +964,10 @@ impl DemoStore {
     ) -> Result<DemoSourceRecord, DbError> {
         self.ensure_ready().await?;
         let _ = self.load_patient_name(workspace_id)?;
-        let fields = checkin
-            .to_cited_fields()
+        let record_id = format!("rec-{workspace_id}-mh-{}", next_seq());
+        let rec = checkin
+            .to_source_record(record_id, workspace_id)
             .map_err(|err| DbError::InvalidCommand(err.to_string()))?;
-
-        let recorded_date = checkin
-            .recorded_at
-            .trim()
-            .get(..10)
-            .filter(|d| d.len() == 10)
-            .unwrap_or_else(|| checkin.recorded_at.trim())
-            .to_owned();
-
-        let mut scales = Vec::new();
-        if let Some(phq9) = checkin.phq9_score
-            && let Ok(sev) = Phq9Severity::from_score(phq9)
-        {
-            scales.push(format!("PHQ-9 {phq9}/27 ({})", sev.label()));
-        }
-        if let Some(gad7) = checkin.gad7_score
-            && let Ok(sev) = Gad7Severity::from_score(gad7)
-        {
-            scales.push(format!("GAD-7 {gad7}/21 ({})", sev.label()));
-        }
-        let title = if scales.is_empty() {
-            "Mental Health Daily Check-In".to_owned()
-        } else {
-            format!("Mental Health Check-In — {}", scales.join(", "))
-        };
-        let scales_clause = if scales.is_empty() {
-            String::new()
-        } else {
-            format!(" Standardized scales: {}.", scales.join("; "))
-        };
-        let note_clean = checkin.note.trim();
-        let note_clause = if note_clean.is_empty() {
-            String::new()
-        } else {
-            format!(" Patient note: {note_clean}")
-        };
-        let body = format!(
-            "Mental health check-in ({}): mood {}/10, anxiety {}/10, energy {}/10, prior-night sleep {:.1} h.{}{}",
-            checkin.recorded_at.trim(),
-            checkin.mood_1_to_10,
-            checkin.anxiety_1_to_10,
-            checkin.energy_1_to_10,
-            checkin.sleep_hours,
-            scales_clause,
-            note_clause,
-        );
-        let readable_parts = vec![CitedTextPartWire {
-            label: Some(title.clone()),
-            text: body.clone(),
-        }];
-        let raw_content = json!({
-            "source": "duet_mental_health_checkin",
-            "checkin": checkin,
-        })
-        .to_string();
-        let rec = DemoSourceRecord {
-            id: format!("rec-{workspace_id}-mh-{}", next_seq()),
-            workspace_id: workspace_id.to_owned(),
-            group: "results".into(),
-            title,
-            recorded_at: recorded_date,
-            body,
-            source_label: "Duet Mental Health Check-In".into(),
-            readable_parts,
-            fields,
-            record_status: "final".into(),
-            raw_content: Some(raw_content),
-        };
         self.insert_structured_source_record(&rec)?;
         Ok(rec)
     }
@@ -1051,6 +1119,7 @@ Abbott Lingo,SN-441,\"Aug 26, 2026 19:00\",104,0,\"Salmon, greens, and avocado\"
             sleep_hours: 5.5,
             phq9_score: Some(8),
             gad7_score: Some(12),
+            asrm_score: None,
             note: "Afternoon jitteriness after post-lunch glucose drop.".into(),
         };
         let fields = valid.to_cited_fields().expect("valid check-in");
@@ -1065,10 +1134,68 @@ Abbott Lingo,SN-441,\"Aug 26, 2026 19:00\",104,0,\"Salmon, greens, and avocado\"
                 && f.status.as_deref() == Some("Moderate")
         }));
         assert!(
+            !fields.iter().any(|f| f.key == "asrm_score"),
+            "omitted asrm_score should not emit an ASRM cited field"
+        );
+        assert!(
             fields
                 .iter()
                 .any(|f| { f.key == "anxiety_rating" && f.status.as_deref() == Some("Elevated") })
         );
+
+        // Backwards compatibility: JSON without `asrm_score` deserializes with `None`.
+        let legacy_json = r#"{
+            "recorded_at": "2026-08-26T15:00:00Z",
+            "mood_1_to_10": 7,
+            "anxiety_1_to_10": 4,
+            "energy_1_to_10": 7,
+            "sleep_hours": 7.5
+        }"#;
+        let parsed_legacy: MentalHealthCheckIn =
+            serde_json::from_str(legacy_json).expect("legacy check-in without asrm_score");
+        assert_eq!(parsed_legacy.asrm_score, None);
+
+        // ASRM baseline (0..=5) and elevated activation (6..=20) bands.
+        assert_eq!(AsrmSeverity::from_score(0), Ok(AsrmSeverity::Baseline));
+        assert_eq!(AsrmSeverity::from_score(5), Ok(AsrmSeverity::Baseline));
+        assert_eq!(
+            AsrmSeverity::from_score(6),
+            Ok(AsrmSeverity::ElevatedActivation)
+        );
+        assert_eq!(
+            AsrmSeverity::from_score(20),
+            Ok(AsrmSeverity::ElevatedActivation)
+        );
+        assert_eq!(
+            AsrmSeverity::from_score(21),
+            Err(MentalHealthValidationError::AsrmOutOfRange(21))
+        );
+
+        let baseline_asrm = MentalHealthCheckIn {
+            asrm_score: Some(4),
+            ..valid.clone()
+        };
+        let baseline_fields = baseline_asrm.to_cited_fields().expect("baseline ASRM");
+        assert!(baseline_fields.iter().any(|f| {
+            f.key == "asrm_score"
+                && f.name == "ASRM (Baseline)"
+                && f.value == "4"
+                && f.unit.as_deref() == Some("/20")
+                && f.status.as_deref() == Some("Normal")
+        }));
+
+        let elevated_asrm = MentalHealthCheckIn {
+            asrm_score: Some(9),
+            ..valid.clone()
+        };
+        let elevated_fields = elevated_asrm.to_cited_fields().expect("elevated ASRM");
+        assert!(elevated_fields.iter().any(|f| {
+            f.key == "asrm_score"
+                && f.name == "ASRM (Elevated activation)"
+                && f.value == "9"
+                && f.unit.as_deref() == Some("/20")
+                && f.status.as_deref() == Some("Elevated")
+        }));
 
         let bad_mood = MentalHealthCheckIn {
             mood_1_to_10: 0,
@@ -1088,11 +1215,19 @@ Abbott Lingo,SN-441,\"Aug 26, 2026 19:00\",104,0,\"Salmon, greens, and avocado\"
         );
         let bad_gad = MentalHealthCheckIn {
             gad7_score: Some(22),
-            ..valid
+            ..valid.clone()
         };
         assert_eq!(
             bad_gad.validate(),
             Err(MentalHealthValidationError::Gad7OutOfRange(22))
+        );
+        let bad_asrm = MentalHealthCheckIn {
+            asrm_score: Some(21),
+            ..valid
+        };
+        assert_eq!(
+            bad_asrm.validate(),
+            Err(MentalHealthValidationError::AsrmOutOfRange(21))
         );
     }
 }

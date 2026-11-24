@@ -1,6 +1,8 @@
 //! Build-time seeder converting `patients/units/*/ledger.json` fixtures into `demo.sqlite`.
 
+use crate::cgm::{CgmParseError, build_commercial_cgm_record, parse_commercial_glucose_csv};
 use crate::driver::DbError;
+use crate::lingo::{MentalHealthCheckIn, MentalHealthValidationError};
 use crate::schema::{
     Briefings, Chats, FollowUps, PatientMemory, PatientReviews, Patients, PracticeVisits,
     SourceRecords, SpruceMatchQueue, TodayItems, UpdatesFeed,
@@ -9,8 +11,10 @@ use crate::spruce::{StoredMatchItem, StoredSpruceReply};
 use crate::store::{
     DEMO_DATE, DEMO_NOW, DEMO_ZONE, DemoSourceRecord, DemoStore, build_cited_source,
     build_exchange_with_segments, build_item_citation, condition_fields, format_json_scalar,
-    lab_fields, medication_fields, synthesize_chart_answer_with_citations, vitals_fields,
+    lab_fields, medication_fields, parse_record_group, synthesize_chart_answer_with_citations,
+    vitals_fields,
 };
+use crate::wellness::{WellnessSafetyPlan, WellnessSafetyPlanValidationError};
 use physician_wire::briefings::{
     BriefingClaimWire, BriefingDecisionWire, BriefingSourceStatusWire, BriefingVisitStandingWire,
     VisitBriefingWire,
@@ -60,6 +64,15 @@ pub enum SeedError {
     /// JSON parse failure for a unit ledger.
     #[error("failed parsing unit ledger JSON")]
     Json(#[from] serde_json::Error),
+    /// Synthetic CGM CSV parse or analytics failure.
+    #[error("failed parsing seeded CGM trace")]
+    Cgm(#[from] CgmParseError),
+    /// Synthetic mental health check-in validation failure.
+    #[error("failed validating seeded mental health check-in")]
+    MentalHealth(#[from] MentalHealthValidationError),
+    /// Synthetic wellness & safety plan validation failure.
+    #[error("failed validating seeded wellness & safety plan")]
+    WellnessPlan(#[from] WellnessSafetyPlanValidationError),
 }
 
 struct ExtractedRecord {
@@ -78,8 +91,13 @@ struct ExtractedRecord {
 /// Synthetic workspace ID for Maya Lin (longitudinal mental health + Abbott Lingo CGM).
 pub const MAYA_LIN_WORKSPACE_ID: &str = "unit-lingo-mh-1";
 
+/// Synthetic workspace ID for Samira Patel (longitudinal ASRM/PHQ-9/GAD-7, Dexcom G7 Clarity CGM,
+/// and clinician-reviewed Wellness & Safety Plan).
+pub const SAMIRA_PATEL_WORKSPACE_ID: &str = "unit-wellness-asrm-1";
+
 /// Seeds `store` from `units_dir`, prioritizing pilot units (`unit-2013`, `unit-2188`, `unit-2797`)
-/// and synthetic Abbott Lingo CGM + mental health patient Maya Lin (`unit-lingo-mh-1`).
+/// alongside synthetic connected-care patients Maya Lin (`unit-lingo-mh-1`) and Samira Patel
+/// (`unit-wellness-asrm-1`).
 pub fn seed_from_units_dir(
     store: &DemoStore,
     units_dir: &Path,
@@ -88,23 +106,29 @@ pub fn seed_from_units_dir(
     store.init_schema()?;
     seed_practice_connections_and_matching(store)?;
     let include_maya = limit == 0 || limit >= 4;
-    let unit_limit = if include_maya && limit > 0 {
-        limit - 1
+    let include_samira = limit == 0 || limit >= 6;
+    let synthetic_slots = usize::from(include_maya) + usize::from(include_samira);
+    let unit_limit = if limit > 0 {
+        limit.saturating_sub(synthetic_slots)
     } else {
-        limit
+        0
     };
     let mut imported = 0usize;
+    let mut maya_seeded = false;
+    let mut samira_seeded = false;
     let unit_dirs = collect_unit_dirs(units_dir, unit_limit)?;
     for (raw_idx, unit_dir) in unit_dirs.iter().enumerate() {
-        if include_maya && raw_idx == 3 {
+        if include_maya && !maya_seeded && raw_idx == 3 {
             seed_maya_lin_workspace(store)?;
+            maya_seeded = true;
             imported += 1;
         }
-        let slot_idx = if include_maya && raw_idx >= 3 {
-            raw_idx + 1
-        } else {
-            raw_idx
-        };
+        if include_samira && !samira_seeded && raw_idx == 4 {
+            seed_samira_patel_workspace(store)?;
+            samira_seeded = true;
+            imported += 1;
+        }
+        let slot_idx = raw_idx + usize::from(maya_seeded) + usize::from(samira_seeded);
         let unit_id = unit_dir
             .file_name()
             .and_then(|n| n.to_str())
@@ -119,8 +143,12 @@ pub fn seed_from_units_dir(
             imported += 1;
         }
     }
-    if include_maya && unit_dirs.len() <= 3 {
+    if include_maya && !maya_seeded {
         seed_maya_lin_workspace(store)?;
+        imported += 1;
+    }
+    if include_samira && !samira_seeded {
+        seed_samira_patel_workspace(store)?;
         imported += 1;
     }
     store
@@ -1592,207 +1620,651 @@ fn infer_sex_label(summary: &str) -> &'static str {
     }
 }
 
+fn seed_connected_source(source_id: &str, source_label: &str) -> ConnectedSource {
+    ConnectedSource {
+        source_id: Some(source_id.into()),
+        source_label: Some(source_label.into()),
+        state: SourceConnectionState {
+            state: "usable".into(),
+            synchronized_at: Some(DEMO_NOW.into()),
+            usable_snapshot: Some(SourceSnapshot {
+                synchronized_at: Some(DEMO_NOW.into()),
+            }),
+        },
+    }
+}
+
+fn build_synopsis_citation(ws_id: &str, source: &str, rec: &DemoSourceRecord) -> ClinicalSegment {
+    ClinicalSegment::Citation {
+        state: "resolved".into(),
+        display_label: Some(rec.title.clone()),
+        source: Some(source.into()),
+        source_id: Some(ws_id.into()),
+        handle: Some(rec.id.clone()),
+        source_presentation: Some(SourcePresentation {
+            content: Some(SourcePreviewContent {
+                text: rec.body.clone(),
+                as_of: rec.recorded_at.clone(),
+            }),
+        }),
+        destination: Some(CitationDestination {
+            kind: "source_native".into(),
+            source_label: Some(rec.source_label.clone()),
+            uri: None,
+        }),
+    }
+}
+
+/// Deterministic 14-day synthetic Abbott Lingo CGM trace (`2026-08-13`..=`2026-08-26`, 15-min
+/// cadence) for Maya Lin: protein-first lunch days stay `<= 124 mg/dL`, while high-glycemic
+/// workday lunches peak up to `176 mg/dL` with occasional reactive afternoon dips down to
+/// `68 mg/dL`.
+pub(crate) fn maya_lin_abbott_lingo_csv() -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::with_capacity(64 * 1024);
+    out.push_str("# Abbott Lingo Biosensor Export (Synthetic Demo Fixture)\n");
+    out.push_str("timestamp,glucose_mg_dl,lingo_count,note\n");
+
+    for day in 0u32..14 {
+        let day_of_month = 13 + day;
+        let high_glycemic_workday = day % 7 < 5;
+        let short_sleep_night = day % 3 == 0;
+
+        for slot in 0u32..96 {
+            let global_slot = day * 96 + slot;
+            // Realistic ~99.1% active wear (12 brief warmup/gap slots across 14 days).
+            if global_slot % 112 == 55 {
+                continue;
+            }
+            let hour = slot / 4;
+            let quarter = slot % 4;
+            let minute = quarter * 15;
+
+            let mut glucose: f64 = match (hour, quarter) {
+                (0..=6, _) => 89.0 + f64::from((day + hour) % 5),
+                (7, q) => 95.0 + f64::from(q) * 2.0,
+                (8, 0) if high_glycemic_workday => 120.0,
+                (8, 1) if high_glycemic_workday => 142.0,
+                (8, 2) if high_glycemic_workday => 152.0,
+                (8, 3) if high_glycemic_workday => 158.0,
+                (8, 0) => 106.0,
+                (8, 1) => 118.0,
+                (8, 2) => 124.0,
+                (8, 3) => 118.0,
+                (9, 0) if high_glycemic_workday => 156.0,
+                (9, 1) if high_glycemic_workday => 152.0,
+                (9, 2) if high_glycemic_workday => 148.0,
+                (9, 3) if high_glycemic_workday => 144.0,
+                (9, _) => 108.0 - f64::from(quarter) * 2.0,
+                (10, 0) if high_glycemic_workday => 142.0,
+                (10, 1) if high_glycemic_workday => 141.0,
+                (10, _) => 98.0 + f64::from(day % 4),
+                (11, _) => 94.0 + f64::from(day % 4),
+                (12, 0) => {
+                    if high_glycemic_workday {
+                        112.0
+                    } else {
+                        98.0
+                    }
+                }
+                (12, 1) => {
+                    if high_glycemic_workday {
+                        142.0
+                    } else {
+                        108.0
+                    }
+                }
+                (12, 2) => {
+                    if high_glycemic_workday {
+                        156.0
+                    } else {
+                        118.0
+                    }
+                }
+                (12, 3) => {
+                    if high_glycemic_workday {
+                        166.0
+                    } else {
+                        124.0
+                    }
+                }
+                (13, 0) => {
+                    if high_glycemic_workday {
+                        if day == 11 || day == 12 { 176.0 } else { 172.0 }
+                    } else {
+                        120.0
+                    }
+                }
+                (13, 1) => {
+                    if high_glycemic_workday {
+                        170.0
+                    } else {
+                        114.0
+                    }
+                }
+                (13, 2) => {
+                    if high_glycemic_workday {
+                        160.0
+                    } else {
+                        108.0
+                    }
+                }
+                (13, 3) => {
+                    if high_glycemic_workday {
+                        148.0
+                    } else {
+                        102.0
+                    }
+                }
+                (14, 0) => {
+                    if high_glycemic_workday {
+                        142.0
+                    } else {
+                        98.0
+                    }
+                }
+                (14, 1) => {
+                    if high_glycemic_workday {
+                        114.0
+                    } else {
+                        96.0
+                    }
+                }
+                (14, 2) => {
+                    if high_glycemic_workday {
+                        84.0
+                    } else {
+                        95.0
+                    }
+                }
+                (14, 3) => {
+                    if high_glycemic_workday {
+                        if day == 4 || day == 9 || day == 12 {
+                            68.0
+                        } else {
+                            72.0
+                        }
+                    } else {
+                        96.0
+                    }
+                }
+                (15, 0) => {
+                    if high_glycemic_workday {
+                        if day == 12 { 69.0 } else { 74.0 }
+                    } else {
+                        95.0
+                    }
+                }
+                (15, 1) => {
+                    if high_glycemic_workday {
+                        80.0
+                    } else {
+                        95.0
+                    }
+                }
+                (15, 2) => 88.0,
+                (15, 3) => 92.0,
+                (16..=17, _) => 95.0 + f64::from((day + quarter) % 4),
+                (18, 0) => 104.0,
+                (18, 1) => 122.0,
+                (18, 2) => {
+                    if high_glycemic_workday {
+                        142.0
+                    } else {
+                        126.0
+                    }
+                }
+                (18, 3) => {
+                    if high_glycemic_workday {
+                        148.0
+                    } else {
+                        130.0
+                    }
+                }
+                (19, 0) => {
+                    if high_glycemic_workday {
+                        146.0
+                    } else {
+                        124.0
+                    }
+                }
+                (19, 1) => {
+                    if high_glycemic_workday {
+                        142.0
+                    } else {
+                        116.0
+                    }
+                }
+                (19, 2) => 114.0,
+                (19, 3) => 106.0,
+                (20, _) => 102.0 - f64::from(quarter) * 2.0,
+                (21..=23, _) => 94.0 - f64::from(hour - 21) + f64::from(day % 3),
+                _ => 95.0,
+            };
+
+            if short_sleep_night && matches!((hour, quarter), (18, 2..=3) | (19, 0..=1)) {
+                glucose += 12.0;
+            }
+
+            let lingo_count = if glucose > 140.0 {
+                ((glucose - 140.0) * 0.25).max(1.0)
+            } else {
+                0.0
+            };
+
+            let note = match (high_glycemic_workday, hour, quarter) {
+                (true, 13, 0) => "Sweetened oat latte + white-rice bowl",
+                (true, 14, 3) if glucose < 70.0 => "Afternoon shakiness and anxiety 8/10",
+                (false, 12, 3) => "Protein-first salmon and greens lunch",
+                _ => "",
+            };
+
+            let _ = writeln!(
+                out,
+                "2026-08-{day_of_month:02}T{hour:02}:{minute:02}:00Z,{glucose:.1},{lingo_count:.1},{note}"
+            );
+        }
+    }
+    out
+}
+
+/// Deterministic 14-day synthetic Dexcom G7 Clarity CGM trace (`2026-08-13`..=`2026-08-26`,
+/// 15-min cadence) for fictional patient Samira Patel: euthymic baseline days `0..11` stay largely
+/// within range, while short-sleep activation days `11..14` show elevated late-evening post-dinner
+/// excursions (`182–206 mg/dL`) without hypoglycemia (`>= 94 mg/dL`).
+pub(crate) fn samira_patel_dexcom_clarity_csv() -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::with_capacity(96 * 1024);
+    out.push_str(
+        "Index,Timestamp (YYYY-MM-DDThh:mm:ss),Event Type,Device Info,Source Device ID,Glucose Value (mg/dL),Glucose Rate of Change (mg/dL/min)\n",
+    );
+    out.push_str("1,,FirstName,Dexcom G7,DX-G7-SYN-4421,,\n");
+
+    let mut row_idx = 2usize;
+    let mut prev_glucose: Option<f64> = None;
+
+    for day in 0u32..14 {
+        let day_of_month = 13 + day;
+        let activation_cluster = day >= 11;
+
+        for slot in 0u32..96 {
+            let global_slot = day * 96 + slot;
+            if global_slot % 112 == 55 {
+                continue;
+            }
+            let hour = slot / 4;
+            let quarter = slot % 4;
+            let minute = quarter * 15;
+
+            let glucose: f64 = if activation_cluster {
+                match (hour, quarter) {
+                    (0..=5, _) => 122.0 + f64::from((day + hour) % 6) * 2.0,
+                    (6..=7, _) => 116.0 + f64::from(quarter) * 2.0,
+                    (8, 0) => 126.0,
+                    (8, 1) => 140.0,
+                    (8, 2) => 150.0,
+                    (8, 3) => 144.0,
+                    (9..=11, _) => 124.0 - f64::from(hour - 9) * 3.0 + f64::from(quarter),
+                    (12, 0) => 122.0,
+                    (12, 1) => 138.0,
+                    (12, 2) => 156.0,
+                    (12, 3) => 168.0,
+                    (13, 0) => 162.0,
+                    (13, 1) => 148.0,
+                    (13, 2) => 136.0,
+                    (13, 3) => 126.0,
+                    (14..=17, _) => 118.0 + f64::from((day + quarter) % 5),
+                    (18, 0) => 128.0,
+                    (18, 1) => 144.0,
+                    (18, 2) => 164.0,
+                    (18, 3) => 182.0,
+                    (19, 0) => 194.0,
+                    (19, 1) => {
+                        if day == 13 {
+                            206.0
+                        } else {
+                            198.0
+                        }
+                    }
+                    (19, 2) => 192.0,
+                    (19, 3) => 184.0,
+                    (20, 0) => 176.0,
+                    (20, 1) => 168.0,
+                    (20, 2) => 162.0,
+                    (20, 3) => 158.0,
+                    (21, 0) => 168.0,
+                    (21, 1) => 184.0,
+                    (21, 2) => 190.0,
+                    (21, 3) => 178.0,
+                    (22, 0) => 164.0,
+                    (22, 1) => 154.0,
+                    (22, 2) => 146.0,
+                    (22, 3) => 140.0,
+                    (23, _) => 136.0 - f64::from(quarter) * 2.0,
+                    _ => 120.0,
+                }
+            } else {
+                match (hour, quarter) {
+                    (0..=6, _) => 94.0 + f64::from((day + hour) % 5) * 1.5,
+                    (7, q) => 100.0 + f64::from(q) * 2.0,
+                    (8, 0) => 112.0,
+                    (8, 1) => 126.0,
+                    (8, 2) => 136.0,
+                    (8, 3) => 128.0,
+                    (9..=11, _) => 110.0 - f64::from(hour - 9) * 3.0 + f64::from(day % 3),
+                    (12, 0) => 108.0,
+                    (12, 1) => 124.0,
+                    (12, 2) => 138.0,
+                    (12, 3) => 144.0,
+                    (13, 0) => 136.0,
+                    (13, 1) => 126.0,
+                    (13, 2) => 116.0,
+                    (13, 3) => 108.0,
+                    (14..=17, _) => 102.0 + f64::from((day + quarter) % 4),
+                    (18, 0) => 112.0,
+                    (18, 1) => 128.0,
+                    (18, 2) => 146.0,
+                    (18, 3) => 154.0,
+                    (19, 0) => 148.0,
+                    (19, 1) => 138.0,
+                    (19, 2) => 126.0,
+                    (19, 3) => 118.0,
+                    (20..=21, _) => 112.0 - f64::from(hour - 20) * 4.0 - f64::from(quarter),
+                    (22..=23, _) => 100.0 - f64::from(hour - 22) * 2.0 + f64::from(day % 3),
+                    _ => 104.0,
+                }
+            };
+
+            let roc = prev_glucose.map_or(0.0, |prev| ((glucose - prev) / 15.0).clamp(-3.5, 3.5));
+            prev_glucose = Some(glucose);
+
+            let _ = writeln!(
+                out,
+                "{row_idx},2026-08-{day_of_month:02}T{hour:02}:{minute:02}:00,EGV,Dexcom G7,DX-G7-SYN-4421,{glucose:.1},{roc:.1}"
+            );
+            row_idx += 1;
+        }
+    }
+    out
+}
+
+fn maya_lin_wellness_plan() -> WellnessSafetyPlan {
+    WellnessSafetyPlan {
+        title: "Clinician-Reviewed Wellness & Safety Plan".into(),
+        authored_at: "2026-08-14".into(),
+        reviewed_at: "2026-08-18".into(),
+        early_warning_sleep_cue: "< 5.5".into(),
+        early_warning_scale_cue: "GAD-7 >= 15".into(),
+        early_warning_signs: vec![
+            "Sleep under 5.5 hours for two or more nights alongside rising afternoon restlessness."
+                .into(),
+            "GAD-7 score 15 or higher, or repeated afternoon anxiety ratings of 8/10 after post-lunch glucose drops."
+                .into(),
+        ],
+        coping_steps: vec![
+            "Pause work for 5 minutes of paced 4-7-8 breathing and check Abbott Lingo trend arrow."
+                .into(),
+            "Pair afternoon snack with protein and fiber, then take a 10-minute walk outdoors."
+                .into(),
+            "Begin 22:30 screen-free wind-down routine when prior-night sleep fell below 6 hours."
+                .into(),
+        ],
+        trusted_support_summary: "Devon Lin (Brother) · +1-415-555-0142".into(),
+        trusted_support_contacts: vec![
+            "Trusted personal support: Devon Lin (Brother), +1-415-555-0142 (devon.lin@example.test); patient-consented check-in partner."
+                .into(),
+        ],
+        care_team_summary: "Dr. Hannah Alvarez (Clinic)".into(),
+        care_team_hours: "Mon–Fri 08:00–17:00".into(),
+        care_team_contacts: vec![
+            "Primary clinician: Dr. Hannah Alvarez, Coda Primary Care Demo, +1-415-555-0100 (Mon–Fri 08:00–17:00; non-urgent messages answered within 1 business day)."
+                .into(),
+            "CBT therapist: Dr. Priya Nair, PsyD, +1-415-555-0136 (biweekly outpatient appointments)."
+                .into(),
+        ],
+        crisis_resources: vec![
+            "988 Suicide & Crisis Lifeline: call or text 988 (24/7 free, confidential, non-police crisis counseling)."
+                .into(),
+            "Crisis Text Line: text HOME to 741741 (24/7 free, confidential text counseling)."
+                .into(),
+            "Community Non-Police Mobile Crisis & Peer Warm Line: +1-415-555-0198 (clinician- and peer-staffed support without law-enforcement dispatch)."
+                .into(),
+        ],
+    }
+}
+
+fn samira_patel_wellness_plan() -> WellnessSafetyPlan {
+    WellnessSafetyPlan {
+        title: "Clinician-Reviewed Wellness & Safety Plan".into(),
+        authored_at: "2026-08-12".into(),
+        reviewed_at: "2026-08-19".into(),
+        early_warning_sleep_cue: "< 5.5".into(),
+        early_warning_scale_cue: "ASRM >= 6".into(),
+        early_warning_signs: vec![
+            "Sleep under 5.5 hours for two consecutive nights or waking energized before 04:30."
+                .into(),
+            "ASRM score 6 or higher with pressured project ideas, faster speech, or skipped wind-down."
+                .into(),
+            "Late-evening Dexcom G7 Clarity post-dinner glucose rising above 180 mg/dL on short-sleep nights."
+                .into(),
+        ],
+        coping_steps: vec![
+            "Start 22:00 dark-therapy wind-down: dim lights, silence work notifications, and take prescribed evening quetiapine on schedule."
+                .into(),
+            "Defer major financial or work commitments for 48 hours and log a daily Duet sleep and ASRM check-in."
+                .into(),
+            "Take a 15-minute daytime walk and choose balanced protein-rich meals to steady evening glucose."
+                .into(),
+        ],
+        trusted_support_summary: "Rohan Patel (Spouse) · +1-415-555-0184".into(),
+        trusted_support_contacts: vec![
+            "Trusted personal support: Rohan Patel (Spouse), +1-415-555-0184 (rohan.patel@example.test); patient-consented partner for gentle sleep-routine reminders."
+                .into(),
+        ],
+        care_team_summary: "Dr. Hannah Alvarez (Clinic)".into(),
+        care_team_hours: "Mon–Fri 08:00–17:00".into(),
+        care_team_contacts: vec![
+            "Primary & collaborative behavioral clinician: Dr. Hannah Alvarez, Coda Primary Care Demo, +1-415-555-0100 (Mon–Fri 08:00–17:00; non-urgent messages answered within 1 business day)."
+                .into(),
+            "Outpatient psychiatrist: Dr. Marcus Bell, MD, +1-415-555-0172 (scheduled medication follow-up and routine check-ins)."
+                .into(),
+        ],
+        crisis_resources: vec![
+            "988 Suicide & Crisis Lifeline: call or text 988 (24/7 free, confidential, non-police crisis counseling)."
+                .into(),
+            "Crisis Text Line: text HOME to 741741 (24/7 free, confidential text counseling)."
+                .into(),
+            "Community Non-Police Mobile Crisis & Peer Warm Line: +1-415-555-0198 (clinician- and peer-staffed support without law-enforcement dispatch)."
+                .into(),
+        ],
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn seed_maya_lin_workspace(store: &DemoStore) -> Result<(), SeedError> {
     let ws_id = MAYA_LIN_WORKSPACE_ID;
     let display_name = "Maya Lin";
     let mrn = "MRN00004412";
     let birth_date = "1992-04-18";
-    let summary = "34-year-old woman with generalized anxiety disorder (GAD-7 12/21, down from 15/21) and mild depressive symptoms (PHQ-9 8/27, down from 11/27) on escitalopram 10 mg daily, sharing 14-day Abbott Lingo CGM biosensor data and daily mental health check-ins through Duet Connected Care.";
 
-    let cgm_14d_body = "14-day Abbott Lingo CGM biosensor summary (2026-08-13 to 2026-08-26, n = 1,344 readings, 99% sensor wear): mean glucose 108.4 mg/dL, nadir 68.0 mg/dL, peak 176.0 mg/dL, SD 24.9 mg/dL, glycemic variability CV 23.0%, Time in Tight Range (70–140 mg/dL) 81.5%, Time in Range (70–180 mg/dL) 98.8%, 11 post-prandial excursions >140 mg/dL, 3 brief reactive dips <70 mg/dL, mean Lingo Count 64.0 pts/day.";
-    let corr_body = "Abbott Lingo CGM & Duet symptom correlation log (2026-08-19 to 2026-08-25): high-glycemic lunches (sweetened oat latte + white-rice bowl) produced peaks of 168–176 mg/dL within 50 minutes followed by rapid drops to 68–73 mg/dL between 2:30 PM and 3:30 PM, coinciding with acute palpitations, shakiness, and afternoon anxiety ratings of 8/10 on 5 of 7 days. On protein-first lunches (eggs, salmon, greens), post-meal glucose stayed <= 124 mg/dL and afternoon anxiety stayed 3/10.";
+    let lingo_csv = maya_lin_abbott_lingo_csv();
+    let lingo_import = parse_commercial_glucose_csv(&lingo_csv, None)?;
+    let (cgm_rec, cgm_summary) = build_commercial_cgm_record(
+        ws_id,
+        format!("rec-{ws_id}-cgm-14d"),
+        "14-Day Abbott Lingo CGM Biosensor Summary",
+        &lingo_import,
+    )?;
+
+    let summary = format!(
+        "34-year-old woman with generalized anxiety disorder (GAD-7 12/21, down from 15/21) and mild depressive symptoms (PHQ-9 8/27, down from 11/27) on escitalopram 10 mg daily, sharing 14-day Abbott Lingo CGM biosensor data (mean {:.1} mg/dL, peak {:.1} mg/dL, nadir {:.1} mg/dL, TITR {:.1}%, CV {:.1}%) alongside daily check-ins and a clinician-reviewed Wellness & Safety Plan through Duet Connected Care.",
+        cgm_summary.mean_mg_dl,
+        cgm_summary.max_mg_dl,
+        cgm_summary.min_mg_dl,
+        cgm_summary.titr_70_140_percent,
+        cgm_summary.cv_percent,
+    );
+
+    let corr_body = format!(
+        "Abbott Lingo CGM & Duet symptom correlation log (2026-08-19 to 2026-08-26): high-glycemic lunches (sweetened oat latte + white-rice bowl) peaked up to {:.1} mg/dL followed 90–150 minutes later by reactive dips down to {:.1} mg/dL ({} readings <70 mg/dL across the 14-day trace), coinciding with afternoon palpitations, shakiness, and anxiety ratings of 8/10 on 5 of 7 days. On protein-first lunches (eggs, salmon, greens), post-meal glucose stayed <= 124 mg/dL and afternoon anxiety stayed 3/10.",
+        cgm_summary.max_mg_dl, cgm_summary.min_mg_dl, cgm_summary.low_count_under_70,
+    );
     let scales_body = "Longitudinal PHQ-9 & GAD-7 mental health assessments (2026-08-24 vs 2026-07-10 baseline): GAD-7 total score 12/21 (Moderate, improved from 15/21 Severe on 2026-07-10); PHQ-9 total score 8/27 (Mild, improved from 11/27 Moderate on 2026-07-10; item-9 suicidal ideation score 0). Residual anxiety clusters in mid-afternoon workdays.";
-    let checkins_body = "7-day Duet daily mood, anxiety, energy, and sleep check-in rollup (2026-08-20 to 2026-08-26): mean mood 6.5/10, mean afternoon anxiety 6.8/10 (8/10 after <6.0 h sleep vs 3.5/10 after >=7.5 h sleep), mean daytime energy 5.8/10, mean sleep duration 6.4 h. Nights <6.0 h preceded higher next-day Lingo Count (78 pts vs 38 pts).";
+    let checkins_body = format!(
+        "7-day Duet daily mood, anxiety, energy, and sleep check-in rollup (2026-08-20 to 2026-08-26): mean mood 6.5/10, mean afternoon anxiety 6.8/10 (8/10 after <6.0 h sleep vs 3.5/10 after >=7.5 h sleep), mean daytime energy 5.8/10, mean sleep duration 6.4 h. Across the 14-day Abbott Lingo window, cumulative Lingo Count totaled {:.1} pts (mean {:.1} pts/day).",
+        cgm_summary.total_lingo_count.unwrap_or(0.0),
+        cgm_summary.total_lingo_count.unwrap_or(0.0) / 14.0,
+    );
     let meds_body = "Psychiatry & integrative primary care follow-up note (2026-08-12): Escitalopram 10 mg PO daily started 2026-06-15, well tolerated without GI or sexual side effects. Biweekly CBT ongoing. Patient wearing Abbott Lingo upper-arm biosensor to evaluate afternoon adrenergic spells versus panic episodes; trial pairing carbohydrates with >=25 g protein + 10-minute post-lunch walk.";
 
+    let plan_rec = DemoSourceRecord {
+        id: format!("rec-{ws_id}-plan"),
+        workspace_id: ws_id.into(),
+        group: "medications".into(),
+        title: "Escitalopram 10 mg & Behavioral Care Plan".into(),
+        recorded_at: "2026-08-12".into(),
+        body: meds_body.into(),
+        source_label: "Primary EHR".into(),
+        readable_parts: vec![CitedTextPartWire {
+            label: Some("Care Plan".into()),
+            text: meds_body.into(),
+        }],
+        fields: vec![CitedFieldWire {
+            key: "escitalopram_dose".into(),
+            name: "Escitalopram".into(),
+            value: "10".into(),
+            unit: Some("mg daily".into()),
+            range: None,
+            status: Some("Active".into()),
+        }],
+        record_status: "final".into(),
+        raw_content: None,
+    };
+    let scales_rec = DemoSourceRecord {
+        id: format!("rec-{ws_id}-phq-gad"),
+        workspace_id: ws_id.into(),
+        group: "results".into(),
+        title: "Longitudinal GAD-7 & PHQ-9 Screening".into(),
+        recorded_at: "2026-08-24".into(),
+        body: scales_body.into(),
+        source_label: "Duet Mental Health Check-In".into(),
+        readable_parts: vec![CitedTextPartWire {
+            label: Some("Standardized Scales".into()),
+            text: scales_body.into(),
+        }],
+        fields: vec![
+            CitedFieldWire {
+                key: "gad7_score".into(),
+                name: "GAD-7 (Moderate)".into(),
+                value: "12".into(),
+                unit: Some("/21".into()),
+                range: Some("0–4 Minimal (prior 15/21)".into()),
+                status: Some("Moderate".into()),
+            },
+            CitedFieldWire {
+                key: "phq9_score".into(),
+                name: "PHQ-9 (Mild)".into(),
+                value: "8".into(),
+                unit: Some("/27".into()),
+                range: Some("0–4 Minimal (prior 11/27)".into()),
+                status: Some("Mild".into()),
+            },
+        ],
+        record_status: "final".into(),
+        raw_content: None,
+    };
+    let corr_rec = DemoSourceRecord {
+        id: format!("rec-{ws_id}-corr"),
+        workspace_id: ws_id.into(),
+        group: "notes".into(),
+        title: "Post-Prandial Lingo Spikes & Afternoon Anxiety Correlation".into(),
+        recorded_at: "2026-08-25".into(),
+        body: corr_body.clone(),
+        source_label: "Abbott Lingo CGM + Duet".into(),
+        readable_parts: vec![CitedTextPartWire {
+            label: Some("Symptom & Glucose Correlation".into()),
+            text: corr_body,
+        }],
+        fields: vec![
+            CitedFieldWire {
+                key: "afternoon_anxiety_spike".into(),
+                name: "Afternoon Anxiety (post-spike days)".into(),
+                value: "8".into(),
+                unit: Some("/10".into()),
+                range: Some("1–4".into()),
+                status: Some("Elevated".into()),
+            },
+            CitedFieldWire {
+                key: "reactive_glucose_nadir".into(),
+                name: "Post-Lunch Reactive Nadir".into(),
+                value: format!("{:.1}", cgm_summary.min_mg_dl),
+                unit: Some("mg/dL".into()),
+                range: Some(">= 70 mg/dL".into()),
+                status: Some(if cgm_summary.min_mg_dl < 70.0 {
+                    "Low".into()
+                } else {
+                    "Normal".into()
+                }),
+            },
+        ],
+        record_status: "final".into(),
+        raw_content: None,
+    };
+    let checkins_rec = DemoSourceRecord {
+        id: format!("rec-{ws_id}-checkins"),
+        workspace_id: ws_id.into(),
+        group: "results".into(),
+        title: "7-Day Mood, Anxiety, Energy & Sleep Check-Ins".into(),
+        recorded_at: "2026-08-26".into(),
+        body: checkins_body.clone(),
+        source_label: "Duet Mental Health Check-In".into(),
+        readable_parts: vec![CitedTextPartWire {
+            label: Some("7-Day Check-In Rollup".into()),
+            text: checkins_body,
+        }],
+        fields: vec![
+            CitedFieldWire {
+                key: "mean_mood".into(),
+                name: "7-Day Mean Mood".into(),
+                value: "6.5".into(),
+                unit: Some("/10".into()),
+                range: Some("6–10".into()),
+                status: Some("Normal".into()),
+            },
+            CitedFieldWire {
+                key: "mean_sleep".into(),
+                name: "7-Day Mean Sleep".into(),
+                value: "6.4".into(),
+                unit: Some("h".into()),
+                range: Some("7.0–9.0 h".into()),
+                status: Some("Low".into()),
+            },
+        ],
+        record_status: "final".into(),
+        raw_content: None,
+    };
+    let wellness_rec =
+        maya_lin_wellness_plan().to_source_record(format!("rec-{ws_id}-wellness-plan"), ws_id)?;
+
     let demo_records = vec![
-        DemoSourceRecord {
-            id: format!("rec-{ws_id}-plan"),
-            workspace_id: ws_id.into(),
-            group: "medications".into(),
-            title: "Escitalopram 10 mg & Behavioral Care Plan".into(),
-            recorded_at: "2026-08-12".into(),
-            body: meds_body.into(),
-            source_label: "Primary EHR".into(),
-            readable_parts: vec![CitedTextPartWire {
-                label: Some("Care Plan".into()),
-                text: meds_body.into(),
-            }],
-            fields: vec![CitedFieldWire {
-                key: "escitalopram_dose".into(),
-                name: "Escitalopram".into(),
-                value: "10".into(),
-                unit: Some("mg daily".into()),
-                range: None,
-                status: Some("Active".into()),
-            }],
-            record_status: "final".into(),
-            raw_content: None,
-        },
-        DemoSourceRecord {
-            id: format!("rec-{ws_id}-phq-gad"),
-            workspace_id: ws_id.into(),
-            group: "results".into(),
-            title: "Longitudinal GAD-7 & PHQ-9 Screening".into(),
-            recorded_at: "2026-08-24".into(),
-            body: scales_body.into(),
-            source_label: "Duet Mental Health Check-In".into(),
-            readable_parts: vec![CitedTextPartWire {
-                label: Some("Standardized Scales".into()),
-                text: scales_body.into(),
-            }],
-            fields: vec![
-                CitedFieldWire {
-                    key: "gad7_score".into(),
-                    name: "GAD-7 (Moderate)".into(),
-                    value: "12".into(),
-                    unit: Some("/21".into()),
-                    range: Some("0–4 Minimal (prior 15/21)".into()),
-                    status: Some("Moderate".into()),
-                },
-                CitedFieldWire {
-                    key: "phq9_score".into(),
-                    name: "PHQ-9 (Mild)".into(),
-                    value: "8".into(),
-                    unit: Some("/27".into()),
-                    range: Some("0–4 Minimal (prior 11/27)".into()),
-                    status: Some("Mild".into()),
-                },
-            ],
-            record_status: "final".into(),
-            raw_content: None,
-        },
-        DemoSourceRecord {
-            id: format!("rec-{ws_id}-corr"),
-            workspace_id: ws_id.into(),
-            group: "notes".into(),
-            title: "Post-Prandial Lingo Spikes & Afternoon Anxiety Correlation".into(),
-            recorded_at: "2026-08-25".into(),
-            body: corr_body.into(),
-            source_label: "Abbott Lingo CGM + Duet".into(),
-            readable_parts: vec![CitedTextPartWire {
-                label: Some("Symptom & Glucose Correlation".into()),
-                text: corr_body.into(),
-            }],
-            fields: vec![
-                CitedFieldWire {
-                    key: "afternoon_anxiety_spike".into(),
-                    name: "Afternoon Anxiety (post-spike days)".into(),
-                    value: "8".into(),
-                    unit: Some("/10".into()),
-                    range: Some("1–4".into()),
-                    status: Some("Elevated".into()),
-                },
-                CitedFieldWire {
-                    key: "reactive_glucose_nadir".into(),
-                    name: "Post-Lunch Reactive Nadir".into(),
-                    value: "68.0".into(),
-                    unit: Some("mg/dL".into()),
-                    range: Some(">= 70 mg/dL".into()),
-                    status: Some("Low".into()),
-                },
-            ],
-            record_status: "final".into(),
-            raw_content: None,
-        },
-        DemoSourceRecord {
-            id: format!("rec-{ws_id}-checkins"),
-            workspace_id: ws_id.into(),
-            group: "results".into(),
-            title: "7-Day Mood, Anxiety, Energy & Sleep Check-Ins".into(),
-            recorded_at: "2026-08-26".into(),
-            body: checkins_body.into(),
-            source_label: "Duet Mental Health Check-In".into(),
-            readable_parts: vec![CitedTextPartWire {
-                label: Some("7-Day Check-In Rollup".into()),
-                text: checkins_body.into(),
-            }],
-            fields: vec![
-                CitedFieldWire {
-                    key: "mean_mood".into(),
-                    name: "7-Day Mean Mood".into(),
-                    value: "6.5".into(),
-                    unit: Some("/10".into()),
-                    range: Some("6–10".into()),
-                    status: Some("Normal".into()),
-                },
-                CitedFieldWire {
-                    key: "mean_sleep".into(),
-                    name: "7-Day Mean Sleep".into(),
-                    value: "6.4".into(),
-                    unit: Some("h".into()),
-                    range: Some("7.0–9.0 h".into()),
-                    status: Some("Low".into()),
-                },
-            ],
-            record_status: "final".into(),
-            raw_content: None,
-        },
-        DemoSourceRecord {
-            id: format!("rec-{ws_id}-cgm-14d"),
-            workspace_id: ws_id.into(),
-            group: "results".into(),
-            title: "14-Day Abbott Lingo CGM Biosensor Summary".into(),
-            recorded_at: "2026-08-26".into(),
-            body: cgm_14d_body.into(),
-            source_label: "Abbott Lingo CGM".into(),
-            readable_parts: vec![CitedTextPartWire {
-                label: Some("14-Day Lingo Biosensor Summary".into()),
-                text: cgm_14d_body.into(),
-            }],
-            fields: vec![
-                CitedFieldWire {
-                    key: "lingo_mean_glucose".into(),
-                    name: "Mean Glucose (14d Lingo)".into(),
-                    value: "108.4".into(),
-                    unit: Some("mg/dL".into()),
-                    range: Some("70–115 mg/dL".into()),
-                    status: Some("Normal".into()),
-                },
-                CitedFieldWire {
-                    key: "lingo_peak_glucose".into(),
-                    name: "Peak Glucose".into(),
-                    value: "176.0".into(),
-                    unit: Some("mg/dL".into()),
-                    range: Some("<= 140 mg/dL".into()),
-                    status: Some("Elevated".into()),
-                },
-                CitedFieldWire {
-                    key: "lingo_cv_percent".into(),
-                    name: "Glycemic Variability (CV)".into(),
-                    value: "23.0".into(),
-                    unit: Some("%".into()),
-                    range: Some("< 20.0%".into()),
-                    status: Some("Elevated".into()),
-                },
-                CitedFieldWire {
-                    key: "lingo_tir_70_140".into(),
-                    name: "Time in Tight Range (70–140)".into(),
-                    value: "81.5".into(),
-                    unit: Some("%".into()),
-                    range: Some(">= 85.0%".into()),
-                    status: Some(crate::lingo::tight_tir_status(81.5).into()),
-                },
-                CitedFieldWire {
-                    key: "lingo_daily_count".into(),
-                    name: "Mean Daily Lingo Count".into(),
-                    value: "64.0".into(),
-                    unit: Some("pts/day".into()),
-                    range: Some("<= 45 pts/day".into()),
-                    status: Some("Elevated".into()),
-                },
-            ],
-            record_status: "final".into(),
-            raw_content: None,
-        },
+        plan_rec,
+        scales_rec,
+        corr_rec,
+        checkins_rec.clone(),
+        wellness_rec.clone(),
+        cgm_rec.clone(),
     ];
 
     for rec in &demo_records {
         store.insert_structured_source_record(rec)?;
     }
 
-    let reason = "Abbott Lingo CGM post-lunch spikes (176 mg/dL) & reactive dips correlating with afternoon GAD-7 anxiety";
+    let reason = format!(
+        "Abbott Lingo CGM post-lunch spikes ({:.0} mg/dL, TITR {:.1}%) & reactive dips ({:.0} mg/dL) correlating with afternoon GAD-7 anxiety",
+        cgm_summary.max_mg_dl, cgm_summary.titr_70_140_percent, cgm_summary.min_mg_dl,
+    );
     let waited = "2026-08-27T16:20:00.000Z";
     let item_id = format!("today-{ws_id}");
     let chat_id = format!("chat-{ws_id}-1");
@@ -1861,7 +2333,7 @@ fn seed_maya_lin_workspace(store: &DemoStore) -> Result<(), SeedError> {
         visit_label,
         starts,
         ends,
-        summary,
+        &summary,
         &demo_records,
     )?;
 
@@ -1871,8 +2343,8 @@ fn seed_maya_lin_workspace(store: &DemoStore) -> Result<(), SeedError> {
         patient_workspace_id: ws_id.into(),
         patient_display_name: display_name.into(),
         kind: UpdateItemKindWire::AssessedReview,
-        headline: reason.into(),
-        detail: truncate_detail(summary),
+        headline: reason.clone(),
+        detail: truncate_detail(&summary),
         occurred_at: waited.into(),
         standing: SeenStandingWire::Unseen,
     };
@@ -1888,7 +2360,7 @@ fn seed_maya_lin_workspace(store: &DemoStore) -> Result<(), SeedError> {
         ],
     )?;
 
-    seed_patient_reviews(store, 3, ws_id, reason, summary, &demo_records)?;
+    seed_patient_reviews(store, 3, ws_id, &reason, &summary, &demo_records)?;
 
     let fu = FollowUpWire {
         follow_up_id: format!("fu-{ws_id}-1"),
@@ -1903,7 +2375,7 @@ fn seed_maya_lin_workspace(store: &DemoStore) -> Result<(), SeedError> {
             run_id: format!("run-{ws_id}-1"),
         },
         latest_note: Some(
-            "Reassess afternoon anxiety ratings, post-lunch glucose peaks <=140 mg/dL, and sleep continuity.".into(),
+            "Reassess afternoon anxiety ratings, post-lunch glucose peaks <=140 mg/dL, sleep continuity, and Wellness & Safety Plan coping steps.".into(),
         ),
         updated_at: DEMO_NOW.into(),
     };
@@ -1930,7 +2402,14 @@ fn seed_maya_lin_workspace(store: &DemoStore) -> Result<(), SeedError> {
         direction: Some(MemoryDocumentWire {
             version: 1,
             saved_at: DEMO_DATE.into(),
-            markdown: "Correlate afternoon anxiety spells with Abbott Lingo post-prandial glucose drops and <6 h sleep nights; maintain escitalopram 10 mg daily and biweekly CBT.".into(),
+            markdown: format!(
+                "Correlate afternoon anxiety spells with Abbott Lingo post-prandial glucose swings (peak {:.1} mg/dL, nadir {:.1} mg/dL, GMI {:.1}%, GRI {:.1} {}) and <6 h sleep nights; maintain escitalopram 10 mg daily, biweekly CBT, and patient-shared Wellness & Safety Plan.",
+                cgm_summary.max_mg_dl,
+                cgm_summary.min_mg_dl,
+                cgm_summary.gmi_percent,
+                cgm_summary.gri,
+                cgm_summary.gri_zone.label(),
+            ),
         }),
     };
     store.driver().insert_row(
@@ -1939,19 +2418,19 @@ fn seed_maya_lin_workspace(store: &DemoStore) -> Result<(), SeedError> {
         [ws_id.into(), 0.into(), serde_json::to_string(&mem)?.into()],
     )?;
 
-    let cited_recs: Vec<_> = demo_records.iter().rev().take(3).cloned().collect();
+    let cited_recs = vec![cgm_rec.clone(), checkins_rec, wellness_rec.clone()];
     let reads: Vec<_> = cited_recs
         .iter()
         .map(|r| {
             (
                 r.id.clone(),
-                RecordGroup::Results,
+                parse_record_group(&r.group),
                 r.title.clone(),
                 r.recorded_at.clone(),
             )
         })
         .collect();
-    let query = "lingo glucose spikes afternoon anxiety gad7 sleep";
+    let query = "lingo glucose spikes afternoon anxiety sleep wellness safety plan 988";
     let (answer_text, segments, basis, sources) =
         synthesize_chart_answer_with_citations(query, &cited_recs, &format!("seed-{ws_id}"));
     let snap = ChatSnapshot {
@@ -1963,7 +2442,7 @@ fn seed_maya_lin_workspace(store: &DemoStore) -> Result<(), SeedError> {
             ws_id,
             (
                 format!("msg-seed-{ws_id}"),
-                "Correlate Maya's Abbott Lingo CGM patterns with her GAD-7, PHQ-9, and afternoon anxiety check-ins.".into(),
+                "Correlate Maya's Abbott Lingo CGM patterns with her GAD-7, sleep check-ins, and Wellness & Safety Plan.".into(),
                 1_787_850_120,
             ),
             query,
@@ -1985,7 +2464,6 @@ fn seed_maya_lin_workspace(store: &DemoStore) -> Result<(), SeedError> {
         ],
     )?;
 
-    let synopsis_rec = &demo_records[4];
     let workspace = PatientWorkspaceResponse {
         patient_workspace_id: ws_id.into(),
         display_name: display_name.into(),
@@ -2013,24 +2491,8 @@ fn seed_maya_lin_workspace(store: &DemoStore) -> Result<(), SeedError> {
                 ClinicalSegment::Text {
                     text: format!("{summary} "),
                 },
-                ClinicalSegment::Citation {
-                    state: "resolved".into(),
-                    display_label: Some(synopsis_rec.title.clone()),
-                    source: Some("abbott-lingo-cgm".into()),
-                    source_id: Some(ws_id.into()),
-                    handle: Some(synopsis_rec.id.clone()),
-                    source_presentation: Some(SourcePresentation {
-                        content: Some(SourcePreviewContent {
-                            text: synopsis_rec.body.clone(),
-                            as_of: synopsis_rec.recorded_at.clone(),
-                        }),
-                    }),
-                    destination: Some(CitationDestination {
-                        kind: "source_native".into(),
-                        source_label: Some(synopsis_rec.source_label.clone()),
-                        uri: None,
-                    }),
-                },
+                build_synopsis_citation(ws_id, "abbott-lingo-cgm", &cgm_rec),
+                build_synopsis_citation(ws_id, "duet-wellness-plan", &wellness_rec),
             ],
             authored_at: Some(DEMO_NOW.into()),
         }),
@@ -2039,7 +2501,7 @@ fn seed_maya_lin_workspace(store: &DemoStore) -> Result<(), SeedError> {
             state: "finished".into(),
             ended_cause: None,
             purpose: Some(WorkPurpose {
-                headline: Some(reason.into()),
+                headline: Some(reason),
             }),
         }),
         active_follow_ups: vec![FollowUp {
@@ -2049,28 +2511,8 @@ fn seed_maya_lin_workspace(store: &DemoStore) -> Result<(), SeedError> {
         has_past_work: true,
         last_reviewed_at: Some(DEMO_NOW.into()),
         connected_sources: vec![
-            ConnectedSource {
-                source_id: Some("synthetic-ehr".into()),
-                source_label: Some("Primary EHR".into()),
-                state: SourceConnectionState {
-                    state: "usable".into(),
-                    synchronized_at: Some(DEMO_NOW.into()),
-                    usable_snapshot: Some(SourceSnapshot {
-                        synchronized_at: Some(DEMO_NOW.into()),
-                    }),
-                },
-            },
-            ConnectedSource {
-                source_id: Some("abbott-lingo-cgm".into()),
-                source_label: Some("Abbott Lingo CGM (via Duet)".into()),
-                state: SourceConnectionState {
-                    state: "usable".into(),
-                    synchronized_at: Some(DEMO_NOW.into()),
-                    usable_snapshot: Some(SourceSnapshot {
-                        synchronized_at: Some(DEMO_NOW.into()),
-                    }),
-                },
-            },
+            seed_connected_source("synthetic-ehr", "Primary EHR"),
+            seed_connected_source("abbott-lingo-cgm", "Abbott Lingo CGM (via Duet)"),
         ],
         replies: Vec::new(),
         superseded_replies: Vec::new(),
@@ -2083,6 +2525,419 @@ fn seed_maya_lin_workspace(store: &DemoStore) -> Result<(), SeedError> {
             source_recommendation_id: None,
         }],
         undecided_recommendations: build_recommendations(ws_id, 3),
+        connection_status: ConnectionStatusWire::Connected,
+        patient_link: Some(PatientLinkWire {
+            practice_id: "prac-coda-demo".into(),
+            patient_workspace_id: ws_id.into(),
+            duet_account_id: Some(format!("duet-{ws_id}")),
+            linked: true,
+            sharing_consented: true,
+            connection_status: ConnectionStatusWire::Connected,
+            consent_version: Some("v1".into()),
+            consented_at: Some(1_785_000_000),
+            revoked_at: None,
+            invited_email: None,
+            wrong_dob_attempts: 0,
+            locked_at: None,
+            delivery_failed_at: None,
+            delivery_error: None,
+        }),
+    };
+    store.driver().insert_row(
+        Patients::Table,
+        Patients::COLS,
+        [
+            ws_id.into(),
+            display_name.into(),
+            mrn.into(),
+            birth_date.into(),
+            serde_json::to_string(&workspace)?.into(),
+        ],
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_lines)]
+fn seed_samira_patel_workspace(store: &DemoStore) -> Result<(), SeedError> {
+    let ws_id = SAMIRA_PATEL_WORKSPACE_ID;
+    let display_name = "Samira Patel";
+    let mrn = "MRN00004421";
+    let birth_date = "1988-02-14";
+
+    let dexcom_csv = samira_patel_dexcom_clarity_csv();
+    let dexcom_import = parse_commercial_glucose_csv(&dexcom_csv, None)?;
+    let (cgm_rec, cgm_summary) = build_commercial_cgm_record(
+        ws_id,
+        format!("rec-{ws_id}-cgm-14d"),
+        "14-Day Dexcom G7 Clarity AGP Summary",
+        &dexcom_import,
+    )?;
+
+    let checkin_baseline = MentalHealthCheckIn {
+        recorded_at: "2026-08-12T08:30:00Z".into(),
+        mood_1_to_10: 7,
+        anxiety_1_to_10: 3,
+        energy_1_to_10: 7,
+        sleep_hours: 7.6,
+        phq9_score: Some(4),
+        gad7_score: Some(4),
+        asrm_score: Some(2),
+        note: "Steady euthymic baseline; regular 22:30 bedtime and consistent lamotrigine 200 mg + quetiapine 50 mg QHS adherence.".into(),
+    };
+    let checkin_early = MentalHealthCheckIn {
+        recorded_at: "2026-08-24T08:15:00Z".into(),
+        mood_1_to_10: 8,
+        anxiety_1_to_10: 5,
+        energy_1_to_10: 9,
+        sleep_hours: 5.1,
+        phq9_score: Some(3),
+        gad7_score: Some(6),
+        asrm_score: Some(7),
+        note: "Two short-sleep nights (<5.5 h cue) during deadline week with elevated daytime drive; full medication adherence and no safety concerns.".into(),
+    };
+    let checkin_latest = MentalHealthCheckIn {
+        recorded_at: "2026-08-26T08:00:00Z".into(),
+        mood_1_to_10: 9,
+        anxiety_1_to_10: 5,
+        energy_1_to_10: 9,
+        sleep_hours: 4.8,
+        phq9_score: Some(3),
+        gad7_score: Some(7),
+        asrm_score: Some(9),
+        note: "Third short-sleep night (4.8 h); started Wellness & Safety Plan 22:00 wind-down and scheduled clinician review. Taking lamotrigine and quetiapine as prescribed; denies suicidal ideation.".into(),
+    };
+
+    let checkin_baseline_rec =
+        checkin_baseline.to_source_record(format!("rec-{ws_id}-mh-baseline"), ws_id)?;
+    let checkin_early_rec =
+        checkin_early.to_source_record(format!("rec-{ws_id}-mh-20260824"), ws_id)?;
+    let checkin_latest_rec =
+        checkin_latest.to_source_record(format!("rec-{ws_id}-mh-20260826"), ws_id)?;
+    let wellness_rec = samira_patel_wellness_plan()
+        .to_source_record(format!("rec-{ws_id}-wellness-plan"), ws_id)?;
+
+    let meds_body = "Outpatient psychiatry & primary care maintenance note (2026-08-12): Bipolar II maintenance on lamotrigine 200 mg PO daily and quetiapine 50 mg PO QHS, well tolerated with steady adherence. Wearing Dexcom G7 Clarity CGM to monitor mild SGA-associated late-evening post-prandial dysglycemia alongside Duet sleep, ASRM, PHQ-9, and GAD-7 check-ins and a patient-shared Wellness & Safety Plan.";
+    let plan_rec = DemoSourceRecord {
+        id: format!("rec-{ws_id}-plan"),
+        workspace_id: ws_id.into(),
+        group: "medications".into(),
+        title: "Lamotrigine 200 mg, Quetiapine 50 mg & Metabolic Monitoring Plan".into(),
+        recorded_at: "2026-08-12".into(),
+        body: meds_body.into(),
+        source_label: "Primary EHR".into(),
+        readable_parts: vec![CitedTextPartWire {
+            label: Some("Maintenance Care Plan".into()),
+            text: meds_body.into(),
+        }],
+        fields: vec![
+            CitedFieldWire {
+                key: "lamotrigine_dose".into(),
+                name: "Lamotrigine".into(),
+                value: "200".into(),
+                unit: Some("mg daily".into()),
+                range: None,
+                status: Some("Active".into()),
+            },
+            CitedFieldWire {
+                key: "quetiapine_dose".into(),
+                name: "Quetiapine".into(),
+                value: "50".into(),
+                unit: Some("mg QHS".into()),
+                range: None,
+                status: Some("Active".into()),
+            },
+        ],
+        record_status: "final".into(),
+        raw_content: None,
+    };
+
+    let demo_records = vec![
+        plan_rec,
+        checkin_baseline_rec,
+        checkin_early_rec,
+        checkin_latest_rec.clone(),
+        wellness_rec.clone(),
+        cgm_rec.clone(),
+    ];
+
+    for rec in &demo_records {
+        store.insert_structured_source_record(rec)?;
+    }
+
+    let summary = format!(
+        "38-year-old woman in outpatient bipolar-II maintenance (lamotrigine 200 mg daily, quetiapine 50 mg QHS) sharing longitudinal Duet check-ins (ASRM rose from 2/20 to 9/20 as sleep fell from 7.6 h to 4.8 h; PHQ-9 3/27, GAD-7 7/21), a clinician-reviewed Wellness & Safety Plan, and 14-day Dexcom G7 Clarity CGM data (mean {:.1} mg/dL, peak {:.1} mg/dL, TIR {:.1}%, GMI {:.1}%, GRI {:.1} {}).",
+        cgm_summary.mean_mg_dl,
+        cgm_summary.max_mg_dl,
+        cgm_summary.tir_70_180_percent,
+        cgm_summary.gmi_percent,
+        cgm_summary.gri,
+        cgm_summary.gri_zone.label(),
+    );
+
+    let reason = format!(
+        "Short sleep (4.8 h) & ASRM 9/20 activation with late-evening Dexcom G7 excursions ({:.0} mg/dL, TIR {:.1}%) — review Wellness & Safety Plan",
+        cgm_summary.max_mg_dl, cgm_summary.tir_70_180_percent,
+    );
+    let waited = "2026-08-27T16:45:00.000Z";
+    let item_id = format!("today-{ws_id}");
+    let chat_id = format!("chat-{ws_id}-1");
+    let row_json = json!({
+        "patient_workspace_id": ws_id,
+        "patient_display_name": display_name,
+        "item_id": item_id,
+        "version_id": format!("ver-{ws_id}-1"),
+        "waiting_since": waited,
+        "urgency": "today",
+        "kind": "concern",
+        "title": reason,
+        "reason": reason,
+        "can_mark_done": true,
+        "linked_chat_id": chat_id,
+        "spruce_conversation_id": Value::Null,
+    });
+    store.driver().insert_row(
+        TodayItems::Table,
+        TodayItems::COLS,
+        [
+            item_id.as_str().into(),
+            ws_id.into(),
+            "today".into(),
+            waited.into(),
+            "concern".into(),
+            row_json.to_string().into(),
+            0.into(),
+            0.into(),
+        ],
+    )?;
+
+    let starts = "2026-08-27T22:00:00.000Z";
+    let ends = "2026-08-27T22:30:00.000Z";
+    let briefing_id = format!("briefing-{ws_id}");
+    let visit_label = "Wellness plan, ASRM & Dexcom G7 review";
+    let visit_json = json!({
+        "patient_display_name": display_name,
+        "patient_workspace_id": ws_id,
+        "label": visit_label,
+        "starts_at": starts,
+        "ends_at": ends,
+        "status": "scheduled",
+        "patient_time_zone": DEMO_ZONE,
+        "preparation": {
+            "state": "prepared",
+            "briefing_id": briefing_id,
+            "last_attempt": { "outcome": "completed" }
+        }
+    });
+    store.driver().insert_row(
+        PracticeVisits::Table,
+        PracticeVisits::COLS,
+        [
+            format!("visit-{ws_id}").into(),
+            starts.into(),
+            visit_json.to_string().into(),
+        ],
+    )?;
+
+    seed_visit_briefing(
+        store,
+        ws_id,
+        display_name,
+        &briefing_id,
+        visit_label,
+        starts,
+        ends,
+        &summary,
+        &demo_records,
+    )?;
+
+    let update_item = UpdateItemWire {
+        item_id: format!("upd-{ws_id}"),
+        version_id: "1".into(),
+        patient_workspace_id: ws_id.into(),
+        patient_display_name: display_name.into(),
+        kind: UpdateItemKindWire::AssessedReview,
+        headline: reason.clone(),
+        detail: truncate_detail(&summary),
+        occurred_at: waited.into(),
+        standing: SeenStandingWire::Unseen,
+    };
+    store.driver().insert_row(
+        UpdatesFeed::Table,
+        UpdatesFeed::COLS,
+        [
+            update_item.item_id.as_str().into(),
+            ws_id.into(),
+            "today".into(),
+            waited.into(),
+            serde_json::to_string(&update_item)?.into(),
+        ],
+    )?;
+
+    seed_patient_reviews(store, 5, ws_id, &reason, &summary, &demo_records)?;
+
+    let fu = FollowUpWire {
+        follow_up_id: format!("fu-{ws_id}-1"),
+        patient_workspace_id: ws_id.into(),
+        version: 1,
+        summary: "72-hour sleep continuity, ASRM & Dexcom G7 evening excursion check-in".into(),
+        standing: FollowUpStandingWire::Scheduled {
+            due_at: "2026-08-30T15:00:00Z".into(),
+            due_date_input: "2026-08-30".into(),
+        },
+        origin: FollowUpOriginWire::CodaCreated {
+            run_id: format!("run-{ws_id}-1"),
+        },
+        latest_note: Some(
+            "Confirm return to >=6.5 h sleep, ASRM trend toward <=5, evening quetiapine timing, and Wellness & Safety Plan wind-down steps.".into(),
+        ),
+        updated_at: DEMO_NOW.into(),
+    };
+    store.driver().insert_row(
+        FollowUps::Table,
+        FollowUps::COLS,
+        [
+            fu.follow_up_id.as_str().into(),
+            ws_id.into(),
+            fu.standing.badge_label().into(),
+            fu.updated_at.as_str().into(),
+            serde_json::to_string(&fu)?.into(),
+        ],
+    )?;
+
+    let mem = PatientMemoryResponse {
+        patient_workspace_id: ws_id.into(),
+        durable: true,
+        summary: Some(MemoryDocumentWire {
+            version: 1,
+            saved_at: DEMO_DATE.into(),
+            markdown: format!("# {display_name}\n\n{summary}"),
+        }),
+        direction: Some(MemoryDocumentWire {
+            version: 1,
+            saved_at: DEMO_DATE.into(),
+            markdown: format!(
+                "Track sleep <5.5 h and ASRM >=6 early-warning cues alongside Dexcom G7 Clarity late-evening glucose excursions (peak {:.1} mg/dL, GMI {:.1}%, TIR {:.1}%, GRI {:.1} {}); review patient-shared Wellness & Safety Plan collaboratively without altering maintenance doses prematurely.",
+                cgm_summary.max_mg_dl,
+                cgm_summary.gmi_percent,
+                cgm_summary.tir_70_180_percent,
+                cgm_summary.gri,
+                cgm_summary.gri_zone.label(),
+            ),
+        }),
+    };
+    store.driver().insert_row(
+        PatientMemory::Table,
+        PatientMemory::COLS,
+        [ws_id.into(), 0.into(), serde_json::to_string(&mem)?.into()],
+    )?;
+
+    let cited_recs = vec![cgm_rec.clone(), checkin_latest_rec, wellness_rec.clone()];
+    let reads: Vec<_> = cited_recs
+        .iter()
+        .map(|r| {
+            (
+                r.id.clone(),
+                parse_record_group(&r.group),
+                r.title.clone(),
+                r.recorded_at.clone(),
+            )
+        })
+        .collect();
+    let query = "asrm sleep dexcom clarity glucose wellness safety plan 988";
+    let (answer_text, segments, basis, sources) =
+        synthesize_chart_answer_with_citations(query, &cited_recs, &format!("seed-{ws_id}"));
+    let snap = ChatSnapshot {
+        sources,
+        queued: Vec::new(),
+        archived: false,
+        transcript: vec![build_exchange_with_segments(
+            "seed",
+            ws_id,
+            (
+                format!("msg-seed-{ws_id}"),
+                "Review Samira's ASRM activation trend, sleep duration, Dexcom G7 Clarity AGP, and Wellness & Safety Plan.".into(),
+                1_787_850_240,
+            ),
+            query,
+            &reads,
+            true,
+            (answer_text, segments, basis),
+        )],
+        feedback: SnapshotFeedback::Loaded,
+    };
+    store.driver().insert_row(
+        Chats::Table,
+        Chats::COLS,
+        [
+            chat_id.into(),
+            ws_id.into(),
+            "Wellness plan, ASRM & Dexcom G7 brief".into(),
+            waited.into(),
+            serde_json::to_string(&snap)?.into(),
+        ],
+    )?;
+
+    let workspace = PatientWorkspaceResponse {
+        patient_workspace_id: ws_id.into(),
+        display_name: display_name.into(),
+        membership: WorkspaceMembership::Allowed,
+        time_zone: Some(DEMO_ZONE.into()),
+        chats: Vec::new(),
+        identity: Some(PatientIdentity {
+            display_name: Some(display_name.into()),
+            birth_date: Some(birth_date.into()),
+            age_years: Some(38),
+            sex_or_gender: Some(SexOrGender {
+                value: Some("female".into()),
+                label: Some("Female".into()),
+            }),
+            medical_record_numbers: vec![MedicalRecordNumber {
+                value: Some(mrn.into()),
+            }],
+            email: None,
+            state: Some("available".into()),
+        }),
+        patient_synopsis: Some(PatientSynopsis {
+            version_id: format!("syn-{ws_id}-v1"),
+            authored_text: None,
+            segments: vec![
+                ClinicalSegment::Text {
+                    text: format!("{summary} "),
+                },
+                build_synopsis_citation(ws_id, "dexcom-clarity-cgm", &cgm_rec),
+                build_synopsis_citation(ws_id, "duet-wellness-plan", &wellness_rec),
+            ],
+            authored_at: Some(DEMO_NOW.into()),
+        }),
+        automation_run: Some(AutomationRun {
+            kind: "visit_preparation".into(),
+            state: "finished".into(),
+            ended_cause: None,
+            purpose: Some(WorkPurpose {
+                headline: Some(reason),
+            }),
+        }),
+        active_follow_ups: vec![FollowUp {
+            follow_up_id: fu.follow_up_id,
+            description: Some(fu.summary),
+        }],
+        has_past_work: true,
+        last_reviewed_at: Some(DEMO_NOW.into()),
+        connected_sources: vec![
+            seed_connected_source("synthetic-ehr", "Primary EHR"),
+            seed_connected_source("dexcom-clarity-cgm", "Dexcom G7 Clarity CGM (via Duet)"),
+        ],
+        replies: Vec::new(),
+        superseded_replies: Vec::new(),
+        active_plan_items: vec![WorkspacePlanItem {
+            item_id: format!("plan-{ws_id}-1"),
+            patient_workspace_id: ws_id.into(),
+            title: "22:00 dark-therapy wind-down & 72h ASRM recheck".into(),
+            detail: "Follow patient-authored Wellness & Safety Plan wind-down routine, track daily sleep and ASRM in Duet, and review Dexcom G7 evening excursions at follow-up.".into(),
+            decided_at: DEMO_NOW.into(),
+            source_recommendation_id: None,
+        }],
+        undecided_recommendations: Vec::new(),
         connection_status: ConnectionStatusWire::Connected,
         patient_link: Some(PatientLinkWire {
             practice_id: "prac-coda-demo".into(),
