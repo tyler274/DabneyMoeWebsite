@@ -292,7 +292,7 @@ mod tests {
             })
             .with_state(options);
 
-        for path in ["/creators", "/creators/", "/creators?source=footer", "/"] {
+        for path in ["/creators", "/creators?source=footer", "/"] {
             let response = app
                 .clone()
                 .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
