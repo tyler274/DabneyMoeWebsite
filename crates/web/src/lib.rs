@@ -311,9 +311,16 @@ mod tests {
                 assert!(html.contains("href=\"https://www.twitch.tv/mnnaz05\""));
                 assert_eq!(head.matches("<title>").count(), 1);
                 assert!(head.contains("<title>Creators | dabney.moe</title>"));
+                // Link serializes attributes in component-defined order, not
+                // source order. Check the same canonical tag without relying on order.
+                let canonicals: Vec<_> = head
+                    .split('<')
+                    .filter(|tag| tag.starts_with("link ") && tag.contains("rel=\"canonical\""))
+                    .collect();
+                assert_eq!(canonicals.len(), 1, "{path}: canonical link count");
+                assert!(canonicals[0].contains("href=\"https://dabney.moe/creators\""));
                 for tag in [
                     "name=\"description\" content=\"mnnaz05 on Twitch.\"",
-                    "rel=\"canonical\" href=\"https://dabney.moe/creators\"",
                     "property=\"og:title\" content=\"Creators | dabney.moe\"",
                     "property=\"og:description\" content=\"mnnaz05 on Twitch.\"",
                     "property=\"og:url\" content=\"https://dabney.moe/creators\"",
