@@ -15,6 +15,7 @@ pub mod commissions_data;
 pub mod community_activity;
 pub mod community_policy;
 pub mod consent;
+pub mod creators;
 pub mod data;
 pub mod mental_health;
 pub mod mental_health_3d;
@@ -76,42 +77,19 @@ pub fn App() -> impl IntoView {
 
     view! {
         {#[cfg(feature = "csr")] { view! { <Stylesheet id="leptos" href="/pkg/dabney.css" /> } }}
-        <Title text="Tyler Port - Freelance Software Engineer" />
-        <Meta
-            name="description"
-            content="Tyler Port is a Caltech-trained freelance software engineer specializing in Rust, GPU computing, and high-performance systems. Available for contract work."
-        />
-        <Meta name="author" content="Tyler Alamo Port" />
         <Link rel="icon" href="/favicon.png" type_="image/png" />
-        <Link rel="canonical" href="https://dabney.moe/" />
-
-        // Open Graph / social previews.
-        <Meta property="og:type" content="website" />
-        <Meta property="og:title" content="Tyler Port - Freelance Software Engineer" />
-        <Meta
-            property="og:description"
-            content="Rust, GPU computing, and high-performance systems. Available for freelance and contract work."
-        />
-        <Meta property="og:url" content="https://dabney.moe/" />
-        <Meta property="og:site_name" content="dabney.moe" />
-        <Meta property="og:image" content="https://dabney.moe/photos/tyler-dunes.jpg" />
-        <Meta name="twitter:card" content="summary_large_image" />
-        <Meta name="twitter:image" content="https://dabney.moe/photos/tyler-dunes.jpg" />
-        <Meta name="twitter:title" content="Tyler Port - Freelance Software Engineer" />
-        <Meta
-            name="twitter:description"
-            content="Rust, GPU computing, and high-performance systems. Available for freelance and contract work."
-        />
 
         <ConsentBanner />
 
         <Router>
+            <PageMetadata />
             <AnalyticsRuntime />
             <main>
                 <Routes fallback=|| view! { <HomePage /> }>
                     <Route path=StaticSegment("") view=HomePage />
                     <Route path=StaticSegment("privacy") view=PrivacyPage />
                     <Route path=StaticSegment("mental-health") view=mental_health::MentalHealthPage />
+                    <Route path=StaticSegment("creators") view=creators::CreatorsPage />
                     <Route path=StaticSegment("community-policy") view=CommunityPolicyPage />
                     <Route path=StaticSegment("community-activity") view=community_activity::CommunityActivityPage ssr=leptos_router::SsrMode::Async />
                     <Route
@@ -137,6 +115,51 @@ pub fn App() -> impl IntoView {
                 </Routes>
             </main>
         </Router>
+    }
+}
+
+/// Keep the existing site defaults everywhere except the creator directory.
+/// Selecting one metadata owner avoids duplicate social tags and owner portraits
+/// leaking into creator previews, including after client-side navigation.
+#[component]
+fn PageMetadata() -> impl IntoView {
+    let location = use_location();
+    view! {
+        <Show
+            when=move || location.pathname.get().trim_end_matches('/') == "/creators"
+            fallback=OwnerMetadata
+        >
+            <creators::CreatorsMetadata />
+        </Show>
+    }
+}
+
+#[component]
+fn OwnerMetadata() -> impl IntoView {
+    view! {
+        <Title text="Tyler Port - Freelance Software Engineer" />
+        <Meta
+            name="description"
+            content="Tyler Port is a Caltech-trained freelance software engineer specializing in Rust, GPU computing, and high-performance systems. Available for contract work."
+        />
+        <Meta name="author" content="Tyler Alamo Port" />
+        <Link rel="canonical" href="https://dabney.moe/" />
+        <Meta property="og:type" content="website" />
+        <Meta property="og:title" content="Tyler Port - Freelance Software Engineer" />
+        <Meta
+            property="og:description"
+            content="Rust, GPU computing, and high-performance systems. Available for freelance and contract work."
+        />
+        <Meta property="og:url" content="https://dabney.moe/" />
+        <Meta property="og:site_name" content="dabney.moe" />
+        <Meta property="og:image" content="https://dabney.moe/photos/tyler-dunes.jpg" />
+        <Meta name="twitter:card" content="summary_large_image" />
+        <Meta name="twitter:image" content="https://dabney.moe/photos/tyler-dunes.jpg" />
+        <Meta name="twitter:title" content="Tyler Port - Freelance Software Engineer" />
+        <Meta
+            name="twitter:description"
+            content="Rust, GPU computing, and high-performance systems. Available for freelance and contract work."
+        />
     }
 }
 

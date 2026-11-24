@@ -557,6 +557,8 @@ pub fn Footer() -> impl IntoView {
                         <span class="text-slate-700">"·"</span>
                         <a href="/community-activity" class="hover:text-slate-300">"Community activity"</a>
                         <span class="text-slate-700">"·"</span>
+                        <A href="/creators" attr:class="hover:text-slate-300">"Creators"</A>
+                        <span class="text-slate-700">"·"</span>
                         <OpenConsentButton />
                         <span class="text-slate-700">"·"</span>
                         <span>"Built with Rust, Leptos & Tauri"</span>
