@@ -280,6 +280,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn creators_is_server_rendered_with_safe_metadata_and_linked_from_home() {
+        use leptos::prelude::LeptosOptions;
+        use leptos_axum::LeptosRoutes;
+
+        let options = LeptosOptions::builder().output_name("dabney").build();
+        let app = Router::new()
+            .leptos_routes(&options, generate_route_list(App), {
+                let options = options.clone();
+                move || ui::shell(options.clone())
+            })
+            .with_state(options);
+
+        for path in ["/creators", "/creators/", "/creators?source=footer", "/"] {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+            let html = String::from_utf8(body.to_vec()).unwrap();
+            let head = html.split("</head>").next().expect("document head");
+            let footer = html.split("<footer").nth(1).expect("shared footer");
+            assert!(footer.contains("href=\"/creators\""), "{path}");
+            assert!(footer.contains("Creators"), "{path}");
+
+            if path.starts_with("/creators") {
+                assert!(html.contains(">mnnaz05</h2>"));
+                assert!(html.contains("href=\"https://www.twitch.tv/mnnaz05\""));
+                assert_eq!(head.matches("<title>").count(), 1);
+                assert!(head.contains("<title>Creators | dabney.moe</title>"));
+                for tag in [
+                    "name=\"description\" content=\"mnnaz05 on Twitch.\"",
+                    "rel=\"canonical\" href=\"https://dabney.moe/creators\"",
+                    "property=\"og:title\" content=\"Creators | dabney.moe\"",
+                    "property=\"og:description\" content=\"mnnaz05 on Twitch.\"",
+                    "property=\"og:url\" content=\"https://dabney.moe/creators\"",
+                    "name=\"twitter:card\" content=\"summary\"",
+                    "name=\"twitter:title\" content=\"Creators | dabney.moe\"",
+                    "name=\"twitter:description\" content=\"mnnaz05 on Twitch.\"",
+                ] {
+                    assert!(head.contains(tag), "missing creator metadata: {tag}");
+                }
+                for forbidden in [
+                    "Tyler",
+                    "tyler-dunes",
+                    "name=\"author\"",
+                    "og:image",
+                    "twitter:image",
+                ] {
+                    assert!(
+                        !head.contains(forbidden),
+                        "unexpected creator metadata: {forbidden}"
+                    );
+                }
+                for forbidden in [
+                    "signing",
+                    "signed",
+                    "announcement",
+                    "<iframe",
+                    "player.twitch.tv",
+                ] {
+                    assert!(
+                        !html.to_lowercase().contains(forbidden),
+                        "unexpected creator content: {forbidden}"
+                    );
+                }
+            } else {
+                assert!(head.contains("Tyler Port - Freelance Software Engineer"));
+                assert!(head.contains("https://dabney.moe/photos/tyler-dunes.jpg"));
+                assert!(!head.contains("mnnaz05"));
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn community_policy_is_server_rendered_and_linked_from_home() {
         use leptos::prelude::LeptosOptions;
         use leptos_axum::LeptosRoutes;
