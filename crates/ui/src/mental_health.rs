@@ -9,13 +9,15 @@ use crate::mental_health_cgm::{
     AdaTimeInRangeBar, AgpPercentileChart, GlucoseMonitor, GlucoseUnit, MeasurementMethod,
 };
 use crate::mental_health_episodes::{
-    parse_self_activity_log, EpisodeActivationSection, TopCoolDownBanner, SAMPLE_SELF_ACTIVITY_CSV,
+    parse_self_activity_log, summarize_episode_cadence, EpisodeActivationSection,
+    TopCoolDownBanner, SAMPLE_SELF_ACTIVITY_CSV,
 };
 use crate::mental_health_lingo::{
     build_assessment_series, classify_gad7, classify_phq9, correlate_glucose_and_mood,
     csv_data_uri, export_correlations_csv, sample_assessment_history, sample_checkins,
     AssessmentPoint, LingoReading, MentalHealthCheckIn, SAMPLE_LINGO_CSV,
 };
+use crate::mental_health_support::SupportAndClinicianBriefSection;
 use crate::sections::{Footer, NavBar};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -756,6 +758,39 @@ pub fn MentalHealthPage() -> impl IntoView {
             <EpisodeActivationSection
                 events=activity_events
                 asrm_score=asrm_score
+                sleep_hours=Signal::derive(move || {
+                    sleep_input
+                        .get()
+                        .trim()
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|v| v.is_finite() && (0.0..=24.0).contains(v))
+                        .unwrap_or(7.0)
+                })
+            />
+
+            // On-Device Personal Crisis & Support Card + 1-Page Printable Clinician Visit Brief
+            <SupportAndClinicianBriefSection
+                glucose_summary=Signal::derive(move || {
+                    summarize_commercial_glucose(
+                        &readings.get(),
+                        detected_monitor.get(),
+                        source_unit.get(),
+                        measurement_method.get(),
+                    )
+                })
+                checkins=checkins.into()
+                cadence_summary=Signal::derive(move || {
+                    let sh = sleep_input
+                        .get()
+                        .trim()
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|v| v.is_finite() && (0.0..=24.0).contains(v))
+                        .unwrap_or(7.0);
+                    summarize_episode_cadence(&activity_events.get(), asrm_score.get(), sh)
+                })
+                asrm_score=asrm_score.into()
                 sleep_hours=Signal::derive(move || {
                     sleep_input
                         .get()
