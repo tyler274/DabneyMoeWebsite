@@ -22,6 +22,7 @@ pub mod mental_health_3d;
 pub mod mental_health_cgm;
 pub mod mental_health_episodes;
 pub mod mental_health_lingo;
+pub mod mental_health_support;
 pub mod portfolio;
 pub mod portfolio_chart;
 pub mod privacy;
