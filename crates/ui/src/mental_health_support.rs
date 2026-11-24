@@ -257,6 +257,24 @@ pub fn render_clinician_brief_markdown(
     }
 
     md.push_str("\n## 3. Aggregate Circadian Activity Cadence (Timestamps Only)\n");
+    if !cadence.by_platform.is_empty() {
+        let platforms_line = cadence
+            .by_platform
+            .iter()
+            .map(|b| {
+                format!(
+                    "{} ({} · {:.0}%)",
+                    b.platform.display_name(),
+                    b.total_events,
+                    b.share_pct
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" · ");
+        md.push_str(&format!(
+            "- **Opted-In Platforms Synthesized:** {platforms_line}\n"
+        ));
+    }
     let ratio_note = cadence
         .baseline
         .late_night_ratio
