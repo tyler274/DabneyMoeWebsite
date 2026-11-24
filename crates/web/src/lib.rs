@@ -18,6 +18,26 @@ pub fn hydrate() {
 }
 
 #[cfg(feature = "ssr")]
+pub fn mount_removed_pages<S>(router: axum::Router<S>) -> axum::Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    async fn gone() -> impl axum::response::IntoResponse {
+        (
+            axum::http::StatusCode::GONE,
+            [
+                ("cache-control", "no-store"),
+                ("x-robots-tag", "noindex, nofollow, noarchive"),
+            ],
+            "This page has been removed.",
+        )
+    }
+    router
+        .route("/koizetsu", axum::routing::get(gone))
+        .route("/koizetsu/", axum::routing::get(gone))
+}
+
+#[cfg(feature = "ssr")]
 pub fn mount_coda_static<S>(router: axum::Router<S>, site_root: &str) -> axum::Router<S>
 where
     S: Clone + Send + Sync + 'static,
@@ -206,6 +226,57 @@ mod tests {
             !routes.is_empty(),
             "expected the router to expose at least one route"
         );
+    }
+
+    #[tokio::test]
+    async fn removed_creator_page_is_gone_without_content_or_navigation() {
+        use leptos::prelude::LeptosOptions;
+        use leptos_axum::LeptosRoutes;
+
+        let options = LeptosOptions::builder().output_name("dabney").build();
+        let app = super::mount_removed_pages(Router::new())
+            .leptos_routes(&options, generate_route_list(App), {
+                let options = options.clone();
+                move || ui::shell(options.clone())
+            })
+            .with_state(options);
+        for path in ["/koizetsu", "/koizetsu/", "/koizetsu?source=old-link"] {
+            for method in [Method::GET, Method::HEAD] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(method.clone())
+                            .uri(path)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::GONE);
+                assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+                assert_eq!(
+                    response.headers()["x-robots-tag"],
+                    "noindex, nofollow, noarchive"
+                );
+                let body = to_bytes(response.into_body(), 1024).await.unwrap();
+                if method == Method::HEAD {
+                    assert!(body.is_empty());
+                } else {
+                    assert_eq!(body.as_ref(), b"This page has been removed.");
+                }
+            }
+        }
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        assert!(!String::from_utf8(body.to_vec())
+            .unwrap()
+            .to_lowercase()
+            .contains("koizetsu"));
     }
 
     #[tokio::test]
