@@ -1,15 +1,21 @@
-//! Pure-Rust, local-first Mental Health Episode Activation & Self-Activity Cadence Monitor.
+//! Pure-Rust, local-first Opt-In Multi-Platform Self-Activity Synthesizer & Episode Activation Monitor.
 //!
-//! Designed strictly for personal self-monitoring on-device: accepts pasted CSV or direct
-//! drag-and-drop / file upload of `.jsonl` or Discord Data Package `messages.csv` exports.
-//! Message text, IDs, attachments, and usernames are discarded immediately at parse time
-//! and are never stored in DOM, `localStorage`, or exported CSVs.
+//! Designed strictly for personal self-monitoring on-device: accepts official personal exports
+//! from Discord (`messages.csv` / `.jsonl`), Telegram (`result.json`), WhatsApp (`.txt`),
+//! and Facebook Messenger (`message_*.json`). Multi-party exports fail closed without the
+//! user's own sender handle; all other participants, message text, IDs, attachments, and
+//! usernames are discarded immediately in WASM—only stripped timestamps persist locally.
 
 use std::collections::BTreeMap;
 
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::mental_health_exports::{
+    load_synthetic_4platform_synthesis, merge_synthesized_events, parse_platform_export,
+    purge_platform_events, synthesize_opted_in_events, ActivityPlatform, PlatformBreakdown,
+    PlatformConsentState,
+};
 use crate::mental_health_lingo::csv_data_uri;
 
 #[cfg(any(feature = "hydrate", feature = "csr"))]
@@ -18,6 +24,8 @@ const STORAGE_KEY_ASRM: &str = "coda.mental_health.v1.asrm";
 const STORAGE_KEY_RULES: &str = "coda.mental_health.v1.cooldown_rules";
 #[cfg(any(feature = "hydrate", feature = "csr"))]
 const STORAGE_KEY_CADENCE: &str = "coda.mental_health.v1.stripped_cadence";
+#[cfg(any(feature = "hydrate", feature = "csr"))]
+const STORAGE_KEY_CONSENT: &str = "coda.mental_health.v1.platform_consent";
 
 /// Coarse kind of self-initiated communication or publishing event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,6 +60,8 @@ pub struct SelfActivityEvent {
     pub absolute_minutes: i64,
     /// Coarse event category.
     pub kind: ActivityEventKind,
+    /// Opt-in source platform (for cross-platform synthesis and per-platform revocation).
+    pub platform: ActivityPlatform,
 }
 
 /// Standard Altman Self-Rating Mania Scale (ASRM, `0..=20`) band.
@@ -135,6 +145,7 @@ pub struct EpisodeCadenceSummary {
     pub hourly_counts: [usize; 24],
     pub actogram_days: Vec<DayActogramRow>,
     pub baseline: BaselineComparison,
+    pub by_platform: Vec<PlatformBreakdown>,
     pub activation: ActivationLevel,
 }
 
@@ -202,13 +213,15 @@ timestamp,event_type
 2026-11-22 02:24,message
 2026-11-22 02:26,publish";
 
-/// Serialize privacy-stripped events back into minimal `timestamp,event_type` CSV.
+/// Serialize privacy-stripped events back into minimal `timestamp,event_type,platform` CSV.
 pub fn events_to_stripped_csv(events: &[SelfActivityEvent]) -> String {
-    let mut out = String::from("timestamp,event_type\n");
+    let mut out = String::from("timestamp,event_type,platform\n");
     for ev in events {
         out.push_str(&ev.formatted_ts);
         out.push(',');
         out.push_str(ev.kind.label());
+        out.push(',');
+        out.push_str(ev.platform.id());
         out.push('\n');
     }
     out
@@ -284,6 +297,17 @@ pub fn parse_self_activity_log_with_filter(
         } else {
             ActivityEventKind::Message
         };
+        let platform = remainder
+            .split(',')
+            .nth(2)
+            .map(ActivityPlatform::from_id)
+            .unwrap_or_else(|| {
+                if lower.contains("discord") {
+                    ActivityPlatform::Discord
+                } else {
+                    ActivityPlatform::ManualOrGeneric
+                }
+            });
 
         events.push(SelfActivityEvent {
             date_key,
@@ -292,6 +316,7 @@ pub fn parse_self_activity_log_with_filter(
             minute_of_day,
             absolute_minutes: abs_min,
             kind,
+            platform,
         });
     }
 
@@ -358,6 +383,7 @@ fn parse_jsonl_line(
         minute_of_day,
         absolute_minutes: abs_min,
         kind,
+        platform: ActivityPlatform::Discord,
     }))
 }
 
@@ -387,7 +413,7 @@ fn extract_timestamp_and_rest(line: &str) -> Option<(String, &str)> {
     None
 }
 
-fn parse_timestamp_components(ts: &str) -> Option<(String, String, i64, u8, u32)> {
+pub(crate) fn parse_timestamp_components(ts: &str) -> Option<(String, String, i64, u8, u32)> {
     let year: i64 = ts.get(0..4)?.parse().ok()?;
     let month: i64 = ts.get(5..7)?.parse().ok()?;
     let day: i64 = ts.get(8..10)?.parse().ok()?;
@@ -534,6 +560,32 @@ pub fn summarize_episode_cadence(
         .unwrap_or(0);
     let longest_quiet_gap_hours = longest_gap_min as f64 / 60.0;
 
+    // Per-platform breakdown across the synthesized active events.
+    let mut platform_totals: BTreeMap<ActivityPlatform, (usize, usize, usize)> = BTreeMap::new();
+    for ev in events {
+        let entry = platform_totals.entry(ev.platform).or_insert((0, 0, 0));
+        entry.0 += 1;
+        if ev.absolute_minutes >= recent_cutoff {
+            entry.1 += 1;
+            if ev.hour < 5 {
+                entry.2 += 1;
+            }
+        }
+    }
+    let total_f = events.len().max(1) as f64;
+    let by_platform: Vec<PlatformBreakdown> = platform_totals
+        .into_iter()
+        .map(
+            |(platform, (total_events, recent_48h_events, late_night_events))| PlatformBreakdown {
+                platform,
+                total_events,
+                recent_48h_events,
+                late_night_events,
+                share_pct: (total_events as f64 / total_f) * 100.0,
+            },
+        )
+        .collect();
+
     let activation = assess_activation_level(
         asrm,
         sleep_hours,
@@ -558,6 +610,7 @@ pub fn summarize_episode_cadence(
             baseline_late_night_pct,
             late_night_ratio,
         },
+        by_platform,
         activation,
     }
 }
@@ -610,6 +663,7 @@ fn clear_episode_local_storage() {
         let _ = storage.remove_item(STORAGE_KEY_ASRM);
         let _ = storage.remove_item(STORAGE_KEY_RULES);
         let _ = storage.remove_item(STORAGE_KEY_CADENCE);
+        let _ = storage.remove_item(STORAGE_KEY_CONSENT);
     }
 }
 
@@ -660,15 +714,18 @@ pub fn TopCoolDownBanner(
     }
 }
 
-/// Interactive Episode Activation, Local-Only Activity Cadence, 14-Day Actogram & Cool-Down section.
+/// Interactive Opt-In Multi-Platform Self-Activity Synthesizer, 14-Day Actogram & Cool-Down section.
 #[component]
 pub fn EpisodeActivationSection(
     events: RwSignal<Vec<SelfActivityEvent>>,
+    consent: RwSignal<PlatformConsentState>,
     asrm_score: RwSignal<Option<u8>>,
     sleep_hours: Signal<f32>,
 ) -> impl IntoView {
-    let activity_input = RwSignal::new(SAMPLE_SELF_ACTIVITY_CSV.to_string());
+    let activity_input = RwSignal::new(events_to_stripped_csv(&events.get_untracked()));
     let author_filter = RwSignal::new(String::new());
+    let platform_choice = RwSignal::new(Option::<ActivityPlatform>::None);
+    let merge_mode = RwSignal::new(true);
     let parse_error = RwSignal::new(Option::<String>::None);
     let import_status = RwSignal::new(Option::<String>::None);
     let rules = RwSignal::new(default_cooldown_rules());
@@ -703,6 +760,12 @@ pub fn EpisodeActivationSection(
                 }
             }
         }
+        if let Some(saved_consent) = read_local_storage(STORAGE_KEY_CONSENT) {
+            if let Ok(parsed_consent) = serde_json::from_str::<PlatformConsentState>(&saved_consent)
+            {
+                consent.set(parsed_consent);
+            }
+        }
         if let Some(saved_csv) = read_local_storage(STORAGE_KEY_CADENCE) {
             if let Ok(parsed) = parse_self_activity_log(&saved_csv) {
                 activity_input.set(saved_csv);
@@ -712,11 +775,12 @@ pub fn EpisodeActivationSection(
         hydrated.set(true);
     });
 
-    // Persist ASRM & Cool-Down rules locally whenever updated after hydration.
+    // Persist ASRM, Cool-Down rules, and Opt-In Platform Consent locally whenever updated.
     #[cfg(any(feature = "hydrate", feature = "csr"))]
     Effect::new(move |_| {
         let asrm_val = asrm_score.get();
         let current_rules = rules.get();
+        let current_consent = consent.get();
         if !hydrated.get() {
             return;
         }
@@ -726,26 +790,60 @@ pub fn EpisodeActivationSection(
         if let Ok(json) = serde_json::to_string(&current_rules) {
             write_local_storage(STORAGE_KEY_RULES, &json);
         }
+        if let Ok(json) = serde_json::to_string(&current_consent) {
+            write_local_storage(STORAGE_KEY_CONSENT, &json);
+        }
     });
 
-    let apply_raw_text = move |raw: &str| {
+    let apply_raw_text = move |raw: &str, require_consent_checkbox: bool| {
+        let current_consent = consent.get();
+        if require_consent_checkbox && !current_consent.self_only_confirmed {
+            parse_error.set(Some(
+                "Check the opt-in self-only consent box above before importing a personal export file."
+                    .to_string(),
+            ));
+            import_status.set(None);
+            return;
+        }
+
         let filter = author_filter.get();
         let filter_opt = if filter.trim().is_empty() {
             None
         } else {
             Some(filter.as_str())
         };
-        match parse_self_activity_log_with_filter(raw, filter_opt) {
+        match parse_platform_export(raw, platform_choice.get(), filter_opt) {
             Ok(parsed) => {
-                let stripped = events_to_stripped_csv(&parsed);
-                let count = parsed.len();
-                events.set(parsed);
+                if !current_consent.is_opted_in(parsed.platform) {
+                    parse_error.set(Some(format!(
+                        "{} is currently opted out. Toggle {} opt-in ON first to synthesize its timestamps.",
+                        parsed.platform.display_name(),
+                        parsed.platform.display_name(),
+                    )));
+                    import_status.set(None);
+                    return;
+                }
+                let imported_count = parsed.events.len();
+                let dropped_others = parsed.dropped_other_participants;
+                let updated = if merge_mode.get() {
+                    merge_synthesized_events(&events.get(), &parsed.events)
+                } else {
+                    parsed.events
+                };
+                let stripped = events_to_stripped_csv(&updated);
+                events.set(updated);
                 activity_input.set(stripped.clone());
                 #[cfg(any(feature = "hydrate", feature = "csr"))]
                 write_local_storage(STORAGE_KEY_CADENCE, &stripped);
                 parse_error.set(None);
+                let drop_note = if dropped_others > 0 {
+                    format!(" ({dropped_others} other-participant rows discarded)")
+                } else {
+                    String::new()
+                };
                 import_status.set(Some(format!(
-                    "Imported {count} stripped timestamps locally (all text & handles discarded)."
+                    "Synthesized {imported_count} stripped {} timestamps locally{drop_note}. Zero message text stored.",
+                    parsed.platform.display_name(),
                 )));
             }
             Err(err) => {
@@ -757,7 +855,25 @@ pub fn EpisodeActivationSection(
 
     let apply_activity = move |_| {
         let raw = activity_input.get();
-        apply_raw_text(&raw);
+        apply_raw_text(&raw, false);
+    };
+
+    let load_4platform_demo = move |_| {
+        let demo = load_synthetic_4platform_synthesis();
+        let stripped = events_to_stripped_csv(&demo);
+        consent.update(|c| {
+            c.discord = true;
+            c.telegram = true;
+            c.whatsapp = true;
+            c.messenger = true;
+        });
+        events.set(demo);
+        activity_input.set(stripped);
+        parse_error.set(None);
+        import_status.set(Some(
+            "Loaded 100% synthetic 4-platform demo (Discord + Telegram + WhatsApp + Messenger; fictional Alex Demo)."
+                .to_string(),
+        ));
     };
 
     let on_file_change = move |ev: leptos::ev::Event| {
@@ -786,7 +902,7 @@ pub fn EpisodeActivationSection(
                     };
                     if let Ok(val) = r.result() {
                         if let Some(text) = val.as_string() {
-                            apply_raw_text(&text);
+                            apply_raw_text(&text, true);
                         }
                     }
                 },
@@ -804,14 +920,17 @@ pub fn EpisodeActivationSection(
     let wipe_local_data = move |_| {
         #[cfg(any(feature = "hydrate", feature = "csr"))]
         clear_episode_local_storage();
-        activity_input.set(SAMPLE_SELF_ACTIVITY_CSV.to_string());
-        events.set(parse_self_activity_log(SAMPLE_SELF_ACTIVITY_CSV).unwrap_or_default());
+        let demo = load_synthetic_4platform_synthesis();
+        let stripped = events_to_stripped_csv(&demo);
+        activity_input.set(stripped);
+        events.set(demo);
+        consent.set(PlatformConsentState::default());
         rules.set(default_cooldown_rules());
         asrm_score.set(Some(7));
         asrm_text.set("7".to_string());
         parse_error.set(None);
         import_status.set(Some(
-            "Local browser storage cleared and reset to synthetic sample.".into(),
+            "Local browser storage cleared and reset to synthetic 4-platform demo.".into(),
         ));
     };
 
@@ -837,17 +956,18 @@ pub fn EpisodeActivationSection(
             <div class="mb-5 flex flex-wrap items-start justify-between gap-4">
                 <div class="max-w-2xl">
                     <p class="mb-1 text-xs font-semibold uppercase tracking-widest text-rose-300">
-                        "Local-First Episode Self-Monitoring"
+                        "Opt-In Local-First Multi-Platform Synthesizer"
                     </p>
                     <h2 class="text-lg font-semibold text-white">
-                        "Episode Activation (ASRM), Self-Activity Actogram & Cool-Down Plan"
+                        "Episode Activation (ASRM), Cross-Platform Self-Activity Actogram & Cool-Down Plan"
                     </h2>
                     <p class="mt-1 text-sm text-slate-400">
-                        "Drop a `.jsonl` or Discord `messages.csv` file directly into your browser. Message text and usernames are discarded immediately in WASM—only stripped timestamps persist locally."
+                        "Synthesize your own opted-in exports from Discord, Telegram, WhatsApp, and Messenger directly in browser WASM. Multi-party exports require your own handle—every other participant and all message text are discarded immediately."
                     </p>
                 </div>
                 {move || {
-                    let summary = summarize_episode_cadence(&events.get(), asrm_score.get(), sleep_hours.get());
+                    let active_events = synthesize_opted_in_events(&events.get(), &consent.get());
+                    let summary = summarize_episode_cadence(&active_events, asrm_score.get(), sleep_hours.get());
                     let badge_cls = summary.activation.badge_class();
                     let label = summary.activation.label();
                     let csv_href = csv_data_uri(&export_episode_summary_csv(
@@ -860,6 +980,13 @@ pub fn EpisodeActivationSection(
                             <span class=format!("inline-flex rounded-full border px-3 py-1 text-xs font-semibold {badge_cls}")>
                                 {label}
                             </span>
+                            <button
+                                type="button"
+                                on:click=load_4platform_demo
+                                class="rounded-full border border-cyan-400/30 px-3 py-1.5 text-xs font-medium text-cyan-300 transition hover:bg-cyan-500/10"
+                            >
+                                "Load 4-Platform Demo"
+                            </button>
                             <a
                                 href=csv_href
                                 download="coda-episode-cadence-summary.csv"
@@ -879,9 +1006,119 @@ pub fn EpisodeActivationSection(
                 }}
             </div>
 
+            // Explicit Per-Platform Opt-In Consent & Cross-Platform Synthesis Strip
+            {move || {
+                let raw_events = events.get();
+                let current_consent = consent.get();
+                let active_events = synthesize_opted_in_events(&raw_events, &current_consent);
+                let summary = summarize_episode_cadence(&active_events, asrm_score.get(), sleep_hours.get());
+                view! {
+                    <div class="mb-6 rounded-xl border border-white/10 bg-slate-950/60 p-4">
+                        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                                <p class="text-xs font-semibold uppercase tracking-wider text-cyan-300">
+                                    "Per-Platform Opt-In Consent & Synthesis Ledger"
+                                </p>
+                                <p class="text-xs text-slate-400">
+                                    "Toggle any platform off to exclude it immediately, or purge its stripped timestamps from local storage."
+                                </p>
+                            </div>
+                            <span class="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-slate-300">
+                                {format!(
+                                    "{}/4 platforms opted in · {} synthesized timestamps",
+                                    current_consent.opted_in_count(),
+                                    summary.total_events
+                                )}
+                            </span>
+                        </div>
+                        <div class="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+                            {ActivityPlatform::ALL_OPT_IN.into_iter().map(|platform| {
+                                let opted_in = current_consent.is_opted_in(platform);
+                                let stored_count = raw_events.iter().filter(|e| e.platform == platform).count();
+                                let breakdown = summary.by_platform.iter().find(|b| b.platform == platform);
+                                let late_n = breakdown.map(|b| b.late_night_events).unwrap_or(0);
+                                let share = breakdown.map(|b| b.share_pct).unwrap_or(0.0);
+                                let badge_cls = platform.badge_class();
+                                view! {
+                                    <div class=format!(
+                                        "rounded-xl border p-3 transition {}",
+                                        if opted_in {
+                                            "border-white/15 bg-white/[0.03]"
+                                        } else {
+                                            "border-white/5 bg-slate-950/40 opacity-65"
+                                        }
+                                    )>
+                                        <div class="flex items-center justify-between gap-2">
+                                            <label class="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-white">
+                                                <input
+                                                    type="checkbox"
+                                                    prop:checked=opted_in
+                                                    on:change=move |_| {
+                                                        consent.update(|c| c.toggle(platform));
+                                                    }
+                                                    class="accent-cyan-400"
+                                                />
+                                                <span>{platform.display_name()}</span>
+                                            </label>
+                                            <span class=format!("rounded-full border px-2 py-0.5 text-[10px] font-semibold {badge_cls}")>
+                                                {if opted_in { "Opted in" } else { "Excluded" }}
+                                            </span>
+                                        </div>
+                                        <p class="mt-2 text-xs text-slate-300">
+                                            {if opted_in {
+                                                format!("{stored_count} events ({share:.0}%) · {late_n} late-night")
+                                            } else {
+                                                format!("{stored_count} cached · excluded from synthesis")
+                                            }}
+                                        </p>
+                                        <div class="mt-2 flex items-center justify-between gap-2">
+                                            <span class="truncate text-[10px] text-slate-500">{platform.export_hint()}</span>
+                                            {(stored_count > 0).then(|| view! {
+                                                <button
+                                                    type="button"
+                                                    on:click=move |_| {
+                                                        let remaining = purge_platform_events(&events.get(), platform);
+                                                        let stripped = events_to_stripped_csv(&remaining);
+                                                        events.set(remaining);
+                                                        activity_input.set(stripped.clone());
+                                                        #[cfg(any(feature = "hydrate", feature = "csr"))]
+                                                        write_local_storage(STORAGE_KEY_CADENCE, &stripped);
+                                                        import_status.set(Some(format!(
+                                                            "Purged all {} timestamps from local storage.",
+                                                            platform.display_name()
+                                                        )));
+                                                    }
+                                                    class="shrink-0 text-[10px] font-medium text-rose-300 transition hover:text-rose-200"
+                                                >
+                                                    "Purge"
+                                                </button>
+                                            })}
+                                        </div>
+                                    </div>
+                                }
+                            }).collect_view()}
+                        </div>
+                        {(!summary.by_platform.is_empty()).then(|| view! {
+                            <div class="mt-3">
+                                <div class="flex h-2 w-full overflow-hidden rounded-full bg-slate-900">
+                                    {summary.by_platform.iter().map(|b| view! {
+                                        <div
+                                            class=b.platform.bar_class()
+                                            style=format!("width: {:.2}%", b.share_pct)
+                                            title=format!("{}: {} events ({:.0}%)", b.platform.display_name(), b.total_events, b.share_pct)
+                                        />
+                                    }).collect_view()}
+                                </div>
+                            </div>
+                        })}
+                    </div>
+                }
+            }}
+
             // Cadence KPI cards + ASRM + Personal Baseline Ratio
             {move || {
-                let summary = summarize_episode_cadence(&events.get(), asrm_score.get(), sleep_hours.get());
+                let active_events = synthesize_opted_in_events(&events.get(), &consent.get());
+                let summary = summarize_episode_cadence(&active_events, asrm_score.get(), sleep_hours.get());
                 let asrm_val = asrm_score.get();
                 let baseline_detail = match (summary.baseline.baseline_late_night_pct, summary.baseline.late_night_ratio) {
                     (Some(base), Some(ratio)) => format!("{:.0}% (48h) vs {:.0}% base ({ratio:.1}×)", summary.baseline.recent_48h_late_night_pct, base),
@@ -924,7 +1161,7 @@ pub fn EpisodeActivationSection(
                         <div class="rounded-xl border border-white/10 bg-slate-950/60 p-3.5">
                             <p class="text-xs text-slate-400">"Longest Quiet Gap (48h)"</p>
                             <p class="mt-1 text-2xl font-bold text-emerald-300">{format!("{:.1}h", summary.longest_quiet_gap_hours)}</p>
-                            <p class="text-xs text-slate-400">{format!("{} total stripped timestamps", summary.total_events)}</p>
+                            <p class="text-xs text-slate-400">{format!("{} synthesized timestamps", summary.total_events)}</p>
                         </div>
                     </div>
 
@@ -934,43 +1171,88 @@ pub fn EpisodeActivationSection(
                             <span class="font-medium text-slate-200">
                                 "Multi-Day Circadian Actogram (Day × Hour · 00–05h shaded rose)"
                             </span>
-                            <span>"Shows sleep-window drift & personal baseline vs. recent 48h"</span>
+                            <span>"Unified across opted-in platforms · personal baseline vs. recent 48h"</span>
                         </div>
                         <DayHourActogram days=summary.actogram_days />
                     </div>
                 }
             }}
 
-            // Two columns: Direct File Drop / Paste + Pre-Committed Cool-Down Plan
+            // Two columns: Multi-Platform Local Export Importer + Pre-Committed Cool-Down Plan
             <div class="grid gap-6 lg:grid-cols-2">
                 <div class="rounded-xl border border-white/10 bg-slate-950/50 p-4">
                     <h3 class="text-sm font-semibold text-white">
-                        "Import `.jsonl` or `messages.csv` Directly in WASM"
+                        "Import Personal Exports (Discord, Telegram, WhatsApp, Messenger)"
                     </h3>
                     <p class="mt-1 mb-3 text-xs text-slate-400">
-                        "Choose a Discord backup `.jsonl` or `messages.csv` file (no scripts needed), or paste stripped `YYYY-MM-DD HH:MM,message|call|publish` rows below. All message text & handles are dropped immediately."
+                        "Drop official personal export files directly into your browser (`messages.csv`/`.jsonl`, Telegram `result.json`, WhatsApp `.txt`, Messenger `message_*.json`). Multi-party exports fail closed unless your own sender name is set."
                     </p>
-                    <div class="mb-3 grid gap-2 sm:grid-cols-2">
+                    <label class="mb-3 flex items-start gap-2 rounded-lg border border-cyan-400/20 bg-cyan-500/5 p-2.5 text-xs text-slate-200">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || consent.get().self_only_confirmed
+                            on:change=move |_| {
+                                consent.update(|c| c.self_only_confirmed = !c.self_only_confirmed);
+                            }
+                            class="mt-0.5 accent-cyan-400"
+                        />
+                        <span>
+                            "Opt-in consent: I confirm any file I upload is my own personal export, and I want only my own timestamps synthesized locally (discarding all other participants and message text immediately)."
+                        </span>
+                    </label>
+                    <div class="mb-3 grid gap-2 sm:grid-cols-3">
                         <label class="block text-[11px] text-slate-300">
-                            "Author handle filter (for multi-user .jsonl)"
+                            "Platform format"
+                            <select
+                                on:change=move |ev| {
+                                    let val = event_target_value(&ev);
+                                    let chosen = match val.as_str() {
+                                        "discord" => Some(ActivityPlatform::Discord),
+                                        "telegram" => Some(ActivityPlatform::Telegram),
+                                        "whatsapp" => Some(ActivityPlatform::WhatsApp),
+                                        "messenger" => Some(ActivityPlatform::Messenger),
+                                        _ => None,
+                                    };
+                                    platform_choice.set(chosen);
+                                }
+                                class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white"
+                            >
+                                <option value="auto">"Auto-detect"</option>
+                                <option value="discord">"Discord (CSV / JSONL)"</option>
+                                <option value="telegram">"Telegram (result.json)"</option>
+                                <option value="whatsapp">"WhatsApp (Export .txt)"</option>
+                                <option value="messenger">"Messenger (message_*.json)"</option>
+                            </select>
+                        </label>
+                        <label class="block text-[11px] text-slate-300">
+                            "Your own sender handle"
                             <input
                                 type="text"
-                                placeholder="e.g. luluco (blank = all rows)"
+                                placeholder="Required for multi-party files"
                                 prop:value=move || author_filter.get()
                                 on:input=move |ev| author_filter.set(event_target_value(&ev))
                                 class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500"
                             />
                         </label>
                         <label class="block text-[11px] text-slate-300">
-                            "Local file (.jsonl / .csv)"
+                            "Local export file"
                             <input
                                 type="file"
-                                accept=".jsonl,.csv,.txt"
+                                accept=".jsonl,.json,.csv,.txt"
                                 on:change=on_file_change
                                 class="mt-1 block w-full text-xs text-slate-300 file:mr-2 file:rounded-full file:border-0 file:bg-cyan-500 file:px-3 file:py-1 file:text-xs file:font-semibold file:text-slate-950 hover:file:bg-cyan-400"
                             />
                         </label>
                     </div>
+                    <label class="mb-2 inline-flex items-center gap-2 text-xs text-slate-300">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || merge_mode.get()
+                            on:change=move |_| merge_mode.update(|m| *m = !*m)
+                            class="accent-cyan-400"
+                        />
+                        "Merge with existing platforms (uncheck to replace)"
+                    </label>
                     <textarea
                         rows="5"
                         prop:value=move || activity_input.get()
@@ -983,7 +1265,7 @@ pub fn EpisodeActivationSection(
                             on:click=apply_activity
                             class="rounded-full bg-rose-500 px-4 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-rose-400"
                         >
-                            "Analyze cadence locally"
+                            "Synthesize locally"
                         </button>
                         {move || parse_error.get().map(|err| view! {
                             <span class="text-xs text-rose-400">{err}</span>
@@ -1141,7 +1423,7 @@ mod tests {
         assert_eq!(summary.activation, ActivationLevel::Elevated);
 
         let stripped = events_to_stripped_csv(&events);
-        assert!(stripped.starts_with("timestamp,event_type\n"));
+        assert!(stripped.starts_with("timestamp,event_type,platform\n"));
         assert_eq!(parse_self_activity_log(&stripped).unwrap().len(), 26);
     }
 
@@ -1170,7 +1452,8 @@ mod tests {
 
     #[test]
     fn renders_top_banner_and_actogram_section_on_ssr() {
-        let events = RwSignal::new(parse_self_activity_log(SAMPLE_SELF_ACTIVITY_CSV).unwrap());
+        let events = RwSignal::new(load_synthetic_4platform_synthesis());
+        let consent = RwSignal::new(PlatformConsentState::default());
         let asrm = RwSignal::new(Some(7u8));
         let sleep = RwSignal::new(5.0f32);
 
@@ -1182,10 +1465,20 @@ mod tests {
         assert!(banner_html.contains("not a medical diagnosis"));
 
         let html = view! {
-            <EpisodeActivationSection events=events asrm_score=asrm sleep_hours=sleep.into() />
+            <EpisodeActivationSection
+                events=events
+                consent=consent
+                asrm_score=asrm
+                sleep_hours=sleep.into()
+            />
         }
         .to_html();
         assert!(html.contains("Multi-Day Circadian Actogram"));
+        assert!(html.contains("Per-Platform Opt-In Consent"));
+        assert!(html.contains("Discord"));
+        assert!(html.contains("Telegram"));
+        assert!(html.contains("WhatsApp"));
+        assert!(html.contains("Messenger"));
         assert!(html.contains("Wipe local data"));
         assert!(html.contains("cooldown-plan"));
     }

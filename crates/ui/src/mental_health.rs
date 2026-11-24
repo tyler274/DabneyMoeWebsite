@@ -9,8 +9,10 @@ use crate::mental_health_cgm::{
     AdaTimeInRangeBar, AgpPercentileChart, GlucoseMonitor, GlucoseUnit, MeasurementMethod,
 };
 use crate::mental_health_episodes::{
-    parse_self_activity_log, summarize_episode_cadence, EpisodeActivationSection,
-    TopCoolDownBanner, SAMPLE_SELF_ACTIVITY_CSV,
+    summarize_episode_cadence, EpisodeActivationSection, TopCoolDownBanner,
+};
+use crate::mental_health_exports::{
+    load_synthetic_4platform_synthesis, synthesize_opted_in_events, PlatformConsentState,
 };
 use crate::mental_health_lingo::{
     build_assessment_series, classify_gad7, classify_phq9, correlate_glucose_and_mood,
@@ -62,8 +64,11 @@ pub fn MentalHealthPage() -> impl IntoView {
     let checkins = RwSignal::new(sample_checkins());
     let chart_mode = RwSignal::new(ChartViewMode::WebGl3D);
     let asrm_score = RwSignal::new(Some(7u8));
-    let activity_events =
-        RwSignal::new(parse_self_activity_log(SAMPLE_SELF_ACTIVITY_CSV).unwrap_or_default());
+    let platform_consent = RwSignal::new(PlatformConsentState::default());
+    let activity_events = RwSignal::new(load_synthetic_4platform_synthesis());
+    let synthesized_events = Signal::derive(move || {
+        synthesize_opted_in_events(&activity_events.get(), &platform_consent.get())
+    });
 
     // Form state for adding a new mental health check-in.
     let mood_input = RwSignal::new(6u8);
@@ -254,7 +259,7 @@ pub fn MentalHealthPage() -> impl IntoView {
 
             // Top-of-page calm Cool-Down banner when activation signals stack up
             <TopCoolDownBanner
-                events=activity_events.into()
+                events=synthesized_events
                 asrm_score=asrm_score.into()
                 sleep_hours=Signal::derive(move || {
                     sleep_input
@@ -754,9 +759,10 @@ pub fn MentalHealthPage() -> impl IntoView {
                 </div>
             </section>
 
-            // Local-first Episode Activation (ASRM), Self-Activity Actogram & Cool-Down Plan
+            // Local-first Opt-In Multi-Platform Synthesizer, Actogram & Cool-Down Plan
             <EpisodeActivationSection
                 events=activity_events
+                consent=platform_consent
                 asrm_score=asrm_score
                 sleep_hours=Signal::derive(move || {
                     sleep_input
@@ -788,7 +794,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                         .ok()
                         .filter(|v| v.is_finite() && (0.0..=24.0).contains(v))
                         .unwrap_or(7.0);
-                    summarize_episode_cadence(&activity_events.get(), asrm_score.get(), sh)
+                    summarize_episode_cadence(&synthesized_events.get(), asrm_score.get(), sh)
                 })
                 asrm_score=asrm_score.into()
                 sleep_hours=Signal::derive(move || {
