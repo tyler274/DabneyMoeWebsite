@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 use leptos_router::components::A;
+use leptos_router::hooks::use_location;
 
 use crate::commissions::CommissionsMenu;
 use crate::consent::OpenConsentButton;
@@ -8,6 +9,7 @@ use crate::data::{
     TAGLINE,
 };
 use crate::tools::ToolsMenu;
+use crate::AppShellMode;
 
 /// On WASM builds, attempt to open `url` via the Tauri opener plugin, exposed
 /// on `window.__TAURI__` (requires `app.withGlobalTauri = true`). Returns `true`
@@ -89,6 +91,11 @@ const MOBILE_NAV_SUBLINK: &str =
 
 #[component]
 pub fn NavBar() -> impl IntoView {
+    let app_mode = use_context::<AppShellMode>().unwrap_or(AppShellMode::Website);
+    if app_mode == AppShellMode::ClinicalDemoApp {
+        return view! { <DemoAppTopBar /> }.into_any();
+    }
+
     let mobile_open = RwSignal::new(false);
     let toggle_mobile = move |_| mobile_open.update(|open| *open = !*open);
     let close_mobile = move |_| mobile_open.set(false);
@@ -159,14 +166,17 @@ pub fn NavBar() -> impl IntoView {
                         <p class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">
                             "Tools"
                         </p>
-                        <A href="/mental-health" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Mental Health & Lingo CGM"</span>
-                        </A>
                         <A href="/clinical" on:click=close_mobile>
                             <span class=MOBILE_NAV_SUBLINK>"Clinical Workspace"</span>
                         </A>
+                        <A href="/clinical/patient" on:click=close_mobile>
+                            <span class=MOBILE_NAV_SUBLINK>"Patient Experience Demo"</span>
+                        </A>
                         <A href="/clinical/physician" on:click=close_mobile>
                             <span class=MOBILE_NAV_SUBLINK>"Physician Workspace Demo"</span>
+                        </A>
+                        <A href="/mental-health" on:click=close_mobile>
+                            <span class=MOBILE_NAV_SUBLINK>"Mental Health & Lingo CGM"</span>
                         </A>
                         <A href="/tools/investment-account" on:click=close_mobile>
                             <span class=MOBILE_NAV_SUBLINK>"Investment Account Calculator"</span>
@@ -185,6 +195,43 @@ pub fn NavBar() -> impl IntoView {
                     </div>
                 </div>
             </Show>
+        </header>
+    }
+    .into_any()
+}
+
+#[component]
+fn DemoAppTopBar() -> impl IntoView {
+    view! {
+        <header class="sticky top-0 z-50 border-b border-white/10 bg-slate-950/90 pt-[env(safe-area-inset-top)] backdrop-blur">
+            <nav
+                aria-label="Dabney.moe demo app bar"
+                class="mx-auto flex max-w-4xl items-center justify-between gap-3 px-4 py-3 sm:px-6"
+            >
+                <A href="/" attr:class="inline-flex items-center gap-2.5">
+                    <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-emerald-400/40 bg-white/95 p-1 shadow-sm">
+                        <img
+                            src="/dabney-elephant.svg"
+                            alt="Dabney.moe"
+                            class="h-full w-full object-contain"
+                        />
+                    </span>
+                    <span class="text-sm font-bold tracking-tight text-white sm:text-base">
+                        "Dabney.moe"
+                    </span>
+                    <span class="rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
+                        "Zero-PHI Demo"
+                    </span>
+                </A>
+                <div class="flex items-center gap-2 text-xs">
+                    <A
+                        href="/privacy"
+                        attr:class="rounded-full border border-white/15 px-3 py-1.5 font-medium text-slate-200 transition hover:bg-white/5"
+                    >
+                        "Privacy"
+                    </A>
+                </div>
+            </nav>
         </header>
     }
 }
@@ -532,6 +579,11 @@ pub fn Contact() -> impl IntoView {
 
 #[component]
 pub fn Footer() -> impl IntoView {
+    let app_mode = use_context::<AppShellMode>().unwrap_or(AppShellMode::Website);
+    if app_mode == AppShellMode::ClinicalDemoApp {
+        return view! { <DemoAppBottomNav /> }.into_any();
+    }
+
     view! {
         <footer class="border-t border-white/5 px-6 py-10">
             <div class="mx-auto flex max-w-5xl flex-col items-center gap-2 text-center text-sm text-slate-500">
@@ -555,6 +607,94 @@ pub fn Footer() -> impl IntoView {
                 </div>
             </div>
         </footer>
+    }
+    .into_any()
+}
+
+#[component]
+fn DemoAppBottomNav() -> impl IntoView {
+    let location = use_location();
+    let tab_cls = move |target: &'static str| -> &'static str {
+        let current = location.pathname.get();
+        let trimmed = current.trim_end_matches('/');
+        let is_active = match target {
+            "/" => trimmed.is_empty() || trimmed == "/clinical/patient",
+            other => trimmed == other,
+        };
+        if is_active {
+            "flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl bg-emerald-500/15 py-2 text-[11px] font-semibold text-emerald-300 transition"
+        } else {
+            "flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-2 text-[11px] font-medium text-slate-400 transition hover:bg-white/5 hover:text-white"
+        }
+    };
+
+    #[cfg(any(feature = "csr", feature = "hydrate"))]
+    let open_web = move |ev: leptos::ev::MouseEvent| {
+        if open_site_or_external("/clinical") {
+            ev.prevent_default();
+        }
+    };
+    #[cfg(not(any(feature = "csr", feature = "hydrate")))]
+    let open_web = move |_ev: leptos::ev::MouseEvent| {};
+
+    view! {
+        <div class="mx-auto max-w-4xl px-4 pb-28 pt-2 text-center text-[11px] text-slate-400 sm:px-6">
+            <p>
+                "Dabney.moe Clinical Demo · 100% synthetic zero-PHI sample data · Not medical advice · "
+                <a
+                    href="https://dabney.moe/clinical"
+                    target="_blank"
+                    rel="noopener"
+                    on:click=open_web
+                    class="text-cyan-400 underline hover:text-cyan-300"
+                >
+                    "Open dabney.moe"
+                </a>
+                " · "
+                <A href="/privacy" attr:class="text-cyan-400 underline hover:text-cyan-300">
+                    "Privacy"
+                </A>
+            </p>
+        </div>
+        <nav
+            aria-label="Clinical demo navigation"
+            class="fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-slate-950/95 px-2 pt-1.5 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur"
+        >
+            <div class="mx-auto flex max-w-4xl items-center gap-1">
+                <A href="/" attr:class=move || tab_cls("/")>
+                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+                        <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+                        <circle cx="12" cy="7" r="4" />
+                    </svg>
+                    <span>"Patient"</span>
+                </A>
+                <A href="/clinical/physician" attr:class=move || tab_cls("/clinical/physician")>
+                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+                        <path d="M11 2v2" />
+                        <path d="M5 2v2" />
+                        <path d="M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1" />
+                        <path d="M8 15a6 6 0 0 0 12 0v-3" />
+                        <circle cx="20" cy="10" r="2" />
+                    </svg>
+                    <span>"Physician"</span>
+                </A>
+                <A href="/mental-health" attr:class=move || tab_cls("/mental-health")>
+                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+                        <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                    </svg>
+                    <span>"Mood & CGM"</span>
+                </A>
+                <A href="/clinical" attr:class=move || tab_cls("/clinical")>
+                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+                        <rect width="7" height="7" x="3" y="3" rx="1" />
+                        <rect width="7" height="7" x="14" y="3" rx="1" />
+                        <rect width="7" height="7" x="14" y="14" rx="1" />
+                        <rect width="7" height="7" x="3" y="14" rx="1" />
+                    </svg>
+                    <span>"Overview"</span>
+                </A>
+            </div>
+        </nav>
     }
 }
 

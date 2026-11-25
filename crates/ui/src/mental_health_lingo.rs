@@ -5,8 +5,10 @@
 //! Time-in-Range, spike excursions, and Lingo Count), scores PHQ-9 and GAD-7
 //! check-ins, and correlates glucose excursions with logged mood/anxiety shifts.
 
+use serde::{Deserialize, Serialize};
+
 /// A single interstitial glucose reading from an Abbott Lingo biosensor.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LingoReading {
     /// Timestamp label (ISO-8601 or `YYYY-MM-DD HH:MM`).
     pub timestamp: String,
@@ -164,6 +166,11 @@ pub fn build_assessment_series(
 
 /// Quote-aware RFC-4180 CSV row splitter supporting `"..."` and `""` escapes.
 pub(crate) fn split_csv_row(line: &str) -> Result<Vec<String>, String> {
+    split_delimited_row(line, ',')
+}
+
+/// Quote-aware delimited row splitter (`,`, `;`, or `\t`) supporting `"..."` and `""` escapes.
+pub(crate) fn split_delimited_row(line: &str, delimiter: char) -> Result<Vec<String>, String> {
     let mut cols = Vec::new();
     let mut current = String::new();
     let mut chars = line.chars().peekable();
@@ -184,7 +191,7 @@ pub(crate) fn split_csv_row(line: &str) -> Result<Vec<String>, String> {
                 current.push(ch);
             }
         } else if just_closed_quote {
-            if ch == ',' {
+            if ch == delimiter {
                 cols.push(current.trim().to_string());
                 current.clear();
                 just_closed_quote = false;
@@ -193,7 +200,7 @@ pub(crate) fn split_csv_row(line: &str) -> Result<Vec<String>, String> {
             } else {
                 return Err("Unexpected characters after closing quote.".to_string());
             }
-        } else if ch == ',' {
+        } else if ch == delimiter {
             cols.push(current.trim().to_string());
             current.clear();
         } else if ch == '"' && current.trim().is_empty() {

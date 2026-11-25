@@ -480,18 +480,23 @@ jobs:
           path: ~/.gradle/caches
           key: gradle-caches-${{ hashFiles('src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties', 'src-tauri/Cargo.toml') }}
           restore-keys: gradle-caches-
-      - name: cargo tauri android build --apk
+      - name: Build & verify Android release AAB (16 KB + zero-PHI manifest checks)
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           nix develop .#android -c bash -c '
             set -euo pipefail
-            cargo tauri android build --apk
+            scripts/android-release.sh --aab
           '
-      - name: Upload Android APK artifact
+      - name: Upload Android AAB artifact
         if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v7
         with:
-          name: android-apk
-          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          name: android-aab
+          path: src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
           if-no-files-found: warn
           retention-days: 7
   # Test suite.
@@ -679,9 +684,9 @@ jobs:
 
             gcloud run deploy dabney-web --image "$IMAGE" --region "$GCP_REGION" --quiet
           '
-      - name: Publish app
+      - name: Publish Android app status
         run: |
-          echo "TODO: sign + publish the Android app to Google Play."
-          echo "Pending Play Console account; add ANDROID_KEYSTORE_BASE64,"
-          echo "ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD and a Play service account JSON,"
-          echo "then run the AAB upload (e.g. r0adkll/upload-google-play) here."
+          echo "Play-ready AAB (moe.dabney.demo) is built and verified by scripts/android-release.sh."
+          echo "Complete the first manual Play Console upload per docs/google-play/README.md,"
+          echo "then configure ANDROID_KEYSTORE_BASE64, ANDROID_KEY_ALIAS, ANDROID_KEYSTORE_PASSWORD,"
+          echo "ANDROID_KEY_PASSWORD, and GOOGLE_PLAY_SERVICE_ACCOUNT_JSON to enable automated Play uploads."

@@ -35,13 +35,17 @@ TAURI_PREFIXES = (
     "public/photos/",
 )
 TAURI_FILES = {
+    ".cargo/config.toml",
     "Cargo.toml",
     "Trunk.toml",
     "flake.lock",
     "flake.nix",
+    "public/dabney-elephant.svg",
     "public/favicon.png",
+    "public/favicon.svg",
     "public/resume.pdf",
     "rust-toolchain.toml",
+    "scripts/android-release.sh",
     "tailwind.config.js",
     ".github/workflows/ci.yml",
     "scripts/ci_scope.py",
