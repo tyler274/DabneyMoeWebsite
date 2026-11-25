@@ -271,6 +271,7 @@ pub fn apply_consent_scripts(choices: &ConsentChoices) {
     #[cfg(any(feature = "csr", feature = "hydrate"))]
     {
         update_gtag_consent(choices.analytics);
+        crate::analytics::sync_ga4_with_consent(choices.analytics);
         if choices.error_reporting {
             crate::analytics::enable_error_reporting();
         }

@@ -180,10 +180,16 @@ pub struct ChatRequest {
 }
 
 /// Structured, chart-grounded response returned for a physician question.
+///
+/// `grounded` is `true` exactly when `citations` is non-empty: an answer is
+/// only grounded when at least one of the patient's own records matched the
+/// question. Construct answers through [`answer_chart_question`], which keeps
+/// the two in step.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatAnswer {
     pub patient_id: String,
     pub question: String,
+    pub grounded: bool,
     pub answer: String,
     pub citations: Vec<ChatCitation>,
     pub basis: String,
@@ -562,51 +568,266 @@ pub fn find_patient(id: &str) -> Option<PatientChart> {
     synthetic_panel().into_iter().find(|p| p.id == id)
 }
 
+/// Most records a single answer cites.
+const MAX_CITATIONS: usize = 3;
+
+/// How much one query term counts, by the part of a record it appears in.
+/// Titles, structured key names/values and the record kind say what a record
+/// is *about*; body text and source labels only *mention* things, and a
+/// patient's own message mentioning a lab name counts least of all.
+mod weight {
+    pub const TITLE: u32 = 4;
+    pub const KEY_VALUE: u32 = 4;
+    pub const KIND: u32 = 3;
+    pub const CLINICAL_BODY: u32 = 2;
+    pub const MESSAGE_BODY: u32 = 1;
+    pub const SOURCE_LABEL: u32 = 1;
+}
+
+/// Words that carry no clinical meaning in a question. They never select a
+/// record on their own.
+const STOP_WORDS: &[&str] = &[
+    "a",
+    "about",
+    "after",
+    "all",
+    "an",
+    "and",
+    "any",
+    "are",
+    "as",
+    "at",
+    "be",
+    "been",
+    "before",
+    "by",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
+    "for",
+    "from",
+    "give",
+    "had",
+    "has",
+    "have",
+    "he",
+    "her",
+    "hers",
+    "him",
+    "his",
+    "how",
+    "i",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "me",
+    "my",
+    "of",
+    "on",
+    "or",
+    "our",
+    "please",
+    "patient",
+    "patients",
+    "recent",
+    "review",
+    "she",
+    "should",
+    "show",
+    "summarize",
+    "tell",
+    "that",
+    "the",
+    "their",
+    "them",
+    "there",
+    "they",
+    "this",
+    "to",
+    "was",
+    "we",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "will",
+    "with",
+    "would",
+    "you",
+    "your",
+];
+
+impl RecordKind {
+    /// Words a physician uses to ask for this kind of record.
+    const fn query_words(self) -> &'static [&'static str] {
+        match self {
+            Self::LabResult => &["lab", "labs", "panel", "result", "results", "bloodwork"],
+            Self::ProgressNote => &["note", "notes", "progress", "visit"],
+            Self::CgmSummary => &["cgm", "sensor", "glucose"],
+            Self::PatientMessage => &["message", "messages", "ask", "asked", "portal", "wrote"],
+            Self::Imaging => &["imaging", "image", "scan", "echo", "echocardiogram"],
+        }
+    }
+
+    /// Body text weight: clinical documentation outranks a patient's own words.
+    const fn body_weight(self) -> u32 {
+        match self {
+            Self::PatientMessage => weight::MESSAGE_BODY,
+            Self::LabResult | Self::ProgressNote | Self::CgmSummary | Self::Imaging => {
+                weight::CLINICAL_BODY
+            }
+        }
+    }
+}
+
+/// Splits text into lowercase whole words. Hyphens, slashes and punctuation
+/// separate words, so `PHQ-9` yields `phq` and `9`, and `is` never matches
+/// inside `this`.
+fn words(text: &str) -> impl Iterator<Item = String> + '_ {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+}
+
+/// Whether a query term names the same word as `word`, allowing a plural.
+fn same_word(term: &str, word: &str) -> bool {
+    word == term
+        || word.strip_suffix('s') == Some(term)
+        || term.strip_suffix('s') == Some(word)
+        || word.strip_suffix("es") == Some(term)
+}
+
+fn mentions(text: &str, term: &str) -> bool {
+    words(text).any(|w| same_word(term, &w))
+}
+
+/// The meaningful search terms of a question: whole words, minus stop words
+/// and bare numbers, without duplicates.
+fn query_terms(question: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for word in words(question) {
+        let meaningful = word.len() >= 2
+            && !word.chars().all(|c| c.is_ascii_digit())
+            && !STOP_WORDS.contains(&word.as_str());
+        if meaningful && !out.contains(&word) {
+            out.push(word);
+        }
+    }
+    out
+}
+
+/// Weight of the strongest place `term` appears in `rec`, or 0 when absent.
+fn term_weight(rec: &ChartRecord, term: &str) -> u32 {
+    let in_kind = rec.kind.query_words().iter().any(|w| same_word(term, w))
+        || mentions(rec.kind.label(), term);
+    [
+        (mentions(&rec.title, term), weight::TITLE),
+        (
+            rec.key_values
+                .iter()
+                .any(|(k, v)| mentions(k, term) || mentions(v, term)),
+            weight::KEY_VALUE,
+        ),
+        (in_kind, weight::KIND),
+        (mentions(&rec.body, term), rec.kind.body_weight()),
+        (mentions(&rec.source_label, term), weight::SOURCE_LABEL),
+    ]
+    .into_iter()
+    .filter_map(|(hit, w)| hit.then_some(w))
+    .max()
+    .unwrap_or(0)
+}
+
+/// Splits a record body into sentences at `.`, `?` or `!` followed by
+/// whitespace, so decimals such as `6.7%` stay inside their sentence.
+fn sentences(body: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut chars = body.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        let at_boundary = matches!(c, '.' | '?' | '!')
+            && chars.peek().is_none_or(|(_, next)| next.is_whitespace());
+        if at_boundary {
+            let end = i + c.len_utf8();
+            let sentence = body[start..end].trim();
+            if !sentence.is_empty() {
+                out.push(sentence);
+            }
+            start = end;
+        }
+    }
+    let tail = body[start..].trim();
+    if !tail.is_empty() {
+        out.push(tail);
+    }
+    out
+}
+
+/// The parts of a matched record that answer the question: body sentences
+/// and key values naming a query term, falling back to the opening sentence
+/// when the record matched only by its title or kind.
+fn relevant_excerpt(rec: &ChartRecord, terms: &[String]) -> String {
+    let hits = |text: &str| terms.iter().any(|t| mentions(text, t));
+    let body_sentences = sentences(&rec.body);
+    let mut parts: Vec<String> = body_sentences
+        .iter()
+        .filter(|s| hits(s))
+        .map(|s| (*s).to_string())
+        .collect();
+    if parts.is_empty() {
+        parts.extend(body_sentences.first().map(|s| (*s).to_string()));
+    }
+    let key_values: Vec<String> = rec
+        .key_values
+        .iter()
+        .filter(|(k, v)| hits(k) || hits(v))
+        .map(|(k, v)| format!("{k}: {v}"))
+        .collect();
+    if !key_values.is_empty() {
+        parts.push(format!("({})", key_values.join("; ")));
+    }
+    parts.join(" ")
+}
+
 /// Answers a physician question strictly from the selected patient's own records,
 /// returning verbatim excerpts and record citations without crossing patient boundaries.
+///
+/// Records are matched on whole words, weighted by where the word appears
+/// (see [`weight`]). When no record matches, the answer says so and cites
+/// nothing rather than presenting unrelated records as evidence.
 pub fn answer_chart_question(patient: &PatientChart, raw_question: &str) -> ChatAnswer {
     let question = raw_question.trim();
-    let terms = tokenize_query(question);
+    let terms = query_terms(question);
 
-    let mut scored: Vec<(usize, &ChartRecord)> = patient
+    let mut scored: Vec<(u32, &ChartRecord)> = patient
         .records
         .iter()
-        .map(|rec| {
-            let haystack = format!(
-                "{} {} {} {}",
-                rec.title,
-                rec.source_label,
-                rec.body,
-                rec.key_values
-                    .iter()
-                    .map(|(k, v)| format!("{k} {v}"))
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            )
-            .to_ascii_lowercase();
-            let score = terms
-                .iter()
-                .filter(|t| haystack.contains(t.as_str()))
-                .count();
-            (score, rec)
-        })
+        .map(|rec| (terms.iter().map(|t| term_weight(rec, t)).sum(), rec))
+        .filter(|(score, _)| *score > 0)
+        .collect();
+    scored.sort_by(|(sa, a), (sb, b)| {
+        sb.cmp(sa)
+            .then_with(|| a.kind.body_weight().cmp(&b.kind.body_weight()).reverse())
+            .then_with(|| b.recorded_at.cmp(&a.recorded_at))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    let matched: Vec<&ChartRecord> = scored
+        .into_iter()
+        .take(MAX_CITATIONS)
+        .map(|(_, r)| r)
         .collect();
 
-    scored.sort_by(|a, b| {
-        b.0.cmp(&a.0)
-            .then_with(|| b.1.recorded_at.cmp(&a.1.recorded_at))
-    });
-
-    let matched: Vec<&ChartRecord> = if scored.iter().any(|(s, _)| *s > 0) {
-        scored
-            .into_iter()
-            .filter(|(s, _)| *s > 0)
-            .take(3)
-            .map(|(_, r)| r)
-            .collect()
-    } else {
-        scored.into_iter().take(2).map(|(_, r)| r).collect()
-    };
+    if matched.is_empty() {
+        return no_match_answer(patient, question, &terms);
+    }
 
     let citations: Vec<ChatCitation> = matched
         .iter()
@@ -619,33 +840,31 @@ pub fn answer_chart_question(patient: &PatientChart, raw_question: &str) -> Chat
         })
         .collect();
 
-    let meds_line = if patient.medications.is_empty() {
-        "No active medications documented.".to_string()
-    } else {
-        patient
-            .medications
-            .iter()
-            .map(|m| format!("{} {} ({})", m.name, m.dose, m.schedule))
-            .collect::<Vec<_>>()
-            .join("; ")
-    };
-
-    let cite_bullets = citations
+    let findings = matched
         .iter()
-        .map(|c| {
+        .map(|r| {
             format!(
-                "- [{}] {} ({}): {}",
-                c.record_id, c.title, c.recorded_at, c.excerpt
+                "- {} [{}], {}, {}: {}",
+                r.title,
+                r.id,
+                r.kind.label(),
+                r.recorded_at,
+                relevant_excerpt(r, &terms)
             )
         })
         .collect::<Vec<_>>()
         .join("\n");
-
+    let noun = if matched.len() == 1 {
+        "record"
+    } else {
+        "records"
+    };
     let answer = format!(
-        "Chart findings for {} ({}):\n{}\n\nActive medications: {}\n\nGrounded records:\n{}",
-        patient.display_name, patient.mrn, patient.summary, meds_line, cite_bullets
+        "{} matching {noun} in {}'s chart ({}):\n{findings}",
+        matched.len(),
+        patient.display_name,
+        patient.mrn
     );
-
     let cited_ids = citations
         .iter()
         .map(|c| c.record_id.as_str())
@@ -655,29 +874,42 @@ pub fn answer_chart_question(patient: &PatientChart, raw_question: &str) -> Chat
     ChatAnswer {
         patient_id: patient.id.clone(),
         question: question.to_string(),
+        grounded: true,
         answer,
         citations,
         basis: format!(
-            "Local deterministic chart retrieval scoped exclusively to {} (cited: {}).",
-            patient.mrn, cited_ids
+            "Local deterministic whole-word chart retrieval scoped exclusively to {} (cited: {cited_ids}).",
+            patient.mrn
         ),
     }
 }
 
-fn tokenize_query(query: &str) -> Vec<String> {
-    const STOP_WORDS: &[&str] = &[
-        "the", "and", "for", "with", "what", "how", "are", "was", "were", "has", "have", "does",
-        "did", "this", "that", "from", "into", "about", "their", "her", "his", "any", "show",
-        "tell", "please", "patient",
-    ];
-    let mut out = Vec::new();
-    for raw in query.split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '/') {
-        let lower = raw.to_ascii_lowercase();
-        if lower.len() >= 2 && !STOP_WORDS.contains(&lower.as_str()) && !out.contains(&lower) {
-            out.push(lower);
-        }
+fn no_match_answer(patient: &PatientChart, question: &str, terms: &[String]) -> ChatAnswer {
+    let reason = if terms.is_empty() {
+        "The question has no searchable clinical terms.".to_string()
+    } else {
+        format!(
+            "None of the {} source records mention: {}.",
+            patient.records.len(),
+            terms.join(", ")
+        )
+    };
+    ChatAnswer {
+        patient_id: patient.id.clone(),
+        question: question.to_string(),
+        grounded: false,
+        answer: format!(
+            "No matching records in this chart for {} ({}). {reason} \
+             Nothing is cited, and absence from these records is not evidence either way. \
+             Try asking about a lab value, symptom, medication or message that appears in the records below.",
+            patient.display_name, patient.mrn
+        ),
+        citations: Vec::new(),
+        basis: format!(
+            "Local deterministic whole-word chart retrieval scoped exclusively to {}; no record matched.",
+            patient.mrn
+        ),
     }
-    out
 }
 
 #[cfg(feature = "ssr")]
@@ -842,6 +1074,176 @@ mod tests {
             );
         }
         assert!(answer.answer.contains("6.7%"));
+        assert!(answer.grounded);
+    }
+
+    fn assert_no_match(patient_id: &str, question: &str) {
+        let chart = find_patient(patient_id).expect("patient");
+        let answer = answer_chart_question(&chart, question);
+        assert!(
+            answer.citations.is_empty(),
+            "{question:?} on {patient_id} cited {:?}",
+            answer
+                .citations
+                .iter()
+                .map(|c| &c.record_id)
+                .collect::<Vec<_>>()
+        );
+        assert!(!answer.grounded, "{question:?} must not claim grounding");
+        assert!(
+            answer
+                .answer
+                .starts_with("No matching records in this chart"),
+            "{question:?}: {}",
+            answer.answer
+        );
+        assert!(answer.basis.contains("no record matched"));
+    }
+
+    #[test]
+    fn gibberish_question_cites_nothing() {
+        assert_no_match("pt-priya-nair", "zzzz");
+    }
+
+    #[test]
+    fn absent_statin_is_reported_honestly() {
+        assert_no_match("pt-carlos-mendez", "Is he on a statin?");
+    }
+
+    #[test]
+    fn absent_stroke_history_is_reported_honestly() {
+        assert_no_match("pt-david-okafor", "Any history of stroke?");
+    }
+
+    #[test]
+    fn stop_word_only_question_cites_nothing() {
+        assert_no_match("pt-nadia-kulkarni", "What is this?");
+    }
+
+    #[test]
+    fn terms_match_whole_words_not_substrings() {
+        // "age" appears only inside "average" and "dosage"-like words.
+        assert_no_match("pt-carlos-mendez", "age");
+        assert!(!mentions("Basic Metabolic Panel & Urine ACR", "is"));
+        assert!(mentions("Potassium 4.3 mEq/L", "potassium"));
+        assert!(mentions("Mild left atrial enlargement", "enlargements"));
+    }
+
+    #[test]
+    fn potassium_question_ranks_the_lab_first() {
+        let nadia = find_patient("pt-nadia-kulkarni").expect("nadia");
+        let answer = answer_chart_question(&nadia, "What is her potassium?");
+        assert!(answer.grounded);
+        assert_eq!(answer.citations[0].record_id, "nk-lab-02");
+        assert!(answer.answer.contains("potassium 4.1 mEq/L"));
+    }
+
+    #[test]
+    fn clinical_record_outranks_a_message_mentioning_the_same_word() {
+        let mut chart = find_patient("pt-carlos-mendez").expect("carlos");
+        chart.records.push(ChartRecord {
+            id: "cm-msg-99".into(),
+            kind: RecordKind::PatientMessage,
+            title: "Diet question".into(),
+            recorded_at: "2026-11-24".into(),
+            source_label: "Patient Portal".into(),
+            body: "Should I eat bananas for potassium before my visit?".into(),
+            key_values: vec![],
+        });
+        let answer = answer_chart_question(&chart, "What is his potassium?");
+        let ids: Vec<_> = answer
+            .citations
+            .iter()
+            .map(|c| c.record_id.as_str())
+            .collect();
+        assert_eq!(ids, ["cm-lab-02", "cm-msg-99"]);
+    }
+
+    #[test]
+    fn answer_body_is_built_from_the_matched_excerpts() {
+        let carlos = find_patient("pt-carlos-mendez").expect("carlos");
+        let edema = answer_chart_question(&carlos, "Any ankle edema on amlodipine?");
+        let labs = answer_chart_question(&carlos, "Review eGFR, potassium, and urine ACR labs");
+        assert_eq!(edema.citations[0].record_id, "cm-note-01");
+        assert_eq!(labs.citations[0].record_id, "cm-lab-02");
+        assert!(edema.answer.contains("ankle edema"));
+        assert!(!edema.answer.contains("Urine albumin"));
+        assert!(labs.answer.contains("eGFR 74"));
+        assert_ne!(edema.answer, labs.answer);
+        // The fixed summary + medication template is gone.
+        assert!(!edema.answer.contains(&carlos.summary));
+        assert!(!edema.answer.contains("Active medications"));
+    }
+
+    #[test]
+    fn suggested_questions_stay_grounded_and_patient_scoped() {
+        let cases = [
+            (
+                "pt-nadia-kulkarni",
+                "What does the 14-day CGM show about morning fasting glucose?",
+                "nk-cgm-01",
+            ),
+            (
+                "pt-nadia-kulkarni",
+                "Summarize HbA1c, eGFR, and metformin regimen",
+                "nk-lab-02",
+            ),
+            (
+                "pt-nadia-kulkarni",
+                "What did the patient ask about metformin timing?",
+                "nk-msg-03",
+            ),
+            (
+                "pt-carlos-mendez",
+                "What is the 14-day home blood pressure average?",
+                "cm-note-01",
+            ),
+            (
+                "pt-priya-nair",
+                "How did PHQ-9, GAD-7, and ASRM scores change?",
+                "pn-note-01",
+            ),
+            (
+                "pt-priya-nair",
+                "Summarize CGM time in range and post-lunch spikes",
+                "pn-cgm-02",
+            ),
+            (
+                "pt-david-okafor",
+                "What did the transthoracic echocardiogram show?",
+                "do-img-01",
+            ),
+            (
+                "pt-david-okafor",
+                "Review hemoglobin, renal panel, and apixaban dosing",
+                "do-lab-02",
+            ),
+        ];
+        for (patient_id, question, expected_first) in cases {
+            let chart = find_patient(patient_id).expect("patient");
+            let answer = answer_chart_question(&chart, question);
+            assert!(answer.grounded, "{question:?}");
+            assert_eq!(
+                answer.citations[0].record_id, expected_first,
+                "{question:?}"
+            );
+            assert!(answer.citations.len() <= MAX_CITATIONS);
+            for cite in &answer.citations {
+                assert!(
+                    chart.records.iter().any(|r| r.id == cite.record_id),
+                    "{question:?}: citation {} escaped {patient_id}",
+                    cite.record_id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sentences_keep_decimals_together() {
+        assert_eq!(
+            sentences("HbA1c 6.7% (prior 7.4%). Fasting glucose 134 mg/dL."),
+            ["HbA1c 6.7% (prior 7.4%).", "Fasting glucose 134 mg/dL."]
+        );
     }
 
     #[cfg(feature = "ssr")]

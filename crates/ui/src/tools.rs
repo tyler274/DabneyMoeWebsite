@@ -1,7 +1,6 @@
 //! Client-side financial tools (portfolio CSV stays in the browser).
 
 use leptos::prelude::*;
-use leptos_router::components::A;
 
 use crate::portfolio::{
     analyze_buy, analyze_portfolio, analyze_rebalance, parse_deposit, parse_withdrawal,
@@ -9,7 +8,7 @@ use crate::portfolio::{
     TaxWithholding, TradeSide,
 };
 use crate::portfolio_chart::PortfolioImpactCharts;
-use crate::sections::Footer;
+use crate::sections::{Footer, NavDropdown, NavMenuLink, OpenNavMenu};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CalculatorMode {
@@ -35,57 +34,40 @@ fn fmt_usd(amount: f64) -> String {
     format!("{sign}${dollars_str}.{cents:02}")
 }
 
-#[component]
-pub fn ToolsMenu() -> impl IntoView {
-    let open = RwSignal::new(false);
-    let toggle = move |_| open.update(|value| *value = !*value);
-    let close = move |_| open.set(false);
+/// Tool pages, shared by the desktop dropdown and the mobile menu.
+pub const TOOLS_LINKS: &[NavMenuLink] = &[
+    NavMenuLink {
+        href: "/clinical",
+        label: "Clinical Workspace",
+    },
+    NavMenuLink {
+        href: "/clinical/physician",
+        label: "Physician Workspace Demo",
+    },
+    NavMenuLink {
+        href: "/mental-health",
+        label: "Mental Health & Lingo CGM",
+    },
+    NavMenuLink {
+        href: "/tools/investment-account",
+        label: "Investment Account Calculator",
+    },
+    NavMenuLink {
+        href: "/ownership",
+        label: "Code Ownership Report",
+    },
+];
 
+#[component]
+pub fn ToolsMenu(open: RwSignal<OpenNavMenu>) -> impl IntoView {
     view! {
-        <div class="relative">
-            <button
-                type="button"
-                class="flex items-center gap-1 transition hover:text-white"
-                aria-expanded=move || open.get()
-                aria-haspopup="true"
-                on:click=toggle
-            >
-                "Tools"
-                <span class="text-[10px] opacity-70">{move || if open.get() { "▲" } else { "▼" }}</span>
-            </button>
-            <Show when=move || open.get()>
-                <div
-                    class="absolute right-0 z-50 mt-2 min-w-56 rounded-xl border border-white/10 bg-slate-900 py-2 shadow-xl"
-                    role="menu"
-                >
-                    <A href="/clinical" on:click=close>
-                        <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            "Clinical Workspace"
-                        </span>
-                    </A>
-                    <A href="/clinical/physician" on:click=close>
-                        <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            "Physician Workspace Demo"
-                        </span>
-                    </A>
-                    <A href="/mental-health" on:click=close>
-                        <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            "Mental Health & Lingo CGM"
-                        </span>
-                    </A>
-                    <A href="/tools/investment-account" on:click=close>
-                        <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            "Investment Account Calculator"
-                        </span>
-                    </A>
-                    <A href="/ownership" on:click=close>
-                        <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            "Code Ownership Report"
-                        </span>
-                    </A>
-                </div>
-            </Show>
-        </div>
+        <NavDropdown
+            label="Tools"
+            menu=OpenNavMenu::Tools
+            open=open
+            links=TOOLS_LINKS
+            width="min-w-56"
+        />
     }
 }
 

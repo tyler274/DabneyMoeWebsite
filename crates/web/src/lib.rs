@@ -37,6 +37,39 @@ where
         .route("/koizetsu/", axum::routing::get(gone))
 }
 
+/// Legacy `/coda` showcase URLs, published by earlier versions of this site
+/// and by older documentation, mapped to their current homes.
+#[cfg(feature = "ssr")]
+pub const LEGACY_REDIRECTS: &[(&str, &str)] = &[
+    ("/coda", "/clinical"),
+    ("/coda/", "/clinical"),
+    ("/coda/{*rest}", "/clinical"),
+    ("/coda/physician", "/clinical/physician"),
+    ("/coda/physician/", "/clinical/physician"),
+    ("/coda/physician/{*rest}", "/clinical/physician"),
+];
+
+/// Answers each [`LEGACY_REDIRECTS`] route with `301 Moved Permanently`.
+#[cfg(feature = "ssr")]
+pub fn mount_legacy_redirects<S>(router: axum::Router<S>) -> axum::Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    LEGACY_REDIRECTS
+        .iter()
+        .fold(router, |router, &(path, location)| {
+            router.route(
+                path,
+                axum::routing::get(move || async move {
+                    (
+                        axum::http::StatusCode::MOVED_PERMANENTLY,
+                        [(axum::http::header::LOCATION, location)],
+                    )
+                }),
+            )
+        })
+}
+
 #[cfg(feature = "ssr")]
 pub fn mount_clinical_api_routes<S>(
     router: axum::Router<S>,
@@ -78,6 +111,132 @@ mod tests {
             !routes.is_empty(),
             "expected the router to expose at least one route"
         );
+    }
+
+    #[tokio::test]
+    async fn legacy_coda_urls_redirect_permanently_to_clinical() {
+        use leptos::prelude::LeptosOptions;
+        use leptos_axum::LeptosRoutes;
+
+        let options = LeptosOptions::builder().output_name("dabney").build();
+        let app = super::mount_legacy_redirects(Router::new())
+            .leptos_routes(&options, generate_route_list(App), {
+                let options = options.clone();
+                move || ui::shell(options.clone())
+            })
+            .with_state(options);
+
+        for (path, location) in [
+            ("/coda", "/clinical"),
+            ("/coda/", "/clinical"),
+            ("/coda/invite", "/clinical"),
+            ("/coda/some/deep/path", "/clinical"),
+            ("/coda?source=old-link", "/clinical"),
+            ("/coda/physician", "/clinical/physician"),
+            ("/coda/physician/", "/clinical/physician"),
+            ("/coda/physician/api/health", "/clinical/physician"),
+        ] {
+            for method in [Method::GET, Method::HEAD] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(method.clone())
+                            .uri(path)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    StatusCode::MOVED_PERMANENTLY,
+                    "{method} {path}"
+                );
+                assert_eq!(
+                    response.headers()[header::LOCATION],
+                    location,
+                    "{method} {path}"
+                );
+            }
+        }
+
+        // Valid routes are untouched.
+        for path in ["/", "/clinical", "/clinical/physician"] {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_routes_render_not_found_with_404() {
+        use leptos::prelude::LeptosOptions;
+        use leptos_axum::LeptosRoutes;
+
+        let options = LeptosOptions::builder()
+            .output_name("dabney")
+            .site_root("target/site-test-does-not-exist")
+            .build();
+        let app = Router::new()
+            .leptos_routes(&options, generate_route_list(App), {
+                let options = options.clone();
+                move || ui::shell(options.clone())
+            })
+            .fallback(leptos_axum::file_and_error_handler(ui::shell))
+            .with_state(options);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/definitely-not-a-route")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("Page not found"));
+        assert!(html.contains("<title>Page not found | dabney.moe</title>"));
+        assert!(html.contains(r#"name="robots" content="noindex""#));
+        // The home page's sections are not rendered at the wrong address.
+        assert!(!html.contains(r#"id="about""#));
+        assert!(!html.contains(r#"id="contact""#));
+    }
+
+    #[tokio::test]
+    async fn footer_links_clinical_and_nav_menus_expose_menuitem_links() {
+        use leptos::prelude::LeptosOptions;
+        use leptos_axum::LeptosRoutes;
+
+        let options = LeptosOptions::builder().output_name("dabney").build();
+        let app = Router::new()
+            .leptos_routes(&options, generate_route_list(App), {
+                let options = options.clone();
+                move || ui::shell(options.clone())
+            })
+            .with_state(options);
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        let footer = html.split("<footer").nth(1).expect("shared footer");
+        assert!(footer.contains(r#"href="/clinical""#));
+        assert!(footer.contains(r#"href="/ownership""#));
+        // "Built with" sits on its own line, not after a dangling middot.
+        let links = footer.split("Built with").next().unwrap();
+        assert!(links.ends_with(r#"<p class="text-xs text-slate-400">"#));
+        // Both dropdown buttons start closed and are announced as menus.
+        assert_eq!(html.matches(r#"aria-haspopup="menu""#).count(), 2);
+        assert_eq!(html.matches(r#"aria-expanded="false""#).count(), 3);
+        assert!(!html.contains(r#"role="menuitem""#), "menus start closed");
     }
 
     #[tokio::test]

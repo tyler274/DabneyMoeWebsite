@@ -12,6 +12,9 @@ use leptos_router::components::A;
 
 use crate::sections::{Footer, NavBar};
 
+/// Inline code styling for command, file and identifier names in prose.
+const INLINE_CODE: &str = "rounded bg-white/10 px-1 py-0.5 font-mono text-[0.85em] text-cyan-200";
+
 struct OwnershipBar {
     label: &'static str,
     detail: &'static str,
@@ -568,10 +571,10 @@ pub fn OwnershipReportPage() -> impl IntoView {
             <section class="space-y-6">
                 <div>
                     <h2 class="text-xl font-semibold text-white">
-                        "5. Standalone Workspace Line-Level Authorship Audit (`dabney-moe`)"
+                        "5. Standalone Workspace Line-Level Authorship Audit (" <code class=INLINE_CODE>"dabney-moe"</code> ")"
                     </h2>
                     <p class="mt-1 text-sm text-slate-400">
-                        "Line-by-line `git blame` across 1,878 text/source files (671,146 surviving lines, excluding synthetic patient JSON fixtures and generated wire output). This repository is completely separated from dabney.moe and retains full truthful Git history with `CODEOWNERS` set to `* @tyler274`."
+                        "Line-by-line " <code class=INLINE_CODE>"git blame"</code> " across 1,878 text/source files (671,146 surviving lines, excluding synthetic patient JSON fixtures and generated wire output). This repository is completely separated from dabney.moe and retains full truthful Git history with " <code class=INLINE_CODE>"CODEOWNERS"</code> " set to " <code class=INLINE_CODE>"* @tyler274"</code> "."
                     </p>
                 </div>
 
@@ -612,7 +615,7 @@ pub fn OwnershipReportPage() -> impl IntoView {
                             "Provider-Agnostic & Independently Verifiable"
                         </h2>
                         <p class="mt-1 text-xs leading-relaxed text-slate-300">
-                            "dabney.moe builds reproducibly via Nix (`nix build .#serverImage`) or standard OCI `Dockerfile` and deploys without vendor lock-in across any VPS (SSH + Caddy), Fly.io, GCP Cloud Run, AWS App Runner, or Azure Container Apps. This technical provenance audit is published for transparency and is not legal advice."
+                            "dabney.moe builds reproducibly via Nix (" <code class=INLINE_CODE>"nix build .#serverImage"</code> ") or standard OCI " <code class=INLINE_CODE>"Dockerfile"</code> " and deploys without vendor lock-in across any VPS (SSH + Caddy), Fly.io, GCP Cloud Run, AWS App Runner, or Azure Container Apps. This technical provenance audit is published for transparency and is not legal advice."
                         </p>
                     </div>
                     <div class="flex shrink-0 flex-wrap gap-2">
@@ -677,6 +680,22 @@ mod tests {
         );
         assert!(html.contains("100.0%"));
         assert!(html.contains("@tyler274"));
+        assert!(
+            !html.contains('`'),
+            "Markdown backticks must render as <code>, not literal text"
+        );
+        for code in [
+            "git blame",
+            "CODEOWNERS",
+            "dabney-moe",
+            "Dockerfile",
+            "nix build .#serverImage",
+        ] {
+            assert!(
+                html.contains(&format!(">{code}</code>")),
+                "missing <code> for {code}"
+            );
+        }
         let legacy_brand = ["co", "da"].concat();
         let legacy_credit = ["hoyo", "verse"].concat();
         assert!(!html.to_ascii_lowercase().contains(&legacy_brand));

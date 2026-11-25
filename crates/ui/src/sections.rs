@@ -1,13 +1,14 @@
 use leptos::prelude::*;
 use leptos_router::components::A;
+use leptos_router::hooks::use_location;
 
-use crate::commissions::CommissionsMenu;
+use crate::commissions::{CommissionsMenu, COMMISSIONS_LINKS};
 use crate::consent::OpenConsentButton;
 use crate::data::{
     ABOUT, ABOUT_PHOTO, EXPERIENCE, EXPERTISE, PROFILE_PHOTO, PROJECTS, SERVICES, SKILLS, SUMMARY,
     TAGLINE,
 };
-use crate::tools::ToolsMenu;
+use crate::tools::{ToolsMenu, TOOLS_LINKS};
 
 /// On WASM builds, attempt to open `url` via the Tauri opener plugin, exposed
 /// on `window.__TAURI__` (requires `app.withGlobalTauri = true`). Returns `true`
@@ -86,12 +87,168 @@ const MOBILE_NAV_LINK: &str =
     "block rounded-lg px-3 py-2.5 text-slate-300 transition hover:bg-white/5 hover:text-white";
 const MOBILE_NAV_SUBLINK: &str =
     "block rounded-lg py-2 pl-6 pr-3 text-sm text-slate-400 transition hover:bg-white/5 hover:text-white";
+const NAV_MENU_ITEM: &str =
+    "block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white focus:bg-white/5 focus:text-white focus:outline-none";
+
+/// Which desktop navbar dropdown is open. One signal owns the choice, so
+/// opening one menu closes the other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenNavMenu {
+    None,
+    Commissions,
+    Tools,
+}
+
+impl OpenNavMenu {
+    /// The menu state after clicking `menu`'s button: open it, or close it
+    /// when it is already open.
+    #[must_use]
+    pub const fn toggled(self, menu: Self) -> Self {
+        match (self, menu) {
+            (Self::Commissions, Self::Commissions) | (Self::Tools, Self::Tools) => Self::None,
+            _ => menu,
+        }
+    }
+
+    const fn dom_id(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::Commissions => "nav-menu-commissions",
+            Self::Tools => "nav-menu-tools",
+        }
+    }
+}
+
+/// One in-site page linked from a navbar dropdown and the mobile menu.
+pub struct NavMenuLink {
+    pub href: &'static str,
+    pub label: &'static str,
+}
+
+/// A desktop navbar dropdown whose open state lives in the navbar's shared
+/// [`OpenNavMenu`] signal.
+#[component]
+pub fn NavDropdown(
+    label: &'static str,
+    menu: OpenNavMenu,
+    open: RwSignal<OpenNavMenu>,
+    links: &'static [NavMenuLink],
+    width: &'static str,
+) -> impl IntoView {
+    let is_open = move || open.get() == menu;
+    let close = move |_| open.set(OpenNavMenu::None);
+
+    view! {
+        <div class="relative" data-nav-menu="">
+            <button
+                type="button"
+                class="flex items-center gap-1 transition hover:text-white"
+                aria-expanded=move || is_open().to_string()
+                aria-haspopup="menu"
+                aria-controls=menu.dom_id()
+                on:click=move |_| open.update(|current| *current = current.toggled(menu))
+            >
+                {label}
+                <span class="text-[10px] opacity-70" aria-hidden="true">
+                    {move || if is_open() { "▲" } else { "▼" }}
+                </span>
+            </button>
+            <Show when=is_open>
+                <div
+                    id=menu.dom_id()
+                    class=format!(
+                        "absolute right-0 z-50 mt-2 {width} rounded-xl border border-white/10 bg-slate-900 py-2 shadow-xl",
+                    )
+                    role="menu"
+                    aria-label=label
+                >
+                    {links
+                        .iter()
+                        .map(|link| {
+                            view! {
+                                <A href=link.href attr:class=NAV_MENU_ITEM attr:role="menuitem" on:click=close>
+                                    {link.label}
+                                </A>
+                            }
+                        })
+                        .collect_view()}
+                </div>
+            </Show>
+        </div>
+    }
+}
+
+/// Mobile menu section listing the same pages as a desktop dropdown.
+#[component]
+fn MobileNavGroup(
+    heading: &'static str,
+    links: &'static [NavMenuLink],
+    mobile_open: RwSignal<bool>,
+) -> impl IntoView {
+    view! {
+        <p class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400">
+            {heading}
+        </p>
+        {links
+            .iter()
+            .map(|link| {
+                view! {
+                    <A href=link.href attr:class=MOBILE_NAV_SUBLINK on:click=move |_| mobile_open.set(false)>
+                        {link.label}
+                    </A>
+                }
+            })
+            .collect_view()}
+    }
+}
+
+/// Closes navbar menus on Escape, on a click outside any dropdown, and when
+/// the route changes.
+fn close_nav_menus_on_dismiss(open: RwSignal<OpenNavMenu>, mobile_open: RwSignal<bool>) {
+    let location = use_location();
+    Effect::new(move |_| {
+        location.pathname.track();
+        open.set(OpenNavMenu::None);
+        mobile_open.set(false);
+    });
+
+    #[cfg(any(feature = "csr", feature = "hydrate"))]
+    {
+        use wasm_bindgen::JsCast;
+
+        let escape = window_event_listener(leptos::ev::keydown, move |ev| {
+            if ev.key() == "Escape" {
+                open.set(OpenNavMenu::None);
+                mobile_open.set(false);
+            }
+        });
+        let outside_click = window_event_listener(leptos::ev::click, move |ev| {
+            if open.get_untracked() == OpenNavMenu::None {
+                return;
+            }
+            let inside_menu = ev
+                .target()
+                .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                .and_then(|element| element.closest("[data-nav-menu]").ok().flatten())
+                .is_some();
+            if !inside_menu {
+                open.set(OpenNavMenu::None);
+            }
+        });
+        on_cleanup(move || {
+            escape.remove();
+            outside_click.remove();
+        });
+    }
+}
 
 #[component]
 pub fn NavBar() -> impl IntoView {
     let mobile_open = RwSignal::new(false);
+    let open_menu = RwSignal::new(OpenNavMenu::None);
     let toggle_mobile = move |_| mobile_open.update(|open| *open = !*open);
     let close_mobile = move |_| mobile_open.set(false);
+    close_nav_menus_on_dismiss(open_menu, mobile_open);
 
     view! {
         <header class="sticky top-0 z-50 border-b border-white/5 bg-slate-950/70 backdrop-blur">
@@ -107,8 +264,8 @@ pub fn NavBar() -> impl IntoView {
                     <a href="/#projects" class="transition hover:text-white">"Projects"</a>
                     <a href="/#experience" class="transition hover:text-white">"Experience"</a>
                     <a href="/#skills" class="transition hover:text-white">"Skills"</a>
-                    <CommissionsMenu />
-                    <ToolsMenu />
+                    <CommissionsMenu open=open_menu />
+                    <ToolsMenu open=open_menu />
                     <a
                         href="/#contact"
                         class="rounded-full bg-cyan-500 px-4 py-1.5 font-medium text-slate-950 transition hover:bg-cyan-400"
@@ -119,7 +276,7 @@ pub fn NavBar() -> impl IntoView {
                 <button
                     type="button"
                     class="rounded-lg p-2 text-slate-300 transition hover:bg-white/5 hover:text-white md:hidden"
-                    aria-expanded=move || mobile_open.get()
+                    aria-expanded=move || mobile_open.get().to_string()
                     aria-controls="mobile-nav"
                     aria-label=move || if mobile_open.get() { "Close menu" } else { "Open menu" }
                     on:click=toggle_mobile
@@ -143,37 +300,8 @@ pub fn NavBar() -> impl IntoView {
                         <a href="/#experience" class=MOBILE_NAV_LINK on:click=close_mobile>"Experience"</a>
                         <a href="/#skills" class=MOBILE_NAV_LINK on:click=close_mobile>"Skills"</a>
 
-                        <p class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">
-                            "Commissions"
-                        </p>
-                        <A href="/commissions/lapidary" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Lapidary"</span>
-                        </A>
-                        <A href="/commissions/artwork" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Artwork"</span>
-                        </A>
-                        <A href="/commissions/songs" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Songs"</span>
-                        </A>
-
-                        <p class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">
-                            "Tools"
-                        </p>
-                        <A href="/mental-health" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Mental Health & Lingo CGM"</span>
-                        </A>
-                        <A href="/clinical" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Clinical Workspace"</span>
-                        </A>
-                        <A href="/clinical/physician" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Physician Workspace Demo"</span>
-                        </A>
-                        <A href="/tools/investment-account" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Investment Account Calculator"</span>
-                        </A>
-                        <A href="/ownership" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Code Ownership Report"</span>
-                        </A>
+                        <MobileNavGroup heading="Commissions" links=COMMISSIONS_LINKS mobile_open=mobile_open />
+                        <MobileNavGroup heading="Tools" links=TOOLS_LINKS mobile_open=mobile_open />
 
                         <a
                             href="/#contact"
@@ -534,7 +662,7 @@ pub fn Contact() -> impl IntoView {
 pub fn Footer() -> impl IntoView {
     view! {
         <footer class="border-t border-white/5 px-6 py-10">
-            <div class="mx-auto flex max-w-5xl flex-col items-center gap-2 text-center text-sm text-slate-500">
+            <div class="mx-auto flex max-w-5xl flex-col items-center gap-2 text-center text-sm text-slate-400">
                 <div class="flex flex-col items-center gap-2 sm:flex-row sm:justify-between sm:gap-4 w-full">
                     <span>"© 2026 Tyler Port · dabney.moe"</span>
                     <span class="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
@@ -546,13 +674,14 @@ pub fn Footer() -> impl IntoView {
                         <span class="text-slate-700">"·"</span>
                         <A href="/creators" attr:class="hover:text-slate-300">"Creators"</A>
                         <span class="text-slate-700">"·"</span>
+                        <A href="/clinical" attr:class="hover:text-slate-300">"Clinical workspace"</A>
+                        <span class="text-slate-700">"·"</span>
                         <A href="/ownership" attr:class="hover:text-slate-300">"Code ownership"</A>
                         <span class="text-slate-700">"·"</span>
                         <OpenConsentButton />
-                        <span class="text-slate-700">"·"</span>
-                        <span>"Built with Rust, Leptos & Tauri"</span>
                     </span>
                 </div>
+                <p class="text-xs text-slate-400">"Built with Rust, Leptos & Tauri"</p>
             </div>
         </footer>
     }
@@ -726,5 +855,61 @@ fn Section(
                 {children()}
             </div>
         </section>
+    }
+}
+
+#[cfg(test)]
+mod nav_menu_tests {
+    use super::OpenNavMenu;
+
+    #[test]
+    fn opening_one_menu_closes_the_other() {
+        let open = OpenNavMenu::None.toggled(OpenNavMenu::Commissions);
+        assert_eq!(open, OpenNavMenu::Commissions);
+        let open = open.toggled(OpenNavMenu::Tools);
+        assert_eq!(open, OpenNavMenu::Tools);
+        assert_eq!(open.toggled(OpenNavMenu::Tools), OpenNavMenu::None);
+    }
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod nav_render_tests {
+    use super::*;
+    use leptos_router::components::Router;
+    use leptos_router::location::RequestUrl;
+
+    #[test]
+    fn open_dropdown_exposes_links_as_menuitems_and_keeps_the_other_closed() {
+        let owner = Owner::new();
+        let html = owner.with(|| {
+            provide_context(RequestUrl::new("/"));
+            let open = RwSignal::new(OpenNavMenu::Tools);
+            view! {
+                <Router>
+                    <CommissionsMenu open=open />
+                    <ToolsMenu open=open />
+                </Router>
+            }
+            .to_html()
+        });
+        drop(owner);
+        assert_eq!(html.matches(r#"role="menu""#).count(), 1);
+        assert_eq!(
+            html.matches(r#"role="menuitem""#).count(),
+            crate::tools::TOOLS_LINKS.len()
+        );
+        // The role sits on the link itself, never on an inner element.
+        for link in crate::tools::TOOLS_LINKS {
+            let anchor = html
+                .split("<a ")
+                .find(|tag| tag.contains(&format!(r#"href="{}""#, link.href)))
+                .unwrap_or_else(|| panic!("missing link {}", link.href));
+            let open_tag = anchor.split('>').next().unwrap();
+            assert!(open_tag.contains(r#"role="menuitem""#), "{open_tag}");
+        }
+        assert!(!html.contains("<span role=\"menuitem\""));
+        assert!(!html.contains("/commissions/lapidary"));
+        assert!(html.contains(r#"aria-expanded="true""#));
+        assert!(html.contains(r#"aria-expanded="false""#));
     }
 }

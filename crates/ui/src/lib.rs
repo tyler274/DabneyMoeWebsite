@@ -36,7 +36,7 @@ use leptos::prelude::*;
 #[cfg(feature = "csr")]
 use leptos_meta::Stylesheet;
 use leptos_meta::{provide_meta_context, HashedStylesheet, Link, Meta, MetaTags, Title};
-use leptos_router::components::{Route, Router, Routes};
+use leptos_router::components::{Route, Router, Routes, A};
 use leptos_router::hooks::use_location;
 use leptos_router::StaticSegment;
 
@@ -90,7 +90,7 @@ pub fn App() -> impl IntoView {
             <PageMetadata />
             <AnalyticsRuntime />
             <main>
-                <Routes fallback=|| view! { <HomePage /> }>
+                <Routes fallback=NotFoundPage>
                     <Route path=StaticSegment("") view=HomePage />
                     <Route path=StaticSegment("privacy") view=PrivacyPage />
                     <Route path=StaticSegment("clinical") view=clinical::ClinicalOverviewPage />
@@ -171,6 +171,44 @@ fn OwnerMetadata() -> impl IntoView {
             name="twitter:description"
             content="Rust, GPU computing, and high-performance systems. Available for freelance and contract work."
         />
+    }
+}
+
+/// Shown for any path no route owns. The server answers these with HTTP 404
+/// (see the web crate's fallback handler); this view says so plainly instead
+/// of rendering the home page at a wrong address.
+#[component]
+fn NotFoundPage() -> impl IntoView {
+    view! {
+        <Title text="Page not found | dabney.moe" />
+        <Meta name="robots" content="noindex" />
+        <NavBar />
+        <section class="border-b border-white/5 px-6 py-24">
+            <div class="mx-auto max-w-2xl text-center">
+                <p class="text-sm font-semibold uppercase tracking-widest text-cyan-400">"404"</p>
+                <h1 class="mt-2 text-3xl font-bold tracking-tight text-white sm:text-4xl">
+                    "Page not found"
+                </h1>
+                <p class="mt-4 text-lg leading-relaxed text-slate-300">
+                    "There is no page at this address. It may have moved, or the link may be mistyped."
+                </p>
+                <div class="mt-8 flex flex-wrap justify-center gap-3">
+                    <A
+                        href="/"
+                        attr:class="rounded-full bg-cyan-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
+                    >
+                        "Go to the home page"
+                    </A>
+                    <A
+                        href="/clinical"
+                        attr:class="rounded-full border border-white/15 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-white/5"
+                    >
+                        "Clinical workspace"
+                    </A>
+                </div>
+            </div>
+        </section>
+        <Footer />
     }
 }
 
