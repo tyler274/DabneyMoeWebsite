@@ -1400,14 +1400,34 @@ fn finalize_glucose_import(args: FinalizeImportArgs) -> CommercialGlucoseImport 
         .iter()
         .find_map(|item| item.row.parsed_ts.map(|t| t.utc_minutes));
     let mut bounded_sentinels = 0usize;
+    let mut lingo_floor_capped = 0usize;
+    let mut lingo_ceiling_capped = 0usize;
     let mut timestamps_parsed = 0usize;
     let mut timestamps_unparsed = 0usize;
+    let is_lingo = args.monitor == GlucoseMonitor::AbbottLingo;
     let readings: Vec<LingoReading> = deduped
         .into_iter()
         .enumerate()
         .map(|(idx, item)| {
-            if item.row.bound != GlucoseReadingBound::Measured {
-                bounded_sentinels += 1;
+            let effective_bound = if item.row.bound != GlucoseReadingBound::Measured {
+                item.row.bound
+            } else if is_lingo && item.row.glucose_mg_dl <= LINGO_FLOOR_MG_DL - 0.5 {
+                GlucoseReadingBound::BelowSensorFloor
+            } else if is_lingo && item.row.glucose_mg_dl >= LINGO_CEILING_MG_DL + 0.5 {
+                GlucoseReadingBound::AboveSensorCeiling
+            } else {
+                GlucoseReadingBound::Measured
+            };
+            match effective_bound {
+                GlucoseReadingBound::BelowSensorFloor => {
+                    bounded_sentinels += 1;
+                    lingo_floor_capped += 1;
+                }
+                GlucoseReadingBound::AboveSensorCeiling => {
+                    bounded_sentinels += 1;
+                    lingo_ceiling_capped += 1;
+                }
+                GlucoseReadingBound::Measured => {}
             }
             let hour_offset = match (item.row.parsed_ts, first_min) {
                 (Some(t), Some(start)) => {
@@ -1458,6 +1478,8 @@ fn finalize_glucose_import(args: FinalizeImportArgs) -> CommercialGlucoseImport 
         timestamps_unparsed,
         duplicate_timestamps_dropped,
         bounded_sentinels,
+        lingo_floor_capped,
+        lingo_ceiling_capped,
         args.skipped_invalid_rows,
         span_hours,
         median_interval_minutes,
@@ -1503,6 +1525,8 @@ fn build_validation_checks(
     timestamps_unparsed: usize,
     duplicate_timestamps_dropped: usize,
     bounded_sentinels: usize,
+    lingo_floor_capped: usize,
+    lingo_ceiling_capped: usize,
     skipped_invalid_rows: usize,
     span_hours: f64,
     median_interval_minutes: Option<f64>,
@@ -1582,26 +1606,41 @@ fn build_validation_checks(
         .fold(f64::NEG_INFINITY, f64::max);
     if monitor == GlucoseMonitor::AbbottLingo {
         let within_lingo = min_g >= LINGO_FLOOR_MG_DL && max_g <= LINGO_CEILING_MG_DL;
-        let detail = if bounded_sentinels > 0 {
-            format!(
-                "Observed {min_g:.0}–{max_g:.0} mg/dL with {bounded_sentinels} sensor floor/ceiling sentinel(s) (<55 / >200 mg/dL)."
+        let capped_pct = if readings.is_empty() {
+            0.0
+        } else {
+            (bounded_sentinels as f64 / readings.len() as f64) * 100.0
+        };
+        let (level, detail) = if bounded_sentinels > 0 {
+            let level = if capped_pct >= 5.0 {
+                ValidationLevel::Warn
+            } else {
+                ValidationLevel::Info
+            };
+            (
+                level,
+                format!(
+                    "Observed {min_g:.0}–{max_g:.0} mg/dL with {lingo_floor_capped} floor-capped (≤54 = <55) and {lingo_ceiling_capped} ceiling-capped (≥201 = >200) reading(s) ({capped_pct:.1}%). Abbott Lingo clips readings outside 55–200 mg/dL, so true mean, GMI, TAR >250, and peak excursions may exceed displayed values."
+                ),
             )
         } else if within_lingo {
-            format!(
-                "All readings ({min_g:.0}–{max_g:.0} mg/dL) fall inside Abbott Lingo's 55–200 mg/dL sensor envelope."
+            (
+                ValidationLevel::Pass,
+                format!(
+                    "All readings ({min_g:.0}–{max_g:.0} mg/dL) fall inside Abbott Lingo's 55–200 mg/dL sensor envelope."
+                ),
             )
         } else {
-            format!(
-                "Observed {min_g:.0}–{max_g:.0} mg/dL (extends beyond Lingo's typical 55–200 mg/dL range)."
+            (
+                ValidationLevel::Info,
+                format!(
+                    "Observed {min_g:.0}–{max_g:.0} mg/dL (extends beyond Lingo's typical 55–200 mg/dL range)."
+                ),
             )
         };
         checks.push(ValidationCheck {
-            name: "Biosensor Range".to_string(),
-            level: if bounded_sentinels > 0 {
-                ValidationLevel::Info
-            } else {
-                ValidationLevel::Pass
-            },
+            name: "Biosensor Range & Saturation".to_string(),
+            level,
             detail,
         });
     } else {
@@ -1846,6 +1885,7 @@ fn try_parse_header(cols: &[String], hint: Option<GlucoseMonitor>) -> Option<Hea
         }
         if ts_col.is_none()
             && (h.contains("timestamp")
+                || h.contains("time of glucose reading")
                 || h == "eventdatetime"
                 || h == "datetime"
                 || h == "date/time"
@@ -1861,6 +1901,7 @@ fn try_parse_header(cols: &[String], hint: Option<GlucoseMonitor>) -> Option<Hea
         }
 
         let is_non_reading_glucose = h.contains("rate of change")
+            || h.contains("time of glucose")
             || h.contains("trend")
             || h.contains("unit")
             || h.contains("status")
@@ -1881,6 +1922,7 @@ fn try_parse_header(cols: &[String], hint: Option<GlucoseMonitor>) -> Option<Hea
                 || h.contains("bg reading")
                 || h.contains("strip glucose")
                 || h.starts_with("glucose")
+                || h.starts_with("measurement")
                 || h == "bg (mg/dl)"
                 || h == "bg (mmol/l)"
                 || h == "mg/dl"
@@ -1951,7 +1993,9 @@ fn try_parse_header(cols: &[String], hint: Option<GlucoseMonitor>) -> Option<Hea
         || joined.contains("tidepool")
     {
         GlucoseMonitor::GlookoTidepool
-    } else if joined.contains("lingo") {
+    } else if joined.contains("lingo")
+        || (joined.contains("time of glucose reading") && joined.contains("measurement"))
+    {
         GlucoseMonitor::AbbottLingo
     } else if joined.contains("blood glucose")
         || joined.contains("bg (mg/dl)")
@@ -3098,5 +3142,51 @@ mod tests {
         assert_eq!(eu.source_unit, GlucoseUnit::MmolL);
         assert_eq!(eu.readings.len(), 2);
         assert!((eu.readings[1].glucose_mg_dl - 6.2 * MMOL_TO_MG_DL).abs() < 0.05);
+    }
+
+    #[test]
+    fn parses_official_abbott_lingo_header_reverse_order_numeric_caps_and_dst() {
+        // Synthetic trace mirroring Abbott Lingo's official mobile app CSV export schema:
+        // reverse-chronological order, DST fall-back (`-06:00` -> `-07:00`), numeric floor `54`
+        // (`<55`) and ceiling `201` (`>200`) sentinels, and `Out of range` rows.
+        let official_mg = "\
+Time of Glucose Reading [T=(local time) +/- (time zone offset)], Measurement(mg/dL)
+2025-11-02T01:10-07:00,201
+2025-11-02T01:05-07:00,Out of range
+2025-11-02T01:00-07:00,142
+2025-11-02T01:55-06:00,118
+2025-11-02T01:50-06:00,54
+";
+        let imp = parse_commercial_glucose_input(official_mg, None)
+            .expect("official Lingo mg/dL header auto-detects without hint");
+        assert_eq!(imp.monitor, GlucoseMonitor::AbbottLingo);
+        assert_eq!(imp.source_unit, GlucoseUnit::MgDl);
+        assert_eq!(imp.readings.len(), 4);
+        assert_eq!(imp.bounded_sentinels, 2);
+        assert_eq!(imp.diagnostics.skipped_invalid_rows, 1);
+        assert_eq!(imp.diagnostics.timestamps_unparsed, 0);
+        // Chronologically sorted across DST fall-back:
+        // 01:50-06:00 (07:50Z) -> 01:55-06:00 (07:55Z) -> 01:00-07:00 (08:00Z) -> 01:10-07:00 (08:10Z)
+        assert_eq!(imp.readings[0].timestamp, "2025-11-02T01:50-06:00");
+        assert_eq!(imp.readings[3].timestamp, "2025-11-02T01:10-07:00");
+        assert!((imp.readings[1].hour_offset - (5.0 / 60.0)).abs() < 1e-6);
+        assert!((imp.readings[2].hour_offset - (10.0 / 60.0)).abs() < 1e-6);
+        assert!((imp.readings[3].hour_offset - (20.0 / 60.0)).abs() < 1e-6);
+        assert!(imp.diagnostics.checks.iter().any(|c| {
+            c.name == "Biosensor Range & Saturation"
+                && c.level == ValidationLevel::Warn
+                && c.detail.contains("ceiling-capped")
+        }));
+
+        // Official mmol/L header variant auto-detects Abbott Lingo + mmol/L cleanly.
+        let official_mmol = "\
+Time of Glucose Reading [T=(local time) +/- (time zone offset)], Measurement(mmol/L)
+2025-11-02T08:05+00:00,6.2
+2025-11-02T08:00+00:00,5.5
+";
+        let imp_mmol = parse_commercial_glucose_input(official_mmol, None).unwrap();
+        assert_eq!(imp_mmol.monitor, GlucoseMonitor::AbbottLingo);
+        assert_eq!(imp_mmol.source_unit, GlucoseUnit::MmolL);
+        assert!((imp_mmol.readings[0].glucose_mg_dl - 5.5 * MMOL_TO_MG_DL).abs() < 0.05);
     }
 }
