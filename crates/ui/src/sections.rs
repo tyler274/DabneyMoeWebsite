@@ -171,6 +171,9 @@ pub fn NavBar() -> impl IntoView {
                         <A href="/tools/investment-account" on:click=close_mobile>
                             <span class=MOBILE_NAV_SUBLINK>"Investment Account Calculator"</span>
                         </A>
+                        <A href="/ownership" on:click=close_mobile>
+                            <span class=MOBILE_NAV_SUBLINK>"Code Ownership Report"</span>
+                        </A>
 
                         <a
                             href="/#contact"
@@ -542,6 +545,8 @@ pub fn Footer() -> impl IntoView {
                         <a href="/community-activity" class="hover:text-slate-300">"Community activity"</a>
                         <span class="text-slate-700">"·"</span>
                         <A href="/creators" attr:class="hover:text-slate-300">"Creators"</A>
+                        <span class="text-slate-700">"·"</span>
+                        <A href="/ownership" attr:class="hover:text-slate-300">"Code ownership"</A>
                         <span class="text-slate-700">"·"</span>
                         <OpenConsentButton />
                         <span class="text-slate-700">"·"</span>

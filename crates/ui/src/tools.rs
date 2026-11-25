@@ -78,6 +78,11 @@ pub fn ToolsMenu() -> impl IntoView {
                             "Investment Account Calculator"
                         </span>
                     </A>
+                    <A href="/ownership" on:click=close>
+                        <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
+                            "Code Ownership Report"
+                        </span>
+                    </A>
                 </div>
             </Show>
         </div>

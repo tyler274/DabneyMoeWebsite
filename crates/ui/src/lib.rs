@@ -25,6 +25,7 @@ pub mod mental_health_episodes;
 pub mod mental_health_exports;
 pub mod mental_health_lingo;
 pub mod mental_health_support;
+pub mod ownership;
 pub mod portfolio;
 pub mod portfolio_chart;
 pub mod privacy;
@@ -98,6 +99,7 @@ pub fn App() -> impl IntoView {
                         view=clinical::PhysicianWorkspacePage
                     />
                     <Route path=StaticSegment("mental-health") view=mental_health::MentalHealthPage />
+                    <Route path=StaticSegment("ownership") view=ownership::OwnershipReportPage />
                     <Route path=StaticSegment("creators") view=creators::CreatorsPage />
                     <Route path=StaticSegment("community-policy") view=CommunityPolicyPage />
                     <Route path=StaticSegment("community-activity") view=community_activity::CommunityActivityPage ssr=leptos_router::SsrMode::Async />
