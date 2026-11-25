@@ -95,10 +95,37 @@ fn generate_play_assets(out_dir: &Path) {
         }
     }
 
-    // Composite the 300x300 Dabney House elephant icon onto the left half.
-    let badge = source
+    // Composite the 300x300 Dabney House crest badge with rounded corners & subtle emerald border.
+    let mut badge = source
         .resize_exact(300, 300, FilterType::Lanczos3)
         .to_rgba8();
+    let (bw, bh) = (300.0_f32, 300.0_f32);
+    let corner_r = 56.0_f32;
+    for y in 0..300u32 {
+        for x in 0..300u32 {
+            let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
+            let dx = if fx < corner_r {
+                corner_r - fx
+            } else if fx > bw - corner_r {
+                fx - (bw - corner_r)
+            } else {
+                0.0
+            };
+            let dy = if fy < corner_r {
+                corner_r - fy
+            } else if fy > bh - corner_r {
+                fy - (bh - corner_r)
+            } else {
+                0.0
+            };
+            let dist = dx.hypot(dy);
+            if dist > corner_r {
+                badge.put_pixel(x, y, Rgba([0, 0, 0, 0]));
+            } else if dist > corner_r - 3.0 {
+                badge.put_pixel(x, y, Rgba([52, 211, 153, 180]));
+            }
+        }
+    }
     overlay(&mut fg, &badge, 110, 100);
 
     let fg_out = out_dir.join("feature-graphic-1024x500.png");

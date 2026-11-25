@@ -186,7 +186,8 @@ adb install -r target/android-personal/dabney-personal-sideload.apk
 Then open **Dabney.moe Personal** → **Mood & CGM** tab → tap **Grant Blood
 Glucose Access** in the emerald **Android Health Connect** card → tap **Sync
 Last 14 Days** (or **Sync Last 90 Days**) to inspect your live Abbott Lingo
-metrics, 24h AGP, and validation diagnostics strictly in device RAM.
+metrics, 24h AGP, validation diagnostics, and local on-device chat strictly on your
+phone (saved in the Android Keystore AES-256-GCM vault with one-tap cryptographic wipe).
 
 ### 4.4 Google Play Console Health Connect Approval (Only If Publishing Personal Flavor)
 
@@ -233,3 +234,28 @@ automatically switches to **Apple HealthKit · Live On-Device Sync**), and
 # Run on macOS with Xcode & Apple signing team configured:
 scripts/ios-personal.sh --open
 ```
+
+---
+
+## 6. Encrypted On-Device Personal Vault & Local LLM Chat (`moe.dabney.personal`)
+
+The opt-in personal build (`--features health-connect`) also adds hardware-backed
+local storage and on-device LLM chat without affecting the public zero-PHI demo
+(`moe.dabney.demo`):
+
+- **Hardware-Backed Encrypted Vault (`PersonalVaultPlugin.kt` + `src-tauri/src/personal_vault.rs`):**
+  - Uses Android Keystore (`AndroidKeyStore`) **AES-256-GCM** (`dabney_personal_vault_v1`,
+    random 12-byte IV per atomic write) inside app-private `filesDir` with
+    `android:allowBackup="false"` enforced.
+  - Persists synced CGM snapshots (`dabney.health_bridge.v1`), mood/anxiety/PHQ-9/GAD-7
+    check-ins, private visit notes, and local chat threads across restarts.
+  - Includes one-tap **Cryptographic Wipe** (`personal_vault_wipe`) that overwrites
+    and deletes vault files and destroys the Android Keystore key alias.
+- **On-Device LLM Chat (`LocalLlmPlugin.kt` + `src-tauri/src/local_llm.rs`):**
+  - Uses Google's official **ML Kit GenAI Prompt API** (`com.google.mlkit:genai-prompt:1.0.0-beta4`)
+    backed by **Android AICore (Gemini Nano)** on supported Android devices (such as
+    Snapdragon flagship phones with `com.google.android.aicore`), running 100% locally
+    on-device with zero multi-GB weights bundled in the APK and zero cloud egress.
+  - Automatically falls back to deterministic grounded Rust synthesis on emulators,
+    non-AICore phones, desktop, and web browsers while keeping every response strictly
+    grounded in computed local CGM metrics or single-patient verbatim chart citations.

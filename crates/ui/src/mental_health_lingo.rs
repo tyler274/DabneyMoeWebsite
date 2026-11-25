@@ -49,7 +49,7 @@ impl ClinicalBand {
 }
 
 /// A structured mental health & daily state check-in.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MentalHealthCheckIn {
     /// Timestamp label matching the CGM window (`YYYY-MM-DD HH:MM`).
     pub recorded_at: String,

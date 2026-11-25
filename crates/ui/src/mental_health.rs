@@ -4,15 +4,19 @@ use leptos::prelude::*;
 use leptos_meta::{Link, Meta, Title};
 use leptos_router::components::A;
 
-use crate::health_bridge::HealthBridgeStatusUi;
 #[cfg(any(feature = "hydrate", feature = "csr"))]
 use crate::health_bridge::{
-    invoke_tauri_command, probe_personal_health_bridge, HealthBridgePermissionUi,
-    HealthBridgeReadUi,
+    build_personal_cgm_chat_prompt, generate_local_llm, invoke_tauri_command, load_personal_vault,
+    prepare_local_llm, probe_local_llm, probe_personal_health_bridge, probe_personal_vault,
+    save_personal_vault, wipe_personal_vault, HealthBridgePermissionUi, HealthBridgeReadUi,
+    PersonalVaultSaveUi,
 };
+use crate::health_bridge::{
+    collect_cgm_grounding_facts, synthesize_grounded_cgm_answer, HealthBridgeStatusUi,
+    LocalChatTurn, LocalLlmStatusUi, PersonalVaultStatusUi,
+};
+use crate::local_ai_chat::{PersonalCgmAiChatSection, PersonalVaultBar};
 use crate::mental_health_3d::LingoMood3DChart;
-#[cfg(any(feature = "hydrate", feature = "csr"))]
-use crate::mental_health_cgm::monitor_hint_from_filename;
 use crate::mental_health_cgm::{
     downsample_readings_for_chart, parse_commercial_glucose_input, sample_csv_for_monitor,
     select_notable_spike_peaks, slice_readings_window, summarize_commercial_glucose,
@@ -20,6 +24,8 @@ use crate::mental_health_cgm::{
     GlucoseWindow, MeasurementMethod, ValidationLevel, SAMPLE_APPLE_HEALTH_XML,
     SAMPLE_HEALTH_BRIDGE_JSON,
 };
+#[cfg(any(feature = "hydrate", feature = "csr"))]
+use crate::mental_health_cgm::{export_health_bridge_json, monitor_hint_from_filename};
 use crate::mental_health_episodes::{
     summarize_episode_cadence, EpisodeActivationSection, TopCoolDownBanner,
 };
@@ -96,6 +102,22 @@ pub fn MentalHealthPage() -> impl IntoView {
     let hc_busy = RwSignal::new(false);
     let hc_message = RwSignal::new(Option::<String>::None);
     let hc_error = RwSignal::new(Option::<String>::None);
+
+    // Hardware-backed encrypted local personal vault (`moe.dabney.personal` only).
+    let vault_status = RwSignal::new(Option::<PersonalVaultStatusUi>::None);
+    let vault_busy = RwSignal::new(false);
+    let vault_notice = RwSignal::new(Option::<String>::None);
+
+    // On-device LLM (Android AICore / Gemini Nano) + local CGM/mood chat state.
+    let llm_status = RwSignal::new(Option::<LocalLlmStatusUi>::None);
+    let use_local_llm = RwSignal::new(true);
+    let llm_preparing = RwSignal::new(false);
+    let llm_prepare_notice = RwSignal::new(Option::<String>::None);
+    let chat_input = RwSignal::new(String::new());
+    let chat_turns = RwSignal::new(Vec::<LocalChatTurn>::new());
+    let chat_busy = RwSignal::new(false);
+    let chat_error = RwSignal::new(Option::<String>::None);
+    let next_chat_seq = RwSignal::new(1usize);
 
     let windowed_readings =
         Signal::derive(move || slice_readings_window(&readings.get(), window.get()));
@@ -182,8 +204,34 @@ pub fn MentalHealthPage() -> impl IntoView {
                     if let Ok(val) = r.result() {
                         if let Some(text) = val.as_string() {
                             csv_input.set(compact_textarea_preview(&text));
-                            let label =
-                                format!("{file_name} ({file_kb:.1} KB · on-device RAM only)");
+                            let label = format!("{file_name} ({file_kb:.1} KB · on-device)");
+                            if let Ok(parsed_for_vault) =
+                                parse_commercial_glucose_input(&text, inferred_hint)
+                            {
+                                let count = parsed_for_vault.readings.len();
+                                let bridge_json =
+                                    export_health_bridge_json(&parsed_for_vault, "local_file");
+                                if vault_status.get_untracked().is_some_and(|v| v.enabled) {
+                                    let save_label = label.clone();
+                                    save_personal_vault(
+                                        &PersonalVaultSaveUi {
+                                            cgm_bridge_json: Some(bridge_json),
+                                            cgm_source_label: Some(save_label),
+                                            cgm_reading_count: Some(count),
+                                            ..Default::default()
+                                        },
+                                        move |res| {
+                                            if let Ok(updated) = res {
+                                                vault_status.set(Some(updated));
+                                                vault_notice.set(Some(
+                                                    "Encrypted & cached imported CGM file in local vault."
+                                                        .to_string(),
+                                                ));
+                                            }
+                                        },
+                                    );
+                                }
+                            }
                             apply_glucose_text(&text, inferred_hint, Some(label));
                         }
                     }
@@ -229,8 +277,272 @@ pub fn MentalHealthPage() -> impl IntoView {
         }
     };
 
+    let refresh_local_llm_status = move || {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            probe_local_llm(move |status| {
+                llm_status.set(Some(status));
+            });
+        }
+    };
+
+    #[cfg(any(feature = "hydrate", feature = "csr"))]
+    let persist_vault_update = move |payload: PersonalVaultSaveUi, saved_note: &'static str| {
+        if vault_status.get_untracked().is_some_and(|v| v.enabled) {
+            save_personal_vault(&payload, move |res| match res {
+                Ok(updated) => {
+                    vault_status.set(Some(updated));
+                    vault_notice.set(Some(saved_note.to_string()));
+                }
+                Err(err) => {
+                    vault_notice.set(Some(format!("Local vault save warning: {err}")));
+                }
+            });
+        }
+    };
+
     Effect::new(move |_| {
         refresh_health_connect_status();
+        refresh_local_llm_status();
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            probe_personal_vault(move |status| {
+                let has_saved_data = status.has_cgm_snapshot
+                    || status.checkin_count > 0
+                    || status.chat_turn_count > 0;
+                vault_status.set(Some(status));
+                if has_saved_data {
+                    load_personal_vault(move |res| {
+                        if let Ok(snap) = res {
+                            if !snap.found {
+                                return;
+                            }
+                            if let Some(cgm_json) = snap.cgm_bridge_json {
+                                let label = snap
+                                    .cgm_source_label
+                                    .unwrap_or_else(|| "Encrypted Local Vault".to_string());
+                                csv_input.set(compact_textarea_preview(&cgm_json));
+                                apply_glucose_text(
+                                    &cgm_json,
+                                    None,
+                                    Some(format!("{label} · restored from AES-256-GCM vault")),
+                                );
+                            }
+                            if let Some(checkins_raw) = snap.checkins_json {
+                                if let Ok(restored) =
+                                    serde_json::from_str::<Vec<MentalHealthCheckIn>>(&checkins_raw)
+                                {
+                                    if !restored.is_empty() {
+                                        checkins.set(restored);
+                                    }
+                                }
+                            }
+                            if let Some(chat_raw) = snap.chat_history_json {
+                                if let Ok(restored) =
+                                    serde_json::from_str::<Vec<LocalChatTurn>>(&chat_raw)
+                                {
+                                    next_chat_seq.set(restored.len() + 1);
+                                    chat_turns.set(restored);
+                                }
+                            }
+                            vault_notice.set(Some(
+                                "Restored encrypted personal snapshot from Android Keystore vault."
+                                    .to_string(),
+                            ));
+                        }
+                    });
+                }
+            });
+        }
+    });
+
+    let wipe_vault_now = Callback::new(move |()| {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            vault_busy.set(true);
+            wipe_personal_vault(move |res| {
+                vault_busy.set(false);
+                match res {
+                    Ok(empty_status) => {
+                        vault_status.set(Some(empty_status));
+                        load_monitor_preset(GlucoseMonitor::AbbottLingo);
+                        checkins.set(sample_checkins());
+                        chat_turns.set(Vec::new());
+                        form_status.set(None);
+                        hc_message.set(None);
+                        hc_error.set(None);
+                        vault_notice.set(Some(
+                            "Encrypted vault wiped and Android Keystore master key destroyed."
+                                .to_string(),
+                        ));
+                    }
+                    Err(err) => {
+                        vault_notice.set(Some(format!("Vault wipe failed: {err}")));
+                    }
+                }
+            });
+        }
+    });
+
+    let prepare_local_llm_now = Callback::new(move |()| {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            llm_preparing.set(true);
+            llm_prepare_notice.set(Some(
+                "Requesting Gemini Nano download via Android AICore…".to_string(),
+            ));
+            prepare_local_llm(move |res| {
+                llm_preparing.set(false);
+                match res {
+                    Ok(outcome) => {
+                        llm_prepare_notice.set(Some(outcome.detail));
+                        refresh_local_llm_status();
+                    }
+                    Err(err) => {
+                        llm_prepare_notice.set(Some(err));
+                    }
+                }
+            });
+        }
+    });
+
+    let send_cgm_chat = Callback::new(move |question: String| {
+        let trimmed = question.trim().to_string();
+        if trimmed.is_empty() {
+            return;
+        }
+        chat_error.set(None);
+
+        let current_readings = windowed_readings.get_untracked();
+        let current_monitor = detected_monitor.get_untracked();
+        let current_unit = source_unit.get_untracked();
+        let current_method = measurement_method.get_untracked();
+        let current_diag = import_diagnostics.get_untracked();
+        let current_checkins = checkins.get_untracked();
+        let summary = summarize_commercial_glucose(
+            &current_readings,
+            current_monitor,
+            current_unit,
+            current_method,
+        );
+        let facts = collect_cgm_grounding_facts(
+            current_monitor,
+            summary.as_ref(),
+            current_diag.as_ref(),
+            &current_checkins,
+        );
+        let fallback_answer = synthesize_grounded_cgm_answer(
+            &trimmed,
+            current_monitor,
+            summary.as_ref(),
+            current_diag.as_ref(),
+            &current_checkins,
+        );
+
+        let turn_id = format!("cgm-chat-{}", next_chat_seq.get_untracked());
+        next_chat_seq.update(|n| *n += 1);
+
+        let try_aicore = use_local_llm.get_untracked()
+            && llm_status
+                .get_untracked()
+                .is_some_and(|s| s.enabled && s.availability == "available");
+
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        if try_aicore {
+            let recent = chat_turns.get_untracked();
+            let prompt = build_personal_cgm_chat_prompt(
+                &trimmed,
+                current_monitor,
+                summary.as_ref(),
+                current_diag.as_ref(),
+                &current_checkins,
+                &recent,
+            );
+            chat_busy.set(true);
+            generate_local_llm(&prompt, Some(420), move |res| {
+                chat_busy.set(false);
+                let turn = match res {
+                    Ok(gen) => LocalChatTurn {
+                        id: turn_id,
+                        question: trimmed,
+                        answer: gen.text,
+                        engine_label: format!("{} · On-Device", gen.model_name),
+                        latency_ms: Some(gen.latency_ms),
+                        grounding_facts: facts,
+                    },
+                    Err(err) => {
+                        chat_error.set(Some(format!(
+                            "Gemini Nano unavailable for this turn ({err}); answered via grounded local Rust."
+                        )));
+                        LocalChatTurn {
+                            id: turn_id,
+                            question: trimmed,
+                            answer: fallback_answer,
+                            engine_label: "Grounded Rust (AICore fallback)".to_string(),
+                            latency_ms: None,
+                            grounding_facts: facts,
+                        }
+                    }
+                };
+                chat_turns.update(|list| {
+                    list.push(turn);
+                    if list.len() > 24 {
+                        let excess = list.len() - 24;
+                        list.drain(0..excess);
+                    }
+                });
+                if let Ok(encoded) = serde_json::to_string(&chat_turns.get_untracked()) {
+                    persist_vault_update(
+                        PersonalVaultSaveUi {
+                            chat_history_json: Some(encoded),
+                            ..Default::default()
+                        },
+                        "Saved encrypted chat turn to local vault.",
+                    );
+                }
+            });
+            return;
+        }
+
+        let _ = try_aicore;
+        let turn = LocalChatTurn {
+            id: turn_id,
+            question: trimmed,
+            answer: fallback_answer,
+            engine_label: "Grounded Rust · On-Device".to_string(),
+            latency_ms: None,
+            grounding_facts: facts,
+        };
+        chat_turns.update(|list| {
+            list.push(turn);
+            if list.len() > 24 {
+                let excess = list.len() - 24;
+                list.drain(0..excess);
+            }
+        });
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        if let Ok(encoded) = serde_json::to_string(&chat_turns.get_untracked()) {
+            persist_vault_update(
+                PersonalVaultSaveUi {
+                    chat_history_json: Some(encoded),
+                    ..Default::default()
+                },
+                "Saved encrypted chat turn to local vault.",
+            );
+        }
+    });
+
+    let clear_cgm_chat = Callback::new(move |()| {
+        chat_turns.set(Vec::new());
+        chat_error.set(None);
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        persist_vault_update(
+            PersonalVaultSaveUi {
+                chat_history_json: Some("[]".to_string()),
+                ..Default::default()
+            },
+            "Cleared chat thread in encrypted local vault.",
+        );
     });
 
     let request_health_connect_permission = Callback::new(move |()| {
@@ -317,10 +629,19 @@ pub fn MentalHealthPage() -> impl IntoView {
                             };
                             csv_input.set(compact_textarea_preview(&resp.bridge_json));
                             let banner_label = format!(
-                                "{platform_name} ({} readings · {} · last {days}d · on-device RAM only)",
+                                "{platform_name} ({} readings · {} · last {days}d · on-device)",
                                 resp.record_count, sources_label
                             );
-                            apply_glucose_text(&resp.bridge_json, None, Some(banner_label));
+                            apply_glucose_text(&resp.bridge_json, None, Some(banner_label.clone()));
+                            persist_vault_update(
+                                PersonalVaultSaveUi {
+                                    cgm_bridge_json: Some(resp.bridge_json.clone()),
+                                    cgm_source_label: Some(banner_label),
+                                    cgm_reading_count: Some(resp.record_count),
+                                    ..Default::default()
+                                },
+                                "Encrypted & cached synced CGM snapshot in local Android Keystore vault.",
+                            );
                             hc_message.set(Some(format!(
                                 "Synced {} blood glucose readings locally from {sources_label} (last {days} days).",
                                 resp.record_count
@@ -391,6 +712,16 @@ pub fn MentalHealthPage() -> impl IntoView {
             list.push(entry);
             list.sort_by(|a, b| a.hour_offset.total_cmp(&b.hour_offset));
         });
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        if let Ok(encoded) = serde_json::to_string(&checkins.get_untracked()) {
+            persist_vault_update(
+                PersonalVaultSaveUi {
+                    checkins_json: Some(encoded),
+                    ..Default::default()
+                },
+                "Saved encrypted mood check-in to local vault.",
+            );
+        }
         note_input.set(String::new());
         form_status.set(Some(
             "Check-in added and correlated against the Lingo CGM timeline.".to_string(),
@@ -461,6 +792,21 @@ pub fn MentalHealthPage() -> impl IntoView {
                             error=hc_error
                             on_request_permission=request_health_connect_permission
                             on_sync_days=sync_health_connect_days
+                        />
+                    }
+                })
+            }}
+
+            // Hardware-backed encrypted local personal vault status & cryptographic wipe
+            // (`moe.dabney.personal` only; absent on browsers and `moe.dabney.demo`).
+            {move || {
+                vault_status.get().filter(|v| v.enabled).map(|status| {
+                    view! {
+                        <PersonalVaultBar
+                            status=status
+                            busy=vault_busy
+                            notice=vault_notice
+                            on_wipe=wipe_vault_now
                         />
                     }
                 })
@@ -562,6 +908,22 @@ pub fn MentalHealthPage() -> impl IntoView {
                     </div>
                 }
             }}
+
+            // On-device AI chat grounded in loaded CGM metrics & mood check-ins
+            // (Android AICore / Gemini Nano on supported personal devices, grounded Rust fallback elsewhere)
+            <PersonalCgmAiChatSection
+                llm_status=llm_status
+                use_local_llm=use_local_llm
+                llm_preparing=llm_preparing
+                llm_prepare_notice=llm_prepare_notice
+                chat_input=chat_input
+                chat_turns=chat_turns
+                chat_busy=chat_busy
+                chat_error=chat_error
+                on_prepare_llm=prepare_local_llm_now
+                on_send_question=send_cgm_chat
+                on_clear_chat=clear_cgm_chat
+            />
 
             // Interactive 3D WebGL2 / 2D SVG dual-axis chart
             <section class="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
