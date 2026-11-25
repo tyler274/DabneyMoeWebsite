@@ -1,0 +1,25 @@
+# Non-secret inputs for terraform/eu. Copy to terraform.tfvars (git-ignored).
+# Secrets never belong here: export TF_VAR_hcloud_token, TF_VAR_desec_token,
+# SCW_ACCESS_KEY, SCW_SECRET_KEY and SCW_DEFAULT_PROJECT_ID, for example with
+#   sops exec-env secrets.sops.env 'tofu plan -out=eu.tfplan'
+domain = "dabney.moe"
+
+# Tier 1: one EU VPS running selfhost/eu.
+enable_vps     = true
+location       = "hel1" # or fsn1 / nbg1
+server_type    = "cx23"
+ssh_public_key = "ssh-ed25519 AAAA... deploy@dabney.moe"
+# ssh_source_ips = ["198.51.100.7/32"]
+vps_hosts   = ["", "www", "git", "cache", "auth"]
+coda_on_vps = false # coda.dabney.moe stays on Codeberg git-pages (coda-rust infra/eu)
+
+caa_issuers = ["letsencrypt.org"]
+# caa_iodef = "mailto:security@dabney.moe"
+
+# Images and Tier 0.
+scaleway_region    = "fr-par"
+enable_registry    = true
+registry_namespace = "dabney-moe"
+# Tier 0 instead of (or beside) the VPS: a scale-to-zero container on a subdomain.
+# serverless_image = "rg.fr-par.scw.cloud/dabney-moe/dabney-web:latest"
+# serverless_host  = "beta"

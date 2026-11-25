@@ -7,6 +7,39 @@ lock-in: you can build the OCI container with **Nix** or a standard
 **Dockerfile** and ship it to any OCI registry, any Linux VPS, Fly.io, GCP
 Cloud Run, AWS App Runner, or Azure Container Apps.
 
+## Non-US hosting first
+
+The preferred homes for dabney.moe are EU providers, in two tiers. Both keep
+`scripts/deploy.sh` dry-run by default, and both cover public, demo and non-PHI
+surfaces only.
+
+| | Tier 0 (free tier) | Tier 1 (one EU VPS) |
+| --- | --- | --- |
+| Compute | Scaleway Serverless Container (Paris), scales to zero | Hetzner CX23 in Helsinki or Falkenstein |
+| Services | `dabney-web` on a subdomain | Everything in [`selfhost/eu`](../selfhost/eu/README.md): the SSR site, the Rust forge, Radicle, Postgres 16, Valkey 8, Attic, Pocket ID, and the optional Coda demo |
+| DNS | deSEC with DNSSEC ([`terraform/eu`](../terraform/eu/README.md)) | deSEC with DNSSEC |
+| Static Coda site | Codeberg git-pages at `coda.dabney.moe` | Codeberg git-pages, or Caddy on the VPS |
+| Images | Scaleway Container Registry (`rg.fr-par.scw.cloud`) | Scaleway Container Registry or Codeberg packages |
+| Deploy | `./scripts/deploy.sh --target scaleway` | `./scripts/deploy.sh --target ssh --compose-dir selfhost/eu` |
+
+A CNAME cannot sit at the zone apex, so Tier 0 serves a subdomain such as
+`beta.dabney.moe`; `dabney.moe` itself needs Tier 1. The `.moe` registry
+backend is operated by a US company whichever registrar holds the domain.
+
+```bash
+# Provision (reviewed saved plan only): zone, VPS, registry, optional container
+(cd terraform/eu && tofu init && tofu plan -out=eu.tfplan)
+
+# Tier 1: the whole stack on the VPS
+./scripts/deploy.sh --target ssh --compose-dir selfhost/eu \
+  --ssh-host deploy@<server_ipv4> --domain dabney.moe --acme-email ops@dabney.moe --push
+
+# Tier 0: push to Scaleway Container Registry and roll the Serverless Container
+SCW_SECRET_KEY=... ./scripts/deploy.sh --target scaleway --region fr-par --push
+```
+
+The US clouds below remain available.
+
 ## 1. Building the OCI Container Image
 
 Two interchangeable build paths produce the same non-root runtime contract
@@ -91,6 +124,28 @@ running **Docker** or **Podman**, with automatic Let's Encrypt HTTPS for
 
 See [`selfhost/README.md`](../selfhost/README.md) for firewall, DNS, Let's
 Encrypt staging, and SELinux notes.
+
+### Target: Scaleway Serverless Containers (`--target scaleway`)
+
+Pushes the image to Scaleway Container Registry
+(`rg.<region>.scw.cloud/<namespace>/dabney-web`, namespace from `--scw-namespace`,
+default `dabney-moe`) and points the Serverless Container from
+[`terraform/eu`](../terraform/eu/) at it with `scw container container update`,
+which redeploys it. `SCW_SECRET_KEY` authenticates the push; the container ID
+comes from `--scw-container-id` or the `serverless_container_id` output.
+Regions: `fr-par`, `nl-ams`, `pl-waw`.
+
+```bash
+./scripts/deploy.sh --target scaleway --region fr-par           # dry-run
+SCW_SECRET_KEY=... ./scripts/deploy.sh --target scaleway --region fr-par --push
+```
+
+### Target: the full EU stack over SSH (`--compose-dir selfhost/eu`)
+
+`--compose-dir` selects which compose stack `--target ssh` syncs. The default,
+`selfhost`, is the single-site stack; `selfhost/eu` is the multi-service stack
+with per-service encrypted `secrets/*.sops.env` files, which the host decrypts
+with its own age key into mode-`0600` `secrets/*.env` files.
 
 ### Target: Fly.io (`--target fly`)
 
