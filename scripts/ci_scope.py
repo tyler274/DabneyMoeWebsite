@@ -45,6 +45,7 @@ TAURI_FILES = {
     "public/favicon.svg",
     "public/resume.pdf",
     "rust-toolchain.toml",
+    "scripts/android-personal.sh",
     "scripts/android-release.sh",
     "tailwind.config.js",
     ".github/workflows/ci.yml",

@@ -54,6 +54,125 @@ fn compact_textarea_preview(raw: &str) -> String {
     )
 }
 
+/// Runtime status returned by `health_connect_status` in the opt-in Android personal build
+/// (`moe.dabney.personal`, Cargo feature `health-connect`). Absent on browsers and `moe.dabney.demo`.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+struct HealthConnectStatusUi {
+    enabled: bool,
+    platform: String,
+    sdk_status: String,
+    has_glucose_permission: bool,
+    package_id: String,
+}
+
+#[cfg(any(feature = "hydrate", feature = "csr", test))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+struct HealthConnectPermissionUi {
+    granted: bool,
+    #[serde(default)]
+    granted_permissions: Vec<String>,
+}
+
+#[cfg(any(feature = "hydrate", feature = "csr", test))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+struct HealthConnectReadUi {
+    bridge_json: String,
+    record_count: usize,
+    #[serde(default)]
+    sources: Vec<String>,
+}
+
+#[cfg(any(feature = "hydrate", feature = "csr"))]
+fn js_error_to_string(err: wasm_bindgen::JsValue) -> String {
+    use js_sys::{Reflect, JSON};
+    use wasm_bindgen::JsValue;
+
+    if let Some(s) = err.as_string() {
+        return s;
+    }
+    if let Ok(msg) = Reflect::get(&err, &JsValue::from_str("message")) {
+        if let Some(s) = msg.as_string() {
+            return s;
+        }
+    }
+    JSON::stringify(&err)
+        .ok()
+        .and_then(|s| s.as_string())
+        .unwrap_or_else(|| "Tauri command failed".to_string())
+}
+
+/// Invoke an app-registered Tauri v2 command via `window.__TAURI__.core.invoke` without
+/// introducing extra crates. Calls `on_done(Err("not_tauri"))` immediately in plain browsers.
+#[cfg(any(feature = "hydrate", feature = "csr"))]
+fn invoke_tauri_command<T, F>(cmd: &str, args: Option<js_sys::Object>, on_done: F)
+where
+    T: serde::de::DeserializeOwned + 'static,
+    F: FnOnce(Result<T, String>) + 'static,
+{
+    use js_sys::{Function, Object, Reflect, JSON};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use wasm_bindgen::{closure::Closure, JsCast, JsValue};
+
+    let Some(win) = web_sys::window() else {
+        on_done(Err("not_tauri".to_string()));
+        return;
+    };
+    let tauri =
+        Reflect::get(win.as_ref(), &JsValue::from_str("__TAURI__")).unwrap_or(JsValue::UNDEFINED);
+    if tauri.is_undefined() || tauri.is_null() {
+        on_done(Err("not_tauri".to_string()));
+        return;
+    }
+    let core = Reflect::get(&tauri, &JsValue::from_str("core")).unwrap_or(JsValue::UNDEFINED);
+    if core.is_undefined() || core.is_null() {
+        on_done(Err("not_tauri".to_string()));
+        return;
+    }
+    let invoke = Reflect::get(&core, &JsValue::from_str("invoke")).unwrap_or(JsValue::UNDEFINED);
+    let Some(invoke_fn) = invoke.dyn_ref::<Function>() else {
+        on_done(Err("not_tauri".to_string()));
+        return;
+    };
+
+    let args_obj = args.unwrap_or_else(Object::new);
+    let Ok(promise_val) = invoke_fn.call2(&core, &JsValue::from_str(cmd), args_obj.as_ref()) else {
+        on_done(Err(format!("Failed to invoke {cmd}")));
+        return;
+    };
+    let then_val =
+        Reflect::get(&promise_val, &JsValue::from_str("then")).unwrap_or(JsValue::UNDEFINED);
+    let Some(then_fn) = then_val.dyn_ref::<Function>() else {
+        on_done(Err(format!("Command {cmd} did not return a Promise")));
+        return;
+    };
+
+    let cb_ok = Rc::new(RefCell::new(Some(on_done)));
+    let cb_err = Rc::clone(&cb_ok);
+
+    let on_ok = Closure::once_into_js(move |val: JsValue| {
+        if let Some(done) = cb_ok.borrow_mut().take() {
+            let parsed = JSON::stringify(&val)
+                .ok()
+                .and_then(|s| s.as_string())
+                .ok_or_else(|| "Could not serialize Tauri response to JSON".to_string())
+                .and_then(|raw| {
+                    serde_json::from_str::<T>(&raw)
+                        .map_err(|err| format!("Unexpected Tauri response shape: {err}"))
+                });
+            done(parsed);
+        }
+    });
+
+    let on_err = Closure::once_into_js(move |err: JsValue| {
+        if let Some(done) = cb_err.borrow_mut().take() {
+            done(Err(js_error_to_string(err)));
+        }
+    });
+
+    let _ = then_fn.call2(&promise_val, &on_ok, &on_err);
+}
+
 #[component]
 pub fn MentalHealthPage() -> impl IntoView {
     let initial_import = parse_commercial_glucose_input(SAMPLE_LINGO_CSV, None).ok();
@@ -82,6 +201,13 @@ pub fn MentalHealthPage() -> impl IntoView {
     let window = RwSignal::new(GlucoseWindow::All);
     let loaded_file_label = RwSignal::new(Option::<String>::None);
     let csv_error = RwSignal::new(Option::<String>::None);
+
+    // Native Android Google Health Connect state (active ONLY inside `moe.dabney.personal`
+    // built with `--features health-connect`; stays `None` on web browsers and `moe.dabney.demo`).
+    let hc_status = RwSignal::new(Option::<HealthConnectStatusUi>::None);
+    let hc_busy = RwSignal::new(false);
+    let hc_message = RwSignal::new(Option::<String>::None);
+    let hc_error = RwSignal::new(Option::<String>::None);
 
     let windowed_readings =
         Signal::derive(move || slice_readings_window(&readings.get(), window.get()));
@@ -202,7 +328,127 @@ pub fn MentalHealthPage() -> impl IntoView {
         load_monitor_preset(GlucoseMonitor::AbbottLingo);
         checkins.set(sample_checkins());
         form_status.set(None);
+        hc_message.set(None);
+        hc_error.set(None);
     };
+
+    let refresh_health_connect_status = move || {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            invoke_tauri_command::<HealthConnectStatusUi, _>(
+                "health_connect_status",
+                None,
+                move |res| {
+                    if let Ok(status) = res {
+                        if status.enabled {
+                            hc_status.set(Some(status));
+                        }
+                    }
+                },
+            );
+        }
+    };
+
+    Effect::new(move |_| {
+        refresh_health_connect_status();
+    });
+
+    let request_health_connect_permission = Callback::new(move |()| {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            hc_busy.set(true);
+            hc_error.set(None);
+            hc_message.set(None);
+            invoke_tauri_command::<HealthConnectPermissionUi, _>(
+                "health_connect_request_permission",
+                None,
+                move |res| {
+                    hc_busy.set(false);
+                    match res {
+                        Ok(outcome) => {
+                            if outcome.granted {
+                                hc_message.set(Some(format!(
+                                    "Health Connect blood glucose access granted ({} permission{} active).",
+                                    outcome.granted_permissions.len(),
+                                    if outcome.granted_permissions.len() == 1 {
+                                        ""
+                                    } else {
+                                        "s"
+                                    }
+                                )));
+                            } else {
+                                hc_error.set(Some(
+                                    "Blood glucose read access was not granted in Health Connect."
+                                        .to_string(),
+                                ));
+                            }
+                            refresh_health_connect_status();
+                        }
+                        Err(err) => {
+                            hc_error.set(Some(err));
+                        }
+                    }
+                },
+            );
+        }
+    });
+
+    let sync_health_connect_days = Callback::new(move |days: u32| {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            use js_sys::{Object, Reflect};
+            use wasm_bindgen::JsValue;
+
+            hc_busy.set(true);
+            hc_error.set(None);
+            hc_message.set(None);
+
+            let args = Object::new();
+            let _ = Reflect::set(
+                &args,
+                &JsValue::from_str("days"),
+                &JsValue::from_f64(f64::from(days)),
+            );
+
+            invoke_tauri_command::<HealthConnectReadUi, _>(
+                "health_connect_read_glucose",
+                Some(args),
+                move |res| {
+                    hc_busy.set(false);
+                    match res {
+                        Ok(resp) => {
+                            if resp.record_count == 0 {
+                                hc_message.set(Some(format!(
+                                    "No Blood Glucose records found in Android Health Connect over the last {days} days. Confirm Abbott Lingo Health Connect sync is enabled."
+                                )));
+                                return;
+                            }
+                            let sources_label = if resp.sources.is_empty() {
+                                "Health Connect".to_string()
+                            } else {
+                                resp.sources.join(", ")
+                            };
+                            csv_input.set(compact_textarea_preview(&resp.bridge_json));
+                            let banner_label = format!(
+                                "Android Health Connect ({} readings · {} · last {days}d · on-device RAM only)",
+                                resp.record_count, sources_label
+                            );
+                            apply_glucose_text(&resp.bridge_json, None, Some(banner_label));
+                            hc_message.set(Some(format!(
+                                "Synced {} blood glucose readings locally from {sources_label} (last {days} days).",
+                                resp.record_count
+                            )));
+                        }
+                        Err(err) => {
+                            hc_error.set(Some(err));
+                        }
+                    }
+                },
+            );
+        }
+        #[cfg(not(any(feature = "hydrate", feature = "csr")))]
+        let _ = days;
+    });
 
     let submit_checkin = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
@@ -707,14 +953,28 @@ pub fn MentalHealthPage() -> impl IntoView {
                     <p class="mb-3 text-sm text-slate-400">
                         "Load personal exports locally (never uploaded): Abbott Lingo native CSV, Apple Health export.xml, Health Connect JSON (`dabney.health_bridge.v1`), FreeStyle LibreView, Dexcom Clarity/Stelo, Medtronic CareLink, Eversense, Tandem, Glooko/Tidepool, or BGM CSV."
                     </p>
+                    {move || {
+                        hc_status.get().filter(|s| s.enabled).map(|status| {
+                            view! {
+                                <HealthConnectSyncCard
+                                    status=status
+                                    busy=hc_busy
+                                    message=hc_message
+                                    error=hc_error
+                                    on_request_permission=request_health_connect_permission
+                                    on_sync_days=sync_health_connect_days
+                                />
+                            }
+                        })
+                    }}
                     <details class="mb-3 rounded-xl border border-cyan-400/20 bg-cyan-500/5 px-3.5 py-2.5 text-xs text-slate-300">
                         <summary class="cursor-pointer font-semibold text-cyan-200">
-                            "How to export from Abbott Lingo today (+ Health Connect / HealthKit plan)"
+                            "How to export from Abbott Lingo today (+ Android Health Connect / Apple HealthKit)"
                         </summary>
                         <ol class="mt-2 list-decimal space-y-1 pl-4 text-[11px] leading-relaxed text-slate-300">
                             <li>"Open the Abbott Lingo app → You → Profile → Actions → Export your glucose data → Download file (5-min ISO-8601 CSV)."</li>
                             <li>"Select that `.csv` below (or an iOS Apple Health `export.xml` or Health Connect JSON) — everything parses locally in Rust/WASM and stays in device RAM."</li>
-                            <li>"Future direct Google Health Connect (Android) & Apple HealthKit (iOS) sync will live in the separate personal build (`moe.dabney.personal`) and feed this exact `dabney.health_bridge.v1` JSON schema, keeping the public Play Store demo (`moe.dabney.demo`) strictly zero-PHI."</li>
+                            <li>"Direct Google Health Connect live sync lives strictly inside the separate opt-in personal Android build (`moe.dabney.personal`) and feeds this exact `dabney.health_bridge.v1` JSON schema, keeping the public Play Store demo (`moe.dabney.demo`) strictly zero-PHI."</li>
                         </ol>
                     </details>
                     <div class="mb-3 flex flex-wrap gap-1.5">
@@ -1258,10 +1518,205 @@ fn Phq9Gad7TrendChart(series: Vec<AssessmentPoint>) -> impl IntoView {
     }
 }
 
+#[component]
+fn HealthConnectSyncCard(
+    status: HealthConnectStatusUi,
+    busy: RwSignal<bool>,
+    message: RwSignal<Option<String>>,
+    error: RwSignal<Option<String>>,
+    on_request_permission: Callback<()>,
+    on_sync_days: Callback<u32>,
+) -> impl IntoView {
+    let sdk_available = status.sdk_status == "available";
+    let (badge_label, badge_class) = if !sdk_available {
+        if status.sdk_status == "update_required" {
+            (
+                "Update Health Connect",
+                "border-amber-400/35 bg-amber-500/15 text-amber-200",
+            )
+        } else {
+            (
+                "SDK Unavailable",
+                "border-rose-400/35 bg-rose-500/15 text-rose-200",
+            )
+        }
+    } else if status.has_glucose_permission {
+        (
+            "Connected · Read-only",
+            "border-emerald-400/35 bg-emerald-500/15 text-emerald-200",
+        )
+    } else {
+        (
+            "Permission required",
+            "border-amber-400/35 bg-amber-500/15 text-amber-200",
+        )
+    };
+
+    let package_id = status.package_id.clone();
+    let platform = status.platform.clone();
+    let has_permission = status.has_glucose_permission;
+
+    view! {
+        <div
+            data-health-connect-card="true"
+            class="mb-4 rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-4 text-xs text-slate-200"
+        >
+            <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                    <p class="text-[11px] font-semibold uppercase tracking-wider text-emerald-300">
+                        "Android Health Connect · Live On-Device Sync"
+                    </p>
+                    <p class="mt-0.5 text-[11px] text-slate-300">
+                        {format!("Personal package {package_id} ({platform}) · READ_BLOOD_GLUCOSE only · stays in device RAM")}
+                    </p>
+                </div>
+                <span class=format!("rounded-full border px-2.5 py-0.5 text-[11px] font-semibold {badge_class}")>
+                    {badge_label}
+                </span>
+            </div>
+
+            {if !sdk_available {
+                view! {
+                    <p class="text-[11px] leading-relaxed text-amber-200">
+                        {if status.sdk_status == "update_required" {
+                            "Health Connect requires an update on this Android device. Update Health Connect in Google Play or Android System Settings, then reopen Dabney.moe Personal."
+                        } else {
+                            "Android Health Connect is not available on this device (Android 9+ with Health Connect required). You can still import Abbott Lingo CSV files below."
+                        }}
+                    </p>
+                }
+                .into_any()
+            } else {
+                view! {
+                    <div class="flex flex-wrap items-center gap-2">
+                        {if !has_permission {
+                            view! {
+                                <button
+                                    type="button"
+                                    disabled=move || busy.get()
+                                    on:click=move |_| on_request_permission.run(())
+                                    class="rounded-full bg-emerald-400 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:opacity-50"
+                                >
+                                    {move || if busy.get() { "Opening Health Connect…" } else { "Grant Blood Glucose Access" }}
+                                </button>
+                            }
+                            .into_any()
+                        } else {
+                            view! {
+                                <button
+                                    type="button"
+                                    disabled=move || busy.get()
+                                    on:click=move |_| on_sync_days.run(14)
+                                    class="rounded-full bg-emerald-400 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:opacity-50"
+                                >
+                                    {move || if busy.get() { "Syncing…" } else { "Sync Last 14 Days" }}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled=move || busy.get()
+                                    on:click=move |_| on_sync_days.run(90)
+                                    class="rounded-full border border-emerald-300/40 bg-slate-950/60 px-3.5 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/20 disabled:opacity-50"
+                                >
+                                    "Sync Last 90 Days"
+                                </button>
+                            }
+                            .into_any()
+                        }}
+                    </div>
+                }
+                .into_any()
+            }}
+
+            {move || message.get().map(|msg| view! {
+                <p class="mt-2 text-[11px] text-emerald-200">{msg}</p>
+            })}
+            {move || error.get().map(|err| view! {
+                <p class="mt-2 text-[11px] text-rose-300">{err}</p>
+            })}
+        </div>
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use leptos::prelude::RenderHtml;
+
+    #[test]
+    fn health_connect_bridge_payloads_and_card_render_cleanly() {
+        let status: HealthConnectStatusUi = serde_json::from_str(
+            r#"{
+                "enabled": true,
+                "platform": "android_health_connect",
+                "sdk_status": "available",
+                "has_glucose_permission": false,
+                "package_id": "moe.dabney.personal"
+            }"#,
+        )
+        .unwrap();
+        assert!(status.enabled);
+        assert!(!status.has_glucose_permission);
+
+        let perm: HealthConnectPermissionUi = serde_json::from_str(
+            r#"{
+                "granted": true,
+                "granted_permissions": ["android.permission.health.READ_BLOOD_GLUCOSE"]
+            }"#,
+        )
+        .unwrap();
+        assert!(perm.granted);
+        assert_eq!(perm.granted_permissions.len(), 1);
+
+        let read: HealthConnectReadUi = serde_json::from_str(
+            r#"{
+                "bridge_json": "{\"schema\":\"dabney.health_bridge.v1\",\"records\":[]}",
+                "record_count": 2,
+                "sources": ["com.abbott.lingo"]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(read.record_count, 2);
+        assert_eq!(read.sources, vec!["com.abbott.lingo"]);
+
+        let busy = RwSignal::new(false);
+        let msg = RwSignal::new(None);
+        let err = RwSignal::new(None);
+        let req = Callback::new(|()| {});
+        let sync = Callback::new(|_: u32| {});
+
+        let needs_perm_html = view! {
+            <HealthConnectSyncCard
+                status=status.clone()
+                busy=busy
+                message=msg
+                error=err
+                on_request_permission=req
+                on_sync_days=sync
+            />
+        }
+        .to_html();
+        assert!(needs_perm_html.contains("Android Health Connect"));
+        assert!(needs_perm_html.contains("Grant Blood Glucose Access"));
+        assert!(needs_perm_html.contains("moe.dabney.personal"));
+
+        let connected_status = HealthConnectStatusUi {
+            has_glucose_permission: true,
+            ..status
+        };
+        let connected_html = view! {
+            <HealthConnectSyncCard
+                status=connected_status
+                busy=busy
+                message=msg
+                error=err
+                on_request_permission=req
+                on_sync_days=sync
+            />
+        }
+        .to_html();
+        assert!(connected_html.contains("Sync Last 14 Days"));
+        assert!(connected_html.contains("Sync Last 90 Days"));
+    }
 
     #[test]
     fn mental_health_chart_and_metrics_render_cleanly() {

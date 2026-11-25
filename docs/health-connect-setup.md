@@ -85,11 +85,12 @@ delaying or risking the public patient demo:
 | Build Flavor | Package / Bundle ID | Permissions | Distribution |
 | --- | --- | --- | --- |
 | **Public Demo** (shipped now) | `moe.dabney.demo` | Zero Health Connect, zero sensitive device permissions (enforced fail-closed by `scripts/android-release.sh`) | Google Play Store (patients & reviewers) |
-| **Personal / Opt-In** (future) | `moe.dabney.personal` | `android.permission.health.READ_BLOOD_GLUCOSE` (plus optional `READ_SLEEP` / `READ_STEPS` only when displayed in UI) | USB sideload (`adb install`) immediately; optional Google Play Health Connect submission later |
+| **Personal / Opt-In** (implemented for Android) | `moe.dabney.personal` | `android.permission.health.READ_BLOOD_GLUCOSE` only (enforced by `scripts/android-personal.sh` + Cargo feature `health-connect`) | USB sideload (`adb install -r target/android-personal/dabney-personal-sideload.apk`) immediately; optional Google Play Health Connect submission later |
 
 Never add `android.permission.health.*` to `src-tauri/tauri.android.conf.json`.
-Create a dedicated overlay config (`src-tauri/tauri.android.personal.conf.json`)
-for the personal build when wiring the native plugin.
+The personal flavor lives in its dedicated overlay config
+(`src-tauri/tauri.android.personal.conf.json`) and Cargo feature
+(`health-connect`).
 
 ---
 
@@ -127,7 +128,7 @@ Key guarantees built into `parse_commercial_glucose_input`:
 
 ---
 
-## 4. Android Google Health Connect Setup Blueprint (Future Personal Flavor)
+## 4. Android Google Health Connect Setup (`moe.dabney.personal`)
 
 ### 4.1 Prerequisites on Your Android Phone
 
@@ -137,80 +138,56 @@ Key guarantees built into `parse_commercial_glucose_input`:
 2. In the **Abbott Lingo** Android app, enable **Health Connect** sync so Lingo
    writes interstitial glucose readings into Health Connect.
 
-### 4.2 Gradle Dependency (`app/build.gradle.kts`)
+### 4.2 Implemented Personal Flavor Components
 
-Matches our existing `minSdkVersion = 26` and `compileSdk = 36`:
+All Android Health Connect code is isolated behind Cargo feature `health-connect`
+and `src-tauri/tauri.android.personal.conf.json`, so `moe.dabney.demo` contains
+zero Health Connect dependencies, commands, or manifest permissions:
 
-```kotlin
-dependencies {
-    implementation("androidx.health.connect:connect-client:1.1.0")
-}
-```
+- **`src-tauri/tauri.android.personal.conf.json`**: Tauri v2 overlay config
+  setting `identifier = "moe.dabney.personal"`, `productName = "Dabney.moe Personal"`,
+  and `minSdkVersion = 26`.
+- **`src-tauri/src/health_connect.rs`**: Feature-gated (`health-connect`) Rust
+  Tauri commands (`health_connect_status`, `health_connect_request_permission`,
+  `health_connect_read_glucose`) and Android plugin registration
+  (`moe.dabney.personal.HealthConnectPlugin`).
+- **`src-tauri/android-personal/HealthConnectPlugin.kt`**: Clean-room Tauri v2
+  Kotlin `@TauriPlugin` calling `androidx.health.connect:connect-client:1.1.0`
+  (`HealthConnectClient.getSdkStatus`, `PermissionController.createRequestPermissionResultContract()`,
+  paginated `ReadRecordsRequest<BloodGlucoseRecord>`) and emitting canonical
+  `dabney.health_bridge.v1` JSON.
+- **`src-tauri/android-personal/PermissionsRationaleActivity.kt`**: Native
+  privacy & rationale activity wired to both Android 13
+  (`androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE`) and Android 14+
+  (`android.intent.action.VIEW_PERMISSION_USAGE` / `HEALTH_PERMISSIONS`).
+- **`crates/ui/src/mental_health.rs`**: Probes `health_connect_status` on mount
+  via `window.__TAURI__.core.invoke` and displays the **Android Health Connect ·
+  Live On-Device Sync** card (`Grant Blood Glucose Access`, `Sync Last 14 Days`,
+  `Sync Last 90 Days`) **only** when `enabled: true` (`moe.dabney.personal`).
+- **`scripts/android-personal.sh`**: Builds, patches Gradle (`connect-client:1.1.0`,
+  16 KB alignment) & manifest (only `READ_BLOOD_GLUCOSE` + rationale filters;
+  fails closed on unrelated sensitive permissions), verifies `aapt2` badging +
+  ELF alignment, and debug-signs `target/android-personal/dabney-personal-sideload.apk`.
 
-### 4.3 Manifest Entries (`AndroidManifest.xml` — Personal Flavor Only)
-
-Request **only** permissions that are visibly rendered in `/mental-health`:
-
-```xml
-<!-- Only declare permissions displayed in the UI -->
-<uses-permission android:name="android.permission.health.READ_BLOOD_GLUCOSE" />
-
-<!-- Required for HealthConnectClient.getSdkStatus(context) -->
-<queries>
-    <package android:name="com.google.android.apps.healthdata" />
-</queries>
-
-<application ...>
-    <!-- Android 13 and below rationale activity -->
-    <activity android:name=".PermissionsRationaleActivity" android:exported="true">
-        <intent-filter>
-            <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
-        </intent-filter>
-    </activity>
-
-    <!-- Android 14+ system Health Connect privacy policy / rationale entry -->
-    <activity-alias
-        android:name="ViewPermissionUsageActivity"
-        android:exported="true"
-        android:targetActivity=".PermissionsRationaleActivity"
-        android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
-        <intent-filter>
-            <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
-            <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
-        </intent-filter>
-    </activity-alias>
-</application>
-```
-
-### 4.4 Tauri v2 Kotlin Plugin Outline (`HealthConnectPlugin.kt`)
-
-Implement as a clean-room Tauri v2 mobile plugin registered only under a Cargo
-feature flag (e.g., `health-connect`):
-
-1. **`checkAvailability()`**: Calls
-   `HealthConnectClient.getSdkStatus(activity, "com.google.android.apps.healthdata")`
-   and returns `"available"`, `"update_required"`, or `"unavailable"`.
-2. **`requestGlucosePermission()`**: Requests
-   `setOf(HealthPermission.getReadPermission(BloodGlucoseRecord::class))` via
-   `PermissionController.createRequestPermissionResultContract()`.
-3. **`readBloodGlucose(days: Int)`**: Queries `HealthConnectClient.readRecords`
-   with `ReadRecordsRequest(BloodGlucoseRecord::class, TimeRangeFilter.between(start, end))`
-   looping over `pageToken` until exhausted, maps each `BloodGlucoseRecord`
-   (`time`, `zoneOffset`, `level.inMilligramsPerDeciliter`, `relationToMeal`,
-   `specimenSource`, `metadata.dataOrigin.packageName`) into a
-   `dabney.health_bridge.v1` JSON string, and returns it to WASM where
-   `parse_commercial_glucose_input` validates and renders it immediately.
-
-### 4.5 Immediate Personal Testing via USB Sideloading
+### 4.3 Build & Install on Your Android Phone (USB Sideload)
 
 For personal use on your own Android phone, **no Google Play Console Health
 Connect review is required**:
-1. Build the `aarch64` personal APK locally (`--target aarch64`).
-2. Install onto your phone via `adb install -r <personal.apk>`.
-3. Grant `Blood glucose (Read)` inside Health Connect and validate live Lingo
-   sync directly against the `/mental-health` AGP & validation panel.
 
-### 4.6 Google Play Console Health Connect Approval (Only If Publishing Personal Flavor)
+```bash
+# 1. Build the 16 KB-aligned personal APK for ARM64 phones (and optionally x86_64 emulators):
+nix develop .#android -c scripts/android-personal.sh --apk --target aarch64
+
+# 2. Install onto your USB-connected Android phone (coexists cleanly alongside moe.dabney.demo):
+adb install -r target/android-personal/dabney-personal-sideload.apk
+```
+
+Then open **Dabney.moe Personal** → **Mood & CGM** tab → tap **Grant Blood
+Glucose Access** in the emerald **Android Health Connect** card → tap **Sync
+Last 14 Days** (or **Sync Last 90 Days**) to inspect your live Abbott Lingo
+metrics, 24h AGP, and validation diagnostics strictly in device RAM.
+
+### 4.4 Google Play Console Health Connect Approval (Only If Publishing Personal Flavor)
 
 If you later distribute `moe.dabney.personal` on Google Play:
 1. Update `https://dabney.moe/privacy` to explicitly disclose Health Connect
