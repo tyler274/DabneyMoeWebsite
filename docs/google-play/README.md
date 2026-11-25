@@ -114,14 +114,19 @@ first AAB upload; complete the initial setup in Play Console once:
    - App access: **All functionality is available without special access** (no login)
    - Target audience: **18 and over**
    - Content rating (IARC): complete questionnaire (typically `Everyone`)
-3. **Fill Store Listing** (copy ready in [store-listing.md](store-listing.md)):
-   - Upload the 512×512 PNG app icon, 1024×500 feature graphic, and phone
-     screenshots.
+3. **Fill Store Listing** (copy ready in [store-listing.md](store-listing.md) and
+   committed Fastlane metadata in `fastlane/metadata/android/en-US/`):
+   - Upload `fastlane/metadata/android/en-US/images/icon.png` (512×512),
+     `fastlane/metadata/android/en-US/images/featureGraphic.png` (1024×500), and
+     `fastlane/metadata/android/en-US/images/phoneScreenshots/{1,2,3,4}.png`.
 4. **Enroll in Play App Signing & Upload First `.aab`**:
    - Start with **Internal testing** (instant verification on your own Android
      phone via Play Store link), then **Closed testing** (note: personal Play
      Console accounts created after Nov 2023 require 12 opted-in closed testers
      for 14 continuous days before Production review), then **Production**.
+
+For F-Droid (`f-droid.org`) and IzzyOnDroid submission using the same zero-PHI
+FOSS build and Fastlane metadata, see [`../fdroid/README.md`](../fdroid/README.md).
 
 ## 5. Automating Subsequent Releases in CI
 

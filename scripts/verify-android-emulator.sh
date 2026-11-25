@@ -33,12 +33,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "==> Ensuring AVD '$AVD_NAME' (android-34;google_apis;x86_64, pixel_6)"
-echo "no" | avdmanager create avd \
-  --force \
-  --name "$AVD_NAME" \
-  --package "system-images;android-34;google_apis;x86_64" \
-  --device "pixel_6" >/dev/null
+if [ ! -d "${HOME}/.android/avd/${AVD_NAME}.avd" ]; then
+  echo "==> Creating AVD '$AVD_NAME' (android-34;google_apis;x86_64, pixel_6)"
+  echo "no" | avdmanager create avd \
+    --force \
+    --name "$AVD_NAME" \
+    --package "system-images;android-34;google_apis;x86_64" \
+    --device "pixel_6" >/dev/null
+else
+  echo "==> Reusing existing AVD '$AVD_NAME'"
+fi
 
 echo "==> Booting headless Android emulator on $SERIAL"
 "$ANDROID_HOME/emulator/emulator" \
@@ -84,8 +88,12 @@ dismiss_anr() {
 }
 
 echo "==> Installing $APK"
+# Uninstall any prior build signed with a different key (e.g. debug vs release upload key).
+adb -s "$SERIAL" uninstall "$PACKAGE" >/dev/null 2>&1 || true
 adb -s "$SERIAL" install -r "$APK"
 adb -s "$SERIAL" shell pm list packages | grep -q "^package:${PACKAGE}$"
+# Reset app WebView cache/state so interrupted previous runs never corrupt HTTP Cache.
+adb -s "$SERIAL" shell pm clear "$PACKAGE" >/dev/null 2>&1 || true
 
 adb -s "$SERIAL" logcat -c
 echo "==> Launching $PACKAGE"
@@ -101,7 +109,14 @@ sleep 10
 dismiss_anr || true
 sleep 4
 
-PID="$(adb -s "$SERIAL" shell pidof "$PACKAGE" | tr -d '\r')"
+PID="$(adb -s "$SERIAL" shell pidof "$PACKAGE" 2>/dev/null | tr -d '\r' || true)"
+if [ -z "$PID" ]; then
+  echo "App process $PACKAGE is not running after launch; retrying am start once..."
+  adb -s "$SERIAL" shell am start -W -n "${PACKAGE}/.MainActivity" >/dev/null 2>&1 || true
+  sleep 6
+  dismiss_anr || true
+  PID="$(adb -s "$SERIAL" shell pidof "$PACKAGE" 2>/dev/null | tr -d '\r' || true)"
+fi
 if [ -z "$PID" ]; then
   echo "App process $PACKAGE is not running after launch!" >&2
   adb -s "$SERIAL" logcat -d -s AndroidRuntime:E chromium:E RustStdoutStderr:* | tail -n 80 >&2
@@ -109,6 +124,8 @@ if [ -z "$PID" ]; then
 fi
 echo "==> $PACKAGE running with PID $PID"
 echo "==> Display size: ${W}x${H}"
+# Let initial SVG assets finish painting under software SwiftShader before capture 1.
+sleep 3
 
 # Capture 1: Launch screen (Patient Experience Demo)
 dismiss_anr || true
@@ -138,10 +155,10 @@ adb -s "$SERIAL" exec-out screencap -p > "$OUT_DIR/screenshot-04-mood-cgm.png"
 echo "  captured $OUT_DIR/screenshot-04-mood-cgm.png"
 
 # Verify app is still alive and free of AndroidRuntime fatal exceptions.
-PID_AFTER="$(adb -s "$SERIAL" shell pidof "$PACKAGE" | tr -d '\r')"
+PID_AFTER="$(adb -s "$SERIAL" shell pidof "$PACKAGE" 2>/dev/null | tr -d '\r' || true)"
 if [ -z "$PID_AFTER" ]; then
   echo "App process $PACKAGE crashed during navigation!" >&2
-  adb -s "$SERIAL" logcat -d -s AndroidRuntime:E chromium:E | tail -n 80 >&2
+  adb -s "$SERIAL" logcat -d | grep -E "($PACKAGE|FATAL EXCEPTION|SIGSEGV|SIGABRT|Process .* died|chromium:.*CONSOLE)" | tail -n 80 >&2 || true
   exit 1
 fi
 

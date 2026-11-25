@@ -1,0 +1,5 @@
+Initial v1.0.0 release of Dabney.moe Clinical Demo (moe.dabney.demo):
+- Offline Patient Experience Demo ("Your Health" & "For My Doctor" consent preview) with four synthetic profiles.
+- Offline Physician Workspace Demo with reviewable reply drafts and verbatim record-cited chart Q&A.
+- Local Mental Health & Commercial CGM analytics (ADA 5-band TIR, GMI, GRI, 24-hour AGP).
+- 100% synthetic zero-PHI sample data, zero tracking, zero ads, and 16 KB ELF page-size compliance.
