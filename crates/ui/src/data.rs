@@ -42,10 +42,11 @@ pub const ABOUT_PHOTO: &str = "/photos/tyler-travel.png";
 pub const TAGLINE: &str = "Independent software engineer & freelance contractor";
 
 pub const SUMMARY: &str = "Caltech-trained software engineer specializing in Rust, GPU \
-computing, and high-performance systems. Recent work spans the Dabney.moe Clinical \
-Workspace (full-stack Rust clinical systems), Elysian Studio, ElyMalloc, and ElyLD in \
-safe Rust. I take projects from first commit to production deployment. I'm available for \
-freelance and contract work.";
+computing, and high-performance systems. Previously worked for Coda Health as their \
+Founding Senior System Software Engineer; recent work spans Dabney.moe (full-stack \
+Rust clinical systems), Elysian Studio, ElyMalloc, and ElyLD in safe Rust. I take \
+projects from first commit to production deployment. I'm available for freelance and \
+contract work.";
 
 pub const ABOUT: &str = "When I'm not shipping systems code, you'll find me behind a camera \
 or exploring somewhere new. I bring the same curiosity I have for travel and culture to \
@@ -144,12 +145,13 @@ pub const PROJECTS: &[Project] = &[
 
 pub const EXPERIENCE: &[Role] = &[
     Role {
-        company: "Independent Clinical Systems (Dabney.moe)",
+        company: "Dabney.moe",
         location: "Remote",
         title: "Senior System Software Engineer",
         period: "Oct 2026 – Nov 2026",
         points: &[
-            "Engineered full-stack Rust clinical systems (WASM web interfaces, Axum services, \
+            "Previously worked for Coda Health as their Founding Senior System Software Engineer; \
+             engineered full-stack Rust clinical systems (WASM web interfaces, Axum services, \
              PostgreSQL with pgvector RLS, Valkey SSE fan-out, zero-PHI push, and Swift \
              HealthKit / Kotlin Health Connect bridges) powering clinician and patient workflows.",
             "Built a bounded LLM tool-execution harness, offline BGE semantic encoder, \
