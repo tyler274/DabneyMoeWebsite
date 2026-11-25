@@ -10,6 +10,11 @@ description = "Tyler Port - resume & freelance software engineering, as a multip
 name = "dabney_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = []
+# Opt-in personal Android Health Connect bridge (`moe.dabney.personal` only; NEVER enabled for `moe.dabney.demo`).
+health-connect = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

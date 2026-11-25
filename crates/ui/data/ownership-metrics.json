@@ -1,63 +1,63 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-25T18:48:34Z",
+  "generated_at": "2026-11-25T22:39:48Z",
   "website": {
     "repo": "DabneyMoeWebsite",
-    "revision": "94b7a2c72fecce18aa841b6dfe2be3838f1c092a",
-    "short_revision": "94b7a2c",
-    "commit_timestamp": "2026-11-25T17:10:44Z",
-    "total_files": 160,
-    "total_lines": 32226,
-    "tyler_lines": 32226,
+    "revision": "72582a5d84329ab3b416319d13f89d6b2769c466",
+    "short_revision": "72582a5",
+    "commit_timestamp": "2026-11-25T22:39:48Z",
+    "total_files": 197,
+    "total_lines": 45506,
+    "tyler_lines": 45506,
     "tyler_pct": 100.0,
     "external_lines": 0
   },
   "upstream": {
     "name": "dabney-moe",
-    "revision": "a8ff5a873865f350bee06bfa19bd79e68d8197d7",
-    "short_revision": "a8ff5a873",
-    "commit_timestamp": "2026-11-25T18:48:34Z",
-    "source_files": 1641,
-    "source_lines": 654417,
-    "source_tyler_lines": 592139,
-    "source_tyler_pct": 90.5,
-    "source_provenance_adjusted_pct": 91.6,
+    "revision": "1197630b40b8de6dc8f3ad76cca16f76ae3a6190",
+    "short_revision": "1197630b4",
+    "commit_timestamp": "2026-11-25T22:27:14Z",
+    "source_files": 1644,
+    "source_lines": 659331,
+    "source_tyler_lines": 615845,
+    "source_tyler_pct": 93.4,
+    "source_provenance_adjusted_pct": 94.5,
     "patients_files": 469,
     "patients_lines": 198686,
     "patients_tyler_lines": 177864,
-    "combined_files": 2110,
-    "combined_lines": 853103,
-    "combined_tyler_lines": 770003,
-    "combined_tyler_pct": 90.3,
+    "combined_files": 2113,
+    "combined_lines": 858017,
+    "combined_tyler_lines": 793709,
+    "combined_tyler_pct": 92.5,
     "authors": [
       {
         "author": "Tyler Port",
-        "label": "Tyler Port — Combined Surviving Lines (a8ff5a873)",
-        "detail": "592,139 source lines (90.5%) + 177,864 clean-room patient lines (770,003 combined; 91.6% provenance-adjusted source)",
-        "source_lines": 592139,
+        "label": "Tyler Port — Combined Surviving Lines (1197630b4)",
+        "detail": "615,845 source lines (93.4%) + 177,864 clean-room patient lines (793,709 combined; 94.5% provenance-adjusted source)",
+        "source_lines": 615845,
         "patients_lines": 177864,
-        "combined_lines": 770003,
-        "pct": 90.3,
+        "combined_lines": 793709,
+        "pct": 92.5,
         "color": "#22d3ee"
       },
       {
         "author": "Dev Patale",
         "label": "Dev Patale (remaining mixed/docs & diff tokens)",
-        "detail": "55,269 source lines · down from 122,840 (-55.0%) + 20,822 coincidental patient JSON matches (3.04M legacy patients purged)",
-        "source_lines": 55269,
+        "detail": "37,300 source lines · down from 122,840 (-69.6%) + 20,822 coincidental patient JSON matches (3.04M legacy patients purged)",
+        "source_lines": 37300,
         "patients_lines": 20822,
-        "combined_lines": 76091,
-        "pct": 8.9,
+        "combined_lines": 58122,
+        "pct": 6.8,
         "color": "#f59e0b"
       },
       {
         "author": "Elijah Gwynn",
         "label": "Elijah Gwynn (remaining mixed/diff tokens)",
-        "detail": "6,075 source lines · down from 14,865 (-59.1%)",
-        "source_lines": 6075,
+        "detail": "5,252 source lines · down from 14,865 (-64.7%)",
+        "source_lines": 5252,
         "patients_lines": 0,
-        "combined_lines": 6075,
-        "pct": 0.7,
+        "combined_lines": 5252,
+        "pct": 0.6,
         "color": "#a78bfa"
       },
       {
@@ -82,15 +82,15 @@
       {
         "key": "tier1_2",
         "label": "Tier 1 & 2 · >=90% Tyler-authored crates & ops",
-        "count": 29,
-        "examples": "workspace-tools, duet-api, physician-app, infra/, front-door, physician-demo-api, physician-demo-db, duet-app, duet-client, duet-health, spruce, physician-client, +17 more",
+        "count": 31,
+        "examples": "local-product, physician-sample, workspace-tools, duet-api, physician-app, infra/, front-door, physician-demo-api, physician-demo-db, duet-app, duet-client, duet-health, +19 more",
         "color": "#34d399"
       },
       {
         "key": "tier3",
         "label": "Tier 3 · 50–89.9% mixed multi-contributor areas",
-        "count": 16,
-        "examples": "local-product, physician-sample, .agents/, root configs, scripts/, physician-auth, physician-wire, mobile, extension/, dev/, .github/, book/, +4 more",
+        "count": 14,
+        "examples": ".agents/, root configs, scripts/, physician-auth, physician-wire, mobile, extension/, dev/, .github/, book/, skills/, .devcontainer/, +2 more",
         "color": "#fbbf24"
       },
       {
@@ -124,8 +124,8 @@
     {
       "label": "Standalone dabney-moe workspace (combined source + patients/)",
       "before_pct": 14.4,
-      "after_pct": 90.3,
-      "note": "Chinese-wall REA clean-room rewrites across 14 areas + 469 patient files (90.3% combined; 90.5% raw / 91.6% provenance-adjusted source)"
+      "after_pct": 92.5,
+      "note": "Chinese-wall REA clean-room rewrites across 14 areas + 469 patient files (92.5% combined; 93.4% raw / 94.5% provenance-adjusted source)"
     }
   ],
   "replacement_ledger": [
@@ -176,9 +176,21 @@
       "removed": "Remaining multi-contributor public-site, gmail, intent/, verification/, book/ & Nix configs",
       "replacement": "Two-stage Chinese-wall REA clean-room reimplementation of public-site, gmail, TLA+ charts, mdbook & flake dev-shell",
       "owner": "100% clean-room @tyler274"
+    },
+    {
+      "category": "Standalone workspace Wave 3B-1 local-product (7506e445e)",
+      "removed": "46 multi-contributor runtime, store, chat & source modules in local-product (23,043 external lines)",
+      "replacement": "Two-stage Chinese-wall REA clean-room rewrites (local-product 88.6% -> 95.2% Tyler; 37 Evidence JSONs)",
+      "owner": "100% clean-room @tyler274"
+    },
+    {
+      "category": "Standalone workspace Wave 3B-2 physician-sample & CI sync (1197630b4)",
+      "removed": "33 multi-contributor physician-sample modules & legacy upstream repository names",
+      "replacement": "Two-stage Chinese-wall REA rewrites (physician-sample 85.7% -> 91.6%; 5/5 Chromium suites + PG 16 PASS) & automated CI ownership sync",
+      "owner": "100% clean-room @tyler274"
     }
   ],
-  "total_bundles": 99,
+  "total_bundles": 261,
   "rea_evidence": [
     {
       "operation": "inspect_sqlite_database",
@@ -215,6 +227,24 @@
       "evidence_id": "ev_b2b4cb893a065c384a85e5acbfda4c754305abb6c0588b01286ec3c4e1f4b1b2",
       "bundles": 44,
       "scope": "Black-box specs for clinical-library (15 PG tables, 93/93 PG 16 + pgvector tests) and patient-bank + 468 synthetic patients (21,982 FHIR R4 resources, ev_1a23930f...)"
+    },
+    {
+      "operation": "inspect_rust_binary + capture_process (Wave 3A Public Site/Gmail · 36 bundles)",
+      "evidence_id": "ev_5190f19888ff60b87506a691faeb6c37d0075c6c61909ee88345e4a73d87b16a",
+      "bundles": 36,
+      "scope": "Black-box specs for public-site (98.0% Tyler), gmail (93.6%), intent/, verification/ TLA+ charts, book/ & flake dev-shell"
+    },
+    {
+      "operation": "inspect_rust_binary + capture_process (Wave 3B-1 Local Product · 37 bundles)",
+      "evidence_id": "ev_9fd8a12c964a4c48422fea5710acfcf64fcd901ab5b9c019f1b0ae5bbd42d71b",
+      "bundles": 37,
+      "scope": "Black-box specs for 46 multi-contributor local-product runtime, store, chart & chat-operation modules (95.2% Tyler)"
+    },
+    {
+      "operation": "inspect_rust_binary + capture_process (Wave 3B-2 Physician Sample · 89 bundles)",
+      "evidence_id": "ev_123639bb71aa92f2b354f718637b3d104c57178e2fdfc46be8f995ce9f7f3fc3",
+      "bundles": 89,
+      "scope": "Black-box specs for 33 multi-contributor physician-sample server, worker & browser test modules (26/26 site + 4/4 auth + shell + sign-in + 6-path TLA+ Chromium E2E PASS)"
     }
   ]
 }

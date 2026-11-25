@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Dabney.moe Demo",
+  "version": "1.0.0",
+  "identifier": "moe.dabney.demo",
+  "bundle": {
+    "shortDescription": "Zero-PHI clinical demo for patients & clinicians.",
+    "longDescription": "Zero-PHI interactive demonstration of the Dabney.moe clinical suite: fictional synthetic patient records, For My Doctor sharing preview, physician chart Q&A, and on-device mental health & CGM tools.",
+    "android": {
+      "minSdkVersion": 26,
+      "versionCode": 1
+    }
+  }
+}

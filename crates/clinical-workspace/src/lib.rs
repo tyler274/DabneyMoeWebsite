@@ -939,6 +939,402 @@ fn no_match_answer(patient: &PatientChart, question: &str, terms: &[String]) -> 
     }
 }
 
+/// Simulated practice-connection state for the zero-PHI patient demo.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum DemoConnectionState {
+    Connected {
+        practice_name: String,
+        clinician_name: String,
+        next_visit: String,
+    },
+    Paused {
+        practice_name: String,
+    },
+    Standalone,
+}
+
+impl DemoConnectionState {
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::Connected { .. } => "Connected (demo clinic)",
+            Self::Paused { .. } => "Sharing paused",
+            Self::Standalone => "Standalone (no practice)",
+        }
+    }
+
+    pub const fn allows_sharing(&self) -> bool {
+        matches!(self, Self::Connected { .. })
+    }
+
+    pub fn practice_label(&self) -> String {
+        match self {
+            Self::Connected {
+                practice_name,
+                clinician_name,
+                ..
+            } => format!("{practice_name} · {clinician_name}"),
+            Self::Paused { practice_name } => format!("{practice_name} (sharing paused)"),
+            Self::Standalone => "No practice connected (standalone demo)".into(),
+        }
+    }
+}
+
+/// Private note kept exclusively on-device in the patient demo (never included
+/// in doctor sharing packets).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatientVisitNote {
+    pub id: String,
+    pub body: String,
+    pub created_label: String,
+}
+
+/// Local-only delivery status for the simulated "For My Doctor" share packet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ShareDeliveryStatus {
+    Draft,
+    SimulatedLocalSend {
+        sent_record_count: usize,
+        question_count: usize,
+    },
+    Withdrawn,
+}
+
+impl ShareDeliveryStatus {
+    pub const fn badge_label(self) -> &'static str {
+        match self {
+            Self::Draft => "Draft · not shared",
+            Self::SimulatedLocalSend { .. } => "Simulated send (local only)",
+            Self::Withdrawn => "Withdrawn locally",
+        }
+    }
+}
+
+/// Complete interactive state for a single synthetic patient's demo session.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatientDemoState {
+    pub patient_id: String,
+    pub connection: DemoConnectionState,
+    pub selected_record_ids: Vec<String>,
+    pub visit_questions: Vec<String>,
+    pub visit_note: String,
+    pub personal_notes: Vec<PatientVisitNote>,
+    pub delivery_status: ShareDeliveryStatus,
+}
+
+/// Deterministic preview of the exact visit summary packet that would be shared
+/// with a connected clinic—strictly limited to explicitly selected records.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharePacketPreview {
+    pub patient_id: String,
+    pub patient_display_name: String,
+    pub patient_mrn: String,
+    pub practice_label: String,
+    pub sharing_enabled: bool,
+    pub shared_records: Vec<ChartRecord>,
+    pub excluded_record_count: usize,
+    pub private_note_count: usize,
+    pub visit_note: String,
+    pub visit_questions: Vec<String>,
+    pub synthetic_disclaimer: String,
+}
+
+/// Combined payload returned by `GET /clinical/api/patient-demo/{id}`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatientDemoSnapshot {
+    pub patient: PatientChart,
+    pub state: PatientDemoState,
+    pub preview: SharePacketPreview,
+}
+
+/// Patient-friendly sample questions scoped to a synthetic patient profile.
+pub fn default_patient_questions(patient_id: &str) -> &'static [&'static str] {
+    match patient_id {
+        "pt-nadia-kulkarni" => &[
+            "Why do my morning glucose readings climb before breakfast?",
+            "What was my latest HbA1c and kidney lab result?",
+            "What did I ask Dr. Patel about metformin timing?",
+        ],
+        "pt-carlos-mendez" => &[
+            "What was my 14-day home blood pressure average?",
+            "How do my potassium and kidney labs look?",
+            "Did my home log note any ankle swelling or side effects?",
+        ],
+        "pt-priya-nair" => &[
+            "How did my PHQ-9 and GAD-7 scores change recently?",
+            "How did my CGM time in range and post-lunch glucose look?",
+        ],
+        "pt-david-okafor" => &[
+            "What did my echocardiogram report say about ejection fraction?",
+            "Are my hemoglobin and renal labs normal for apixaban?",
+        ],
+        _ => &["Summarize my recent synthetic records"],
+    }
+}
+
+/// Builds the default fictional patient demo state for a synthetic chart.
+///
+/// Pre-selects a subset of records (leaving at least one unselected when a
+/// chart has multiple records) and seeds one private device-only note so
+/// patients can immediately inspect inclusion vs. exclusion boundaries.
+pub fn default_patient_demo_state(patient: &PatientChart) -> PatientDemoState {
+    let selected_record_ids: Vec<String> = if patient.records.len() > 2 {
+        patient
+            .records
+            .iter()
+            .take(2)
+            .map(|r| r.id.clone())
+            .collect()
+    } else {
+        patient
+            .records
+            .iter()
+            .take(1)
+            .map(|r| r.id.clone())
+            .collect()
+    };
+
+    let (clinician_name, visit_note, visit_questions, private_note_body) = match patient.id.as_str()
+    {
+        "pt-nadia-kulkarni" => (
+            "Dr. Maya Patel (Demo)",
+            "Overnight glucose stays steady until ~5 AM and rises into the 140s before breakfast. \
+             Hoping to review whether keeping metformin ER 1000 mg with dinner is still best."
+                .to_string(),
+            vec![
+                "Should I keep taking metformin ER with dinner or adjust timing?".to_string(),
+                "Is my 78% 14-day CGM time-in-range on track for our next check?".to_string(),
+            ],
+            "Private reminder (device-only demo): Bring list of breakfast options I tested last week."
+                .to_string(),
+        ),
+        "pt-carlos-mendez" => (
+            "Dr. Maya Patel (Demo)",
+            "Logged 24 seated home blood pressure readings over two weeks averaging 138/84 mmHg \
+             with no headaches, dizziness, or ankle swelling."
+                .to_string(),
+            vec![
+                "Does 138/84 mmHg mean we should adjust amlodipine or wait another month?"
+                    .to_string(),
+                "Are my eGFR (74) and potassium (4.3) stable on lisinopril?".to_string(),
+            ],
+            "Private reminder (device-only demo): Ask pharmacy about 90-day refill alignment."
+                .to_string(),
+        ),
+        "pt-priya-nair" => (
+            "Dr. Hannah Brooks (Demo)",
+            "Consistent 23:15 sleep schedule and higher-protein lunches seemed to steady both \
+             afternoon glucose swings and afternoon anxiety over the last two weeks."
+                .to_string(),
+            vec![
+                "My PHQ-9 dropped from 14 to 7—what cadence should we use for next month's check-in?"
+                    .to_string(),
+                "Should I keep tracking post-lunch CGM trends alongside mood scores?".to_string(),
+            ],
+            "Private reminder (device-only demo): Note which workdays felt most stressful."
+                .to_string(),
+        ),
+        "pt-david-okafor" => (
+            "Dr. Samuel Cho (Demo)",
+            "Feeling steady with no palpitations, bruising, or bleeding episodes since my last \
+             echocardiogram and blood work."
+                .to_string(),
+            vec![
+                "Do my hemoglobin (14.2) and eGFR (86) confirm standard apixaban dosing?"
+                    .to_string(),
+                "When should I schedule my next routine 6-month lab check?".to_string(),
+            ],
+            "Private reminder (device-only demo): Confirm travel dates before booking May follow-up."
+                .to_string(),
+        ),
+        _ => (
+            "Demo Clinician",
+            "Synthetic sample visit note for demonstration purposes.".to_string(),
+            vec!["Review my selected synthetic records at the next visit.".to_string()],
+            "Private demo note kept strictly on this device.".to_string(),
+        ),
+    };
+
+    let next_visit = patient
+        .visit
+        .as_ref()
+        .map(|v| format!("Today {} · {}", v.starts_at, v.modality))
+        .unwrap_or_else(|| "Asynchronous panel review".to_string());
+
+    PatientDemoState {
+        patient_id: patient.id.clone(),
+        connection: DemoConnectionState::Connected {
+            practice_name: "Dabney.moe Synthetic Clinic".into(),
+            clinician_name: clinician_name.into(),
+            next_visit,
+        },
+        selected_record_ids,
+        visit_questions,
+        visit_note,
+        personal_notes: vec![PatientVisitNote {
+            id: format!("{}-priv-1", patient.id),
+            body: private_note_body,
+            created_label: "Sample private note".into(),
+        }],
+        delivery_status: ShareDeliveryStatus::Draft,
+    }
+}
+
+/// Projects the exact clinician-visible packet from a synthetic patient's chart
+/// and explicit sharing selections.
+///
+/// Guarantees:
+/// - Only records belonging to `patient` AND present in `state.selected_record_ids`
+///   appear in `shared_records` (foreign/unknown IDs are ignored).
+/// - `personal_notes` are never copied into the packet (`private_note_count` is
+///   surfaced only to reassure the patient they remain excluded).
+pub fn build_doctor_share_preview(
+    patient: &PatientChart,
+    state: &PatientDemoState,
+) -> SharePacketPreview {
+    let shared_records: Vec<ChartRecord> = patient
+        .records
+        .iter()
+        .filter(|rec| state.selected_record_ids.iter().any(|id| id == &rec.id))
+        .cloned()
+        .collect();
+    let excluded_record_count = patient.records.len().saturating_sub(shared_records.len());
+
+    SharePacketPreview {
+        patient_id: patient.id.clone(),
+        patient_display_name: patient.display_name.clone(),
+        patient_mrn: patient.mrn.clone(),
+        practice_label: state.connection.practice_label(),
+        sharing_enabled: state.connection.allows_sharing(),
+        shared_records,
+        excluded_record_count,
+        private_note_count: state.personal_notes.len(),
+        visit_note: state.visit_note.trim().to_string(),
+        visit_questions: state
+            .visit_questions
+            .iter()
+            .map(|q| q.trim().to_string())
+            .filter(|q| !q.is_empty())
+            .collect(),
+        synthetic_disclaimer: "SYNTHETIC DEMO PACKET — ZERO PHI. Fictional sample data only; nothing is transmitted off this device.".into(),
+    }
+}
+
+/// Answers a patient-demo question strictly from the selected synthetic patient's
+/// own records using whole-word matching. Unlike fallback summaries, unmatched
+/// queries return zero citations and an explicit no-match notice.
+pub fn answer_patient_question(patient: &PatientChart, raw_question: &str) -> ChatAnswer {
+    let question = raw_question.trim();
+    let terms = query_terms(question);
+
+    let mut scored: Vec<(usize, &ChartRecord)> = patient
+        .records
+        .iter()
+        .map(|rec| {
+            let haystack = format!(
+                "{} {} {} {}",
+                rec.title,
+                rec.source_label,
+                rec.body,
+                rec.key_values
+                    .iter()
+                    .map(|(k, v)| format!("{k} {v}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+            let words: Vec<String> = haystack
+                .split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '/')
+                .filter(|w| !w.is_empty())
+                .map(|w| w.to_ascii_lowercase())
+                .collect();
+            let score = terms
+                .iter()
+                .filter(|term| {
+                    words.iter().any(|word| {
+                        word == term.as_str()
+                            || (term.len() >= 4 && word.starts_with(term.as_str()))
+                    })
+                })
+                .count();
+            (score, rec)
+        })
+        .collect();
+
+    scored.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| b.1.recorded_at.cmp(&a.1.recorded_at))
+    });
+
+    let matched: Vec<&ChartRecord> = scored
+        .into_iter()
+        .filter(|(score, _)| *score > 0)
+        .take(3)
+        .map(|(_, rec)| rec)
+        .collect();
+
+    if matched.is_empty() {
+        return ChatAnswer {
+            patient_id: patient.id.clone(),
+            question: question.to_string(),
+            grounded: false,
+            answer: format!(
+                "No matching records were found in {}'s synthetic sample chart for that question. \
+                 Try asking about labs, CGM trends, medications, or recent notes listed on this profile.",
+                patient.display_name
+            ),
+            citations: Vec::new(),
+            basis: format!(
+                "Local deterministic retrieval scoped exclusively to {} (0 matching records).",
+                patient.mrn
+            ),
+        };
+    }
+
+    let citations: Vec<ChatCitation> = matched
+        .iter()
+        .map(|r| ChatCitation {
+            record_id: r.id.clone(),
+            title: r.title.clone(),
+            recorded_at: r.recorded_at.clone(),
+            kind: r.kind,
+            excerpt: r.body.clone(),
+        })
+        .collect();
+
+    let findings = citations
+        .iter()
+        .map(|c| {
+            format!(
+                "- [{}] {} ({}): {}",
+                c.record_id, c.title, c.recorded_at, c.excerpt
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let cited_ids = citations
+        .iter()
+        .map(|c| c.record_id.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    ChatAnswer {
+        patient_id: patient.id.clone(),
+        question: question.to_string(),
+        grounded: true,
+        answer: format!(
+            "From {}'s synthetic sample records (demo only, not medical advice):\n{}",
+            patient.display_name, findings
+        ),
+        citations,
+        basis: format!(
+            "Local deterministic retrieval scoped exclusively to {} (cited: {}).",
+            patient.mrn, cited_ids
+        ),
+    }
+}
+
 #[cfg(feature = "ssr")]
 pub mod api {
     //! Embedded Axum HTTP API for `/clinical/api/*`.
@@ -954,8 +1350,9 @@ pub mod api {
     use tower_http::limit::RequestBodyLimitLayer;
 
     use crate::{
-        answer_chart_question, find_patient, synthetic_panel, today_overview, ChatRequest,
-        DemoSessionResponse, HealthResponse,
+        answer_chart_question, build_doctor_share_preview, default_patient_demo_state,
+        find_patient, synthetic_panel, today_overview, ChatRequest, DemoSessionResponse,
+        HealthResponse, PatientDemoSnapshot,
     };
 
     const CHAT_BODY_LIMIT: usize = 64 * 1024;
@@ -975,6 +1372,7 @@ pub mod api {
             .route("/patients", get(patients))
             .route("/patients/{id}", get(patient_detail))
             .route("/patients/{id}/chat", post(patient_chat))
+            .route("/patient-demo/{id}", get(patient_demo_snapshot))
             .layer(RequestBodyLimitLayer::new(CHAT_BODY_LIMIT))
             .with_state(state)
     }
@@ -1048,6 +1446,32 @@ pub mod api {
             Some(chart) => {
                 let answer = answer_chart_question(&chart, &req.question);
                 json_no_store(StatusCode::OK, &answer)
+            }
+            None => (
+                StatusCode::NOT_FOUND,
+                [(
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static("private, no-store, max-age=0"),
+                )],
+                Json(serde_json::json!({ "error": "patient not found" })),
+            )
+                .into_response(),
+        }
+    }
+
+    async fn patient_demo_snapshot(Path(id): Path<String>) -> Response {
+        match find_patient(&id) {
+            Some(patient) => {
+                let state = default_patient_demo_state(&patient);
+                let preview = build_doctor_share_preview(&patient, &state);
+                json_no_store(
+                    StatusCode::OK,
+                    &PatientDemoSnapshot {
+                        patient,
+                        state,
+                        preview,
+                    },
+                )
             }
             None => (
                 StatusCode::NOT_FOUND,
@@ -1317,6 +1741,48 @@ mod tests {
         assert!(tir.answer.contains("78%"), "{}", tir.answer);
     }
 
+    #[test]
+    fn patient_demo_share_preview_enforces_selection_and_excludes_private_notes() {
+        for patient in synthetic_panel() {
+            let mut state = default_patient_demo_state(&patient);
+            // Inject a foreign record ID from another patient to prove boundary enforcement.
+            state.selected_record_ids.push("foreign-record-99".into());
+            let preview = build_doctor_share_preview(&patient, &state);
+            assert_eq!(preview.patient_id, patient.id);
+            assert!(preview.sharing_enabled);
+            assert!(!preview.shared_records.is_empty());
+            assert!(preview
+                .shared_records
+                .iter()
+                .all(|rec| patient.records.iter().any(|own| own.id == rec.id)));
+            assert_eq!(
+                preview.shared_records.len() + preview.excluded_record_count,
+                patient.records.len()
+            );
+            assert_eq!(preview.private_note_count, state.personal_notes.len());
+            assert!(preview.synthetic_disclaimer.contains("ZERO PHI"));
+
+            // Pausing sharing disables packet sharing without mutating selections.
+            state.connection = DemoConnectionState::Paused {
+                practice_name: "Dabney.moe Synthetic Clinic".into(),
+            };
+            let paused = build_doctor_share_preview(&patient, &state);
+            assert!(!paused.sharing_enabled);
+        }
+    }
+
+    #[test]
+    fn patient_question_retrieval_returns_zero_citations_on_unmatched_query() {
+        let nadia = find_patient("pt-nadia-kulkarni").expect("nadia");
+        let matched = answer_patient_question(&nadia, "What was my latest HbA1c?");
+        assert!(!matched.citations.is_empty());
+        assert!(matched.citations.iter().any(|c| c.record_id == "nk-lab-02"));
+
+        let unmatched = answer_patient_question(&nadia, "zzzz nonexistent statin");
+        assert!(unmatched.citations.is_empty());
+        assert!(unmatched.answer.contains("No matching records"));
+    }
+
     #[cfg(feature = "ssr")]
     #[tokio::test]
     async fn api_serves_health_today_patients_and_chat() {
@@ -1386,5 +1852,37 @@ mod tests {
         let parsed: ChatAnswer = serde_json::from_slice(&body).unwrap();
         assert_eq!(parsed.patient_id, "pt-carlos-mendez");
         assert!(parsed.citations.iter().any(|c| c.record_id == "cm-lab-02"));
+
+        let demo = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/patient-demo/pt-nadia-kulkarni")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(demo.status(), StatusCode::OK);
+        assert_eq!(
+            demo.headers()[header::CACHE_CONTROL],
+            "private, no-store, max-age=0"
+        );
+        let demo_body = to_bytes(demo.into_body(), 64 * 1024).await.unwrap();
+        let snapshot: PatientDemoSnapshot = serde_json::from_slice(&demo_body).unwrap();
+        assert_eq!(snapshot.patient.id, "pt-nadia-kulkarni");
+        assert!(snapshot.preview.sharing_enabled);
+        assert!(!snapshot.preview.shared_records.is_empty());
+
+        let missing = app
+            .oneshot(
+                Request::builder()
+                    .uri("/patient-demo/pt-nonexistent")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
     }
 }

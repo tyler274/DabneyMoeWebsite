@@ -4,11 +4,28 @@ use leptos::prelude::*;
 use leptos_meta::{Link, Meta, Title};
 use leptos_router::components::A;
 
+#[cfg(any(feature = "hydrate", feature = "csr"))]
+use crate::health_bridge::{
+    build_personal_cgm_chat_prompt, generate_local_llm, invoke_tauri_command, load_personal_vault,
+    prepare_local_llm, probe_local_llm, probe_personal_health_bridge, probe_personal_vault,
+    save_personal_vault, wipe_personal_vault, HealthBridgePermissionUi, HealthBridgeReadUi,
+    PersonalVaultSaveUi,
+};
+use crate::health_bridge::{
+    collect_cgm_grounding_facts, synthesize_grounded_cgm_answer, HealthBridgeStatusUi,
+    LocalChatTurn, LocalLlmStatusUi, PersonalVaultStatusUi,
+};
+use crate::local_ai_chat::{PersonalCgmAiChatSection, PersonalVaultBar};
 use crate::mental_health_3d::LingoMood3DChart;
 use crate::mental_health_cgm::{
-    parse_commercial_glucose_csv, sample_csv_for_monitor, summarize_commercial_glucose,
-    AdaTimeInRangeBar, AgpPercentileChart, GlucoseMonitor, GlucoseUnit, MeasurementMethod,
+    downsample_readings_for_chart, parse_commercial_glucose_input, sample_csv_for_monitor,
+    select_notable_spike_peaks, slice_readings_window, summarize_commercial_glucose,
+    AdaTimeInRangeBar, AgpPercentileChart, GlucoseImportDiagnostics, GlucoseMonitor, GlucoseUnit,
+    GlucoseWindow, MeasurementMethod, ValidationLevel, SAMPLE_APPLE_HEALTH_XML,
+    SAMPLE_HEALTH_BRIDGE_JSON,
 };
+#[cfg(any(feature = "hydrate", feature = "csr"))]
+use crate::mental_health_cgm::{export_health_bridge_json, monitor_hint_from_filename};
 use crate::mental_health_episodes::{
     summarize_episode_cadence, EpisodeActivationSection, TopCoolDownBanner,
 };
@@ -21,6 +38,7 @@ use crate::mental_health_lingo::{
     AssessmentPoint, LingoReading, MentalHealthCheckIn, SAMPLE_LINGO_CSV,
 };
 use crate::mental_health_support::SupportAndClinicianBriefSection;
+use crate::patient_demo::ClinicalSuiteSwitcher;
 use crate::sections::{Footer, NavBar};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,9 +54,21 @@ const ROSE: &str = "#fb7185";
 const VIOLET: &str = "#a78bfa";
 const SLATE_LIGHT: &str = "#94a3b8";
 
+#[cfg(any(feature = "hydrate", feature = "csr"))]
+fn compact_textarea_preview(raw: &str) -> String {
+    if raw.len() <= 24_576 {
+        return raw.to_string();
+    }
+    let head: String = raw.lines().take(20).collect::<Vec<_>>().join("\n");
+    format!(
+        "{head}\n# … preview truncated ({:.1} KB total; full file parsed locally in memory)",
+        raw.len() as f64 / 1024.0
+    )
+}
+
 #[component]
 pub fn MentalHealthPage() -> impl IntoView {
-    let initial_import = parse_commercial_glucose_csv(SAMPLE_LINGO_CSV, None).ok();
+    let initial_import = parse_commercial_glucose_input(SAMPLE_LINGO_CSV, None).ok();
     let csv_input = RwSignal::new(SAMPLE_LINGO_CSV.to_string());
     let monitor_hint = RwSignal::new(Option::<GlucoseMonitor>::None);
     let detected_monitor = RwSignal::new(
@@ -59,8 +89,38 @@ pub fn MentalHealthPage() -> impl IntoView {
             .map(|i| i.method)
             .unwrap_or(MeasurementMethod::InterstitialCgm),
     );
+    let import_diagnostics = RwSignal::new(initial_import.as_ref().map(|i| i.diagnostics.clone()));
     let readings = RwSignal::new(initial_import.map(|i| i.readings).unwrap_or_default());
+    let window = RwSignal::new(GlucoseWindow::All);
+    let loaded_file_label = RwSignal::new(Option::<String>::None);
     let csv_error = RwSignal::new(Option::<String>::None);
+
+    // Native Android Health Connect / iOS Apple HealthKit state (active ONLY inside
+    // `moe.dabney.personal` built with `--features health-connect`; stays `None` on
+    // web browsers and `moe.dabney.demo`).
+    let hc_status = RwSignal::new(Option::<HealthBridgeStatusUi>::None);
+    let hc_busy = RwSignal::new(false);
+    let hc_message = RwSignal::new(Option::<String>::None);
+    let hc_error = RwSignal::new(Option::<String>::None);
+
+    // Hardware-backed encrypted local personal vault (`moe.dabney.personal` only).
+    let vault_status = RwSignal::new(Option::<PersonalVaultStatusUi>::None);
+    let vault_busy = RwSignal::new(false);
+    let vault_notice = RwSignal::new(Option::<String>::None);
+
+    // On-device LLM (Android AICore / Gemini Nano) + local CGM/mood chat state.
+    let llm_status = RwSignal::new(Option::<LocalLlmStatusUi>::None);
+    let use_local_llm = RwSignal::new(true);
+    let llm_preparing = RwSignal::new(false);
+    let llm_prepare_notice = RwSignal::new(Option::<String>::None);
+    let chat_input = RwSignal::new(String::new());
+    let chat_turns = RwSignal::new(Vec::<LocalChatTurn>::new());
+    let chat_busy = RwSignal::new(false);
+    let chat_error = RwSignal::new(Option::<String>::None);
+    let next_chat_seq = RwSignal::new(1usize);
+
+    let windowed_readings =
+        Signal::derive(move || slice_readings_window(&readings.get(), window.get()));
 
     let checkins = RwSignal::new(sample_checkins());
     let chart_mode = RwSignal::new(ChartViewMode::WebGl3D);
@@ -82,24 +142,34 @@ pub fn MentalHealthPage() -> impl IntoView {
     let hour_input = RwSignal::new("18.0".to_string());
     let form_status = RwSignal::new(Option::<String>::None);
 
-    let apply_glucose_text = move |raw: &str, hint: Option<GlucoseMonitor>| {
-        match parse_commercial_glucose_csv(raw, hint) {
-            Ok(parsed) => {
-                detected_monitor.set(parsed.monitor);
-                source_unit.set(parsed.source_unit);
-                measurement_method.set(parsed.method);
-                readings.set(parsed.readings);
-                csv_error.set(None);
+    let apply_glucose_text =
+        move |raw: &str, hint: Option<GlucoseMonitor>, source_label: Option<String>| {
+            match parse_commercial_glucose_input(raw, hint) {
+                Ok(parsed) => {
+                    let span_h = parsed.diagnostics.span_hours;
+                    detected_monitor.set(parsed.monitor);
+                    source_unit.set(parsed.source_unit);
+                    measurement_method.set(parsed.method);
+                    import_diagnostics.set(Some(parsed.diagnostics));
+                    readings.set(parsed.readings);
+                    loaded_file_label.set(source_label);
+                    // Default multi-week personal exports to the ATTD 14-day view so charts & AGP stay crisp.
+                    window.set(if span_h > 360.0 {
+                        GlucoseWindow::Days14
+                    } else {
+                        GlucoseWindow::All
+                    });
+                    csv_error.set(None);
+                }
+                Err(err) => {
+                    csv_error.set(Some(err));
+                }
             }
-            Err(err) => {
-                csv_error.set(Some(err));
-            }
-        }
-    };
+        };
 
     let apply_csv = move |_| {
         let raw = csv_input.get();
-        apply_glucose_text(&raw, monitor_hint.get());
+        apply_glucose_text(&raw, monitor_hint.get(), None);
     };
 
     let on_cgm_file_change = move |ev: leptos::ev::Event| {
@@ -116,6 +186,11 @@ pub fn MentalHealthPage() -> impl IntoView {
                 return;
             };
             let Some(file) = files.get(0) else { return };
+            let file_name = file.name();
+            let file_kb = file.size() / 1024.0;
+            let inferred_hint = monitor_hint
+                .get()
+                .or_else(|| monitor_hint_from_filename(&file_name));
             let Ok(reader) = web_sys::FileReader::new() else {
                 csv_error.set(Some("Could not initialize browser FileReader.".into()));
                 return;
@@ -128,8 +203,36 @@ pub fn MentalHealthPage() -> impl IntoView {
                     };
                     if let Ok(val) = r.result() {
                         if let Some(text) = val.as_string() {
-                            csv_input.set(text.clone());
-                            apply_glucose_text(&text, monitor_hint.get());
+                            csv_input.set(compact_textarea_preview(&text));
+                            let label = format!("{file_name} ({file_kb:.1} KB · on-device)");
+                            if let Ok(parsed_for_vault) =
+                                parse_commercial_glucose_input(&text, inferred_hint)
+                            {
+                                let count = parsed_for_vault.readings.len();
+                                let bridge_json =
+                                    export_health_bridge_json(&parsed_for_vault, "local_file");
+                                if vault_status.get_untracked().is_some_and(|v| v.enabled) {
+                                    let save_label = label.clone();
+                                    save_personal_vault(
+                                        &PersonalVaultSaveUi {
+                                            cgm_bridge_json: Some(bridge_json),
+                                            cgm_source_label: Some(save_label),
+                                            cgm_reading_count: Some(count),
+                                            ..Default::default()
+                                        },
+                                        move |res| {
+                                            if let Ok(updated) = res {
+                                                vault_status.set(Some(updated));
+                                                vault_notice.set(Some(
+                                                    "Encrypted & cached imported CGM file in local vault."
+                                                        .to_string(),
+                                                ));
+                                            }
+                                        },
+                                    );
+                                }
+                            }
+                            apply_glucose_text(&text, inferred_hint, Some(label));
                         }
                     }
                 },
@@ -137,7 +240,7 @@ pub fn MentalHealthPage() -> impl IntoView {
             reader.set_onload(Some(onload.as_ref().unchecked_ref()));
             onload.forget();
             if reader.read_as_text(&file).is_err() {
-                csv_error.set(Some("Could not read selected CSV file.".into()));
+                csv_error.set(Some("Could not read selected glucose file.".into()));
             }
         }
         #[cfg(not(any(feature = "hydrate", feature = "csr")))]
@@ -148,14 +251,412 @@ pub fn MentalHealthPage() -> impl IntoView {
         let sample = sample_csv_for_monitor(monitor);
         monitor_hint.set(None);
         csv_input.set(sample.to_string());
-        apply_glucose_text(sample, None);
+        apply_glucose_text(sample, None, None);
+    };
+
+    let load_raw_preset = move |sample: &'static str| {
+        monitor_hint.set(None);
+        csv_input.set(sample.to_string());
+        apply_glucose_text(sample, None, None);
     };
 
     let reset_sample = move |_| {
         load_monitor_preset(GlucoseMonitor::AbbottLingo);
         checkins.set(sample_checkins());
         form_status.set(None);
+        hc_message.set(None);
+        hc_error.set(None);
     };
+
+    let refresh_health_connect_status = move || {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            probe_personal_health_bridge(move |status| {
+                hc_status.set(Some(status));
+            });
+        }
+    };
+
+    let refresh_local_llm_status = move || {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            probe_local_llm(move |status| {
+                llm_status.set(Some(status));
+            });
+        }
+    };
+
+    #[cfg(any(feature = "hydrate", feature = "csr"))]
+    let persist_vault_update = move |payload: PersonalVaultSaveUi, saved_note: &'static str| {
+        if vault_status.get_untracked().is_some_and(|v| v.enabled) {
+            save_personal_vault(&payload, move |res| match res {
+                Ok(updated) => {
+                    vault_status.set(Some(updated));
+                    vault_notice.set(Some(saved_note.to_string()));
+                }
+                Err(err) => {
+                    vault_notice.set(Some(format!("Local vault save warning: {err}")));
+                }
+            });
+        }
+    };
+
+    Effect::new(move |_| {
+        refresh_health_connect_status();
+        refresh_local_llm_status();
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            probe_personal_vault(move |status| {
+                let has_saved_data = status.has_cgm_snapshot
+                    || status.checkin_count > 0
+                    || status.chat_turn_count > 0;
+                vault_status.set(Some(status));
+                if has_saved_data {
+                    load_personal_vault(move |res| {
+                        if let Ok(snap) = res {
+                            if !snap.found {
+                                return;
+                            }
+                            if let Some(cgm_json) = snap.cgm_bridge_json {
+                                let label = snap
+                                    .cgm_source_label
+                                    .unwrap_or_else(|| "Encrypted Local Vault".to_string());
+                                csv_input.set(compact_textarea_preview(&cgm_json));
+                                apply_glucose_text(
+                                    &cgm_json,
+                                    None,
+                                    Some(format!("{label} · restored from AES-256-GCM vault")),
+                                );
+                            }
+                            if let Some(checkins_raw) = snap.checkins_json {
+                                if let Ok(restored) =
+                                    serde_json::from_str::<Vec<MentalHealthCheckIn>>(&checkins_raw)
+                                {
+                                    if !restored.is_empty() {
+                                        checkins.set(restored);
+                                    }
+                                }
+                            }
+                            if let Some(chat_raw) = snap.chat_history_json {
+                                if let Ok(restored) =
+                                    serde_json::from_str::<Vec<LocalChatTurn>>(&chat_raw)
+                                {
+                                    next_chat_seq.set(restored.len() + 1);
+                                    chat_turns.set(restored);
+                                }
+                            }
+                            vault_notice.set(Some(
+                                "Restored encrypted personal snapshot from Android Keystore vault."
+                                    .to_string(),
+                            ));
+                        }
+                    });
+                }
+            });
+        }
+    });
+
+    let wipe_vault_now = Callback::new(move |()| {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            vault_busy.set(true);
+            wipe_personal_vault(move |res| {
+                vault_busy.set(false);
+                match res {
+                    Ok(empty_status) => {
+                        vault_status.set(Some(empty_status));
+                        load_monitor_preset(GlucoseMonitor::AbbottLingo);
+                        checkins.set(sample_checkins());
+                        chat_turns.set(Vec::new());
+                        form_status.set(None);
+                        hc_message.set(None);
+                        hc_error.set(None);
+                        vault_notice.set(Some(
+                            "Encrypted vault wiped and Android Keystore master key destroyed."
+                                .to_string(),
+                        ));
+                    }
+                    Err(err) => {
+                        vault_notice.set(Some(format!("Vault wipe failed: {err}")));
+                    }
+                }
+            });
+        }
+    });
+
+    let prepare_local_llm_now = Callback::new(move |()| {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            llm_preparing.set(true);
+            llm_prepare_notice.set(Some(
+                "Requesting Gemini Nano download via Android AICore…".to_string(),
+            ));
+            prepare_local_llm(move |res| {
+                llm_preparing.set(false);
+                match res {
+                    Ok(outcome) => {
+                        llm_prepare_notice.set(Some(outcome.detail));
+                        refresh_local_llm_status();
+                    }
+                    Err(err) => {
+                        llm_prepare_notice.set(Some(err));
+                    }
+                }
+            });
+        }
+    });
+
+    let send_cgm_chat = Callback::new(move |question: String| {
+        let trimmed = question.trim().to_string();
+        if trimmed.is_empty() {
+            return;
+        }
+        chat_error.set(None);
+
+        let current_readings = windowed_readings.get_untracked();
+        let current_monitor = detected_monitor.get_untracked();
+        let current_unit = source_unit.get_untracked();
+        let current_method = measurement_method.get_untracked();
+        let current_diag = import_diagnostics.get_untracked();
+        let current_checkins = checkins.get_untracked();
+        let summary = summarize_commercial_glucose(
+            &current_readings,
+            current_monitor,
+            current_unit,
+            current_method,
+        );
+        let facts = collect_cgm_grounding_facts(
+            current_monitor,
+            summary.as_ref(),
+            current_diag.as_ref(),
+            &current_checkins,
+        );
+        let fallback_answer = synthesize_grounded_cgm_answer(
+            &trimmed,
+            current_monitor,
+            summary.as_ref(),
+            current_diag.as_ref(),
+            &current_checkins,
+        );
+
+        let turn_id = format!("cgm-chat-{}", next_chat_seq.get_untracked());
+        next_chat_seq.update(|n| *n += 1);
+
+        let try_aicore = use_local_llm.get_untracked()
+            && llm_status
+                .get_untracked()
+                .is_some_and(|s| s.enabled && s.availability == "available");
+
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        if try_aicore {
+            let recent = chat_turns.get_untracked();
+            let prompt = build_personal_cgm_chat_prompt(
+                &trimmed,
+                current_monitor,
+                summary.as_ref(),
+                current_diag.as_ref(),
+                &current_checkins,
+                &recent,
+            );
+            chat_busy.set(true);
+            generate_local_llm(&prompt, Some(420), move |res| {
+                chat_busy.set(false);
+                let turn = match res {
+                    Ok(gen) => LocalChatTurn {
+                        id: turn_id,
+                        question: trimmed,
+                        answer: gen.text,
+                        engine_label: format!("{} · On-Device", gen.model_name),
+                        latency_ms: Some(gen.latency_ms),
+                        grounding_facts: facts,
+                    },
+                    Err(err) => {
+                        chat_error.set(Some(format!(
+                            "Gemini Nano unavailable for this turn ({err}); answered via grounded local Rust."
+                        )));
+                        LocalChatTurn {
+                            id: turn_id,
+                            question: trimmed,
+                            answer: fallback_answer,
+                            engine_label: "Grounded Rust (AICore fallback)".to_string(),
+                            latency_ms: None,
+                            grounding_facts: facts,
+                        }
+                    }
+                };
+                chat_turns.update(|list| {
+                    list.push(turn);
+                    if list.len() > 24 {
+                        let excess = list.len() - 24;
+                        list.drain(0..excess);
+                    }
+                });
+                if let Ok(encoded) = serde_json::to_string(&chat_turns.get_untracked()) {
+                    persist_vault_update(
+                        PersonalVaultSaveUi {
+                            chat_history_json: Some(encoded),
+                            ..Default::default()
+                        },
+                        "Saved encrypted chat turn to local vault.",
+                    );
+                }
+            });
+            return;
+        }
+
+        let _ = try_aicore;
+        let turn = LocalChatTurn {
+            id: turn_id,
+            question: trimmed,
+            answer: fallback_answer,
+            engine_label: "Grounded Rust · On-Device".to_string(),
+            latency_ms: None,
+            grounding_facts: facts,
+        };
+        chat_turns.update(|list| {
+            list.push(turn);
+            if list.len() > 24 {
+                let excess = list.len() - 24;
+                list.drain(0..excess);
+            }
+        });
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        if let Ok(encoded) = serde_json::to_string(&chat_turns.get_untracked()) {
+            persist_vault_update(
+                PersonalVaultSaveUi {
+                    chat_history_json: Some(encoded),
+                    ..Default::default()
+                },
+                "Saved encrypted chat turn to local vault.",
+            );
+        }
+    });
+
+    let clear_cgm_chat = Callback::new(move |()| {
+        chat_turns.set(Vec::new());
+        chat_error.set(None);
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        persist_vault_update(
+            PersonalVaultSaveUi {
+                chat_history_json: Some("[]".to_string()),
+                ..Default::default()
+            },
+            "Cleared chat thread in encrypted local vault.",
+        );
+    });
+
+    let request_health_connect_permission = Callback::new(move |()| {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            let platform_name = hc_status
+                .get()
+                .map(|s| s.platform_kind().display_name())
+                .unwrap_or("Health Connect");
+            hc_busy.set(true);
+            hc_error.set(None);
+            hc_message.set(None);
+            invoke_tauri_command::<HealthBridgePermissionUi, _>(
+                "health_connect_request_permission",
+                None,
+                move |res| {
+                    hc_busy.set(false);
+                    match res {
+                        Ok(outcome) => {
+                            if outcome.granted {
+                                hc_message.set(Some(format!(
+                                    "{platform_name} blood glucose access granted ({} permission{} active).",
+                                    outcome.granted_permissions.len(),
+                                    if outcome.granted_permissions.len() == 1 {
+                                        ""
+                                    } else {
+                                        "s"
+                                    }
+                                )));
+                            } else {
+                                hc_error.set(Some(format!(
+                                    "Blood glucose read access was not granted in {platform_name}."
+                                )));
+                            }
+                            refresh_health_connect_status();
+                        }
+                        Err(err) => {
+                            hc_error.set(Some(err));
+                        }
+                    }
+                },
+            );
+        }
+    });
+
+    let sync_health_connect_days = Callback::new(move |days: u32| {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            use js_sys::{Object, Reflect};
+            use wasm_bindgen::JsValue;
+
+            let platform_kind = hc_status
+                .get()
+                .map(|s| s.platform_kind())
+                .unwrap_or(crate::health_bridge::HealthBridgePlatform::AndroidHealthConnect);
+            let platform_name = platform_kind.display_name();
+
+            hc_busy.set(true);
+            hc_error.set(None);
+            hc_message.set(None);
+
+            let args = Object::new();
+            let _ = Reflect::set(
+                &args,
+                &JsValue::from_str("days"),
+                &JsValue::from_f64(f64::from(days)),
+            );
+
+            invoke_tauri_command::<HealthBridgeReadUi, _>(
+                "health_connect_read_glucose",
+                Some(args),
+                move |res| {
+                    hc_busy.set(false);
+                    match res {
+                        Ok(resp) => {
+                            if resp.record_count == 0 {
+                                hc_message.set(Some(platform_kind.empty_sync_hint(days)));
+                                return;
+                            }
+                            let sources_label = if resp.sources.is_empty() {
+                                platform_name.to_string()
+                            } else {
+                                resp.sources.join(", ")
+                            };
+                            csv_input.set(compact_textarea_preview(&resp.bridge_json));
+                            let banner_label = format!(
+                                "{platform_name} ({} readings · {} · last {days}d · on-device)",
+                                resp.record_count, sources_label
+                            );
+                            apply_glucose_text(&resp.bridge_json, None, Some(banner_label.clone()));
+                            persist_vault_update(
+                                PersonalVaultSaveUi {
+                                    cgm_bridge_json: Some(resp.bridge_json.clone()),
+                                    cgm_source_label: Some(banner_label),
+                                    cgm_reading_count: Some(resp.record_count),
+                                    ..Default::default()
+                                },
+                                "Encrypted & cached synced CGM snapshot in local Android Keystore vault.",
+                            );
+                            hc_message.set(Some(format!(
+                                "Synced {} blood glucose readings locally from {sources_label} (last {days} days).",
+                                resp.record_count
+                            )));
+                        }
+                        Err(err) => {
+                            hc_error.set(Some(err));
+                        }
+                    }
+                },
+            );
+        }
+        #[cfg(not(any(feature = "hydrate", feature = "csr")))]
+        let _ = days;
+    });
 
     let submit_checkin = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
@@ -211,6 +712,16 @@ pub fn MentalHealthPage() -> impl IntoView {
             list.push(entry);
             list.sort_by(|a, b| a.hour_offset.total_cmp(&b.hour_offset));
         });
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        if let Ok(encoded) = serde_json::to_string(&checkins.get_untracked()) {
+            persist_vault_update(
+                PersonalVaultSaveUi {
+                    checkins_json: Some(encoded),
+                    ..Default::default()
+                },
+                "Saved encrypted mood check-in to local vault.",
+            );
+        }
         note_input.set(String::new());
         form_status.set(Some(
             "Check-in added and correlated against the Lingo CGM timeline.".to_string(),
@@ -243,10 +754,16 @@ pub fn MentalHealthPage() -> impl IntoView {
                 </div>
                 <div class="flex flex-wrap gap-3">
                     <A
+                        href="/clinical/patient"
+                        attr:class="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
+                    >
+                        "Open Patient Demo →"
+                    </A>
+                    <A
                         href="/clinical/physician"
                         attr:class="inline-flex items-center gap-2 rounded-full bg-cyan-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
                     >
-                        "Open Clinical Workspace →"
+                        "Open Physician Demo →"
                     </A>
                     <button
                         type="button"
@@ -257,6 +774,43 @@ pub fn MentalHealthPage() -> impl IntoView {
                     </button>
                 </div>
             </div>
+
+            <div class="mb-6">
+                <ClinicalSuiteSwitcher />
+            </div>
+
+            // Opt-in personal mobile health bridge card (Android Health Connect / iOS Apple HealthKit).
+            // Shown above the fold ONLY when running inside `moe.dabney.personal` (`enabled == true`);
+            // renders nothing on web browsers and the public zero-PHI `moe.dabney.demo` app.
+            {move || {
+                hc_status.get().filter(|s| s.enabled).map(|status| {
+                    view! {
+                        <HealthConnectSyncCard
+                            status=status
+                            busy=hc_busy
+                            message=hc_message
+                            error=hc_error
+                            on_request_permission=request_health_connect_permission
+                            on_sync_days=sync_health_connect_days
+                        />
+                    }
+                })
+            }}
+
+            // Hardware-backed encrypted local personal vault status & cryptographic wipe
+            // (`moe.dabney.personal` only; absent on browsers and `moe.dabney.demo`).
+            {move || {
+                vault_status.get().filter(|v| v.enabled).map(|status| {
+                    view! {
+                        <PersonalVaultBar
+                            status=status
+                            busy=vault_busy
+                            notice=vault_notice
+                            on_wipe=wipe_vault_now
+                        />
+                    }
+                })
+            }}
 
             // Top-of-page calm Cool-Down banner when activation signals stack up
             <TopCoolDownBanner
@@ -273,9 +827,34 @@ pub fn MentalHealthPage() -> impl IntoView {
                 })
             />
 
+            // Local personal file indicator banner (shown only when the user imports a local file)
+            {move || {
+                loaded_file_label.get().map(|label| {
+                    view! {
+                        <div class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-100">
+                            <div class="flex items-center gap-2">
+                                <span class="inline-block h-2 w-2 rounded-full bg-emerald-400"></span>
+                                <span>
+                                    <strong>"Local personal trace loaded: "</strong>
+                                    {label}
+                                    " — never uploaded or stored on any server."
+                                </span>
+                            </div>
+                            <button
+                                type="button"
+                                on:click=reset_sample
+                                class="rounded-full border border-emerald-300/40 bg-slate-950/60 px-3 py-1 font-semibold text-emerald-200 transition hover:bg-emerald-500/20"
+                            >
+                                "Wipe & restore synthetic sample"
+                            </button>
+                        </div>
+                    }
+                })
+            }}
+
             // KPI summary strip (ADA/ATTD clinical metrics across all commercial monitors)
             {move || {
-                let current_readings = readings.get();
+                let current_readings = windowed_readings.get();
                 let current_checkins = checkins.get();
                 let summary = summarize_commercial_glucose(
                     &current_readings,
@@ -330,6 +909,22 @@ pub fn MentalHealthPage() -> impl IntoView {
                 }
             }}
 
+            // On-device AI chat grounded in loaded CGM metrics & mood check-ins
+            // (Android AICore / Gemini Nano on supported personal devices, grounded Rust fallback elsewhere)
+            <PersonalCgmAiChatSection
+                llm_status=llm_status
+                use_local_llm=use_local_llm
+                llm_preparing=llm_preparing
+                llm_prepare_notice=llm_prepare_notice
+                chat_input=chat_input
+                chat_turns=chat_turns
+                chat_busy=chat_busy
+                chat_error=chat_error
+                on_prepare_llm=prepare_local_llm_now
+                on_send_question=send_cgm_chat
+                on_clear_chat=clear_cgm_chat
+            />
+
             // Interactive 3D WebGL2 / 2D SVG dual-axis chart
             <section class="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
                 <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -341,7 +936,26 @@ pub fn MentalHealthPage() -> impl IntoView {
                             "Explore the 70–140 mg/dL tight zone with mood (emerald) and anxiety (rose) in pure-Rust WebGL2 3D or classic 2D SVG."
                         </p>
                     </div>
-                    <div class="flex flex-wrap items-center gap-4 text-xs text-slate-300">
+                    <div class="flex flex-wrap items-center gap-3 text-xs text-slate-300">
+                        <div class="inline-flex rounded-full border border-white/15 bg-slate-900/80 p-0.5" role="group" aria-label="Time window">
+                            {GlucoseWindow::ALL.into_iter().map(|w| {
+                                view! {
+                                    <button
+                                        type="button"
+                                        on:click=move |_| window.set(w)
+                                        class=move || {
+                                            if window.get() == w {
+                                                "rounded-full bg-emerald-400 px-2.5 py-1 font-semibold text-slate-950 transition"
+                                            } else {
+                                                "rounded-full px-2.5 py-1 font-medium text-slate-300 transition hover:text-white"
+                                            }
+                                        }
+                                    >
+                                        {w.label()}
+                                    </button>
+                                }
+                            }).collect_view()}
+                        </div>
                         <div class="inline-flex rounded-full border border-white/15 bg-slate-900/80 p-0.5">
                             <button
                                 type="button"
@@ -386,10 +1000,10 @@ pub fn MentalHealthPage() -> impl IntoView {
                 </div>
                 {move || match chart_mode.get() {
                     ChartViewMode::WebGl3D => view! {
-                        <LingoMood3DChart readings=readings.into() checkins=checkins.into() />
+                        <LingoMood3DChart readings=windowed_readings checkins=checkins.into() />
                     }.into_any(),
                     ChartViewMode::Svg2D => view! {
-                        <LingoMoodTimelineChart readings=readings.get() checkins=checkins.get() />
+                        <LingoMoodTimelineChart readings=windowed_readings.get() checkins=checkins.get() />
                     }.into_any(),
                 }}
             </section>
@@ -397,7 +1011,7 @@ pub fn MentalHealthPage() -> impl IntoView {
             // Clinical ADA 5-Band Time-in-Range + 24-Hour Ambulatory Glucose Profile (AGP)
             {move || {
                 summarize_commercial_glucose(
-                    &readings.get(),
+                    &windowed_readings.get(),
                     detected_monitor.get(),
                     source_unit.get(),
                     measurement_method.get(),
@@ -405,10 +1019,11 @@ pub fn MentalHealthPage() -> impl IntoView {
                 .map(|summary| {
                     let bins = summary.agp_hourly.clone();
                     let device_badge = format!(
-                        "{} · {} · source {}",
+                        "{} · {} · {} · window {}",
                         summary.monitor.display_name(),
                         summary.method.label(),
                         summary.source_unit.label(),
+                        window.get().label(),
                     );
                     view! {
                         <section class="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-5">
@@ -429,7 +1044,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                             <div class="rounded-xl border border-white/10 bg-slate-950/60 p-4">
                                 <div class="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
                                     <span class="font-medium text-slate-200">"24-Hour AGP Percentile Ribbon (p5–p95 outer · p25–p75 IQR · p50 median)"</span>
-                                    <span>"Clock hour (00:00–23:00)"</span>
+                                    <span>"Local clock hour (00:00–23:00)"</span>
                                 </div>
                                 <AgpPercentileChart bins=bins />
                             </div>
@@ -597,14 +1212,24 @@ pub fn MentalHealthPage() -> impl IntoView {
 
                 <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
                     <div class="mb-1 flex flex-wrap items-center justify-between gap-2">
-                        <h2 class="text-lg font-semibold text-white">"Commercial CGM & BGM Import"</h2>
+                        <h2 class="text-lg font-semibold text-white">"Abbott Lingo & Commercial CGM Import"</h2>
                         <span class="rounded-full border border-white/10 bg-slate-900 px-2.5 py-0.5 text-[11px] text-cyan-300">
                             {move || format!("{} ({})", detected_monitor.get().display_name(), source_unit.get().label())}
                         </span>
                     </div>
                     <p class="mb-3 text-sm text-slate-400">
-                        "Upload or paste CSV exports from Abbott Lingo, FreeStyle LibreView, Dexcom G6/G7/Stelo Clarity, Medtronic CareLink, Eversense, Tandem, Omnipod/Glooko/Tidepool, or fingerstick BGMs (mg/dL or mmol/L)."
+                        "Load personal exports locally (never uploaded): Abbott Lingo native CSV, Apple Health export.xml, Health Connect JSON (`dabney.health_bridge.v1`), FreeStyle LibreView, Dexcom Clarity/Stelo, Medtronic CareLink, Eversense, Tandem, Glooko/Tidepool, or BGM CSV."
                     </p>
+                    <details class="mb-3 rounded-xl border border-cyan-400/20 bg-cyan-500/5 px-3.5 py-2.5 text-xs text-slate-300">
+                        <summary class="cursor-pointer font-semibold text-cyan-200">
+                            "How to export from Abbott Lingo today (+ Android Health Connect / Apple HealthKit)"
+                        </summary>
+                        <ol class="mt-2 list-decimal space-y-1 pl-4 text-[11px] leading-relaxed text-slate-300">
+                            <li>"Open the Abbott Lingo app → You → Profile → Actions → Export your glucose data → Download file (5-min ISO-8601 CSV)."</li>
+                            <li>"Select that `.csv` below (or an iOS Apple Health `export.xml` or Health Connect JSON) — everything parses locally in Rust/WASM and stays in device RAM."</li>
+                            <li>"Direct Google Health Connect live sync lives strictly inside the separate opt-in personal Android build (`moe.dabney.personal`) and feeds this exact `dabney.health_bridge.v1` JSON schema, keeping the public Play Store demo (`moe.dabney.demo`) strictly zero-PHI."</li>
+                        </ol>
+                    </details>
                     <div class="mb-3 flex flex-wrap gap-1.5">
                         <button
                             type="button"
@@ -612,6 +1237,20 @@ pub fn MentalHealthPage() -> impl IntoView {
                             class="rounded-full border border-white/15 px-2.5 py-1 text-[11px] text-slate-200 transition hover:bg-white/10"
                         >
                             "Abbott Lingo"
+                        </button>
+                        <button
+                            type="button"
+                            on:click=move |_| load_raw_preset(SAMPLE_HEALTH_BRIDGE_JSON)
+                            class="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-200 transition hover:bg-emerald-500/20"
+                        >
+                            "Health Connect JSON"
+                        </button>
+                        <button
+                            type="button"
+                            on:click=move |_| load_raw_preset(SAMPLE_APPLE_HEALTH_XML)
+                            class="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-1 text-[11px] text-cyan-200 transition hover:bg-cyan-500/20"
+                        >
+                            "Apple Health XML"
                         </button>
                         <button
                             type="button"
@@ -659,17 +1298,17 @@ pub fn MentalHealthPage() -> impl IntoView {
                             </select>
                         </label>
                         <label class="block text-[11px] text-slate-300">
-                            "Upload CSV file (stays in browser)"
+                            "Select file (.csv, .xml, .json — stays on device)"
                             <input
                                 type="file"
-                                accept=".csv,.txt"
+                                accept=".csv,.txt,.json,.xml,text/csv,application/json,application/xml,text/xml"
                                 on:change=on_cgm_file_change
                                 class="mt-1 block w-full text-xs text-slate-300 file:mr-2 file:rounded-full file:border-0 file:bg-cyan-500 file:px-3 file:py-1 file:text-xs file:font-semibold file:text-slate-950 hover:file:bg-cyan-400"
                             />
                         </label>
                     </div>
                     <textarea
-                        rows="6"
+                        rows="5"
                         prop:value=move || csv_input.get()
                         on:input=move |ev| csv_input.set(event_target_value(&ev))
                         class="w-full rounded-xl border border-white/10 bg-slate-950 p-3 font-mono text-xs text-slate-200"
@@ -680,12 +1319,15 @@ pub fn MentalHealthPage() -> impl IntoView {
                             on:click=apply_csv
                             class="rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
                         >
-                            "Parse Glucose CSV"
+                            "Parse & Validate Export"
                         </button>
                         {move || csv_error.get().map(|err| view! {
                             <span class="text-xs text-rose-400">{err}</span>
                         })}
                     </div>
+                    {move || import_diagnostics.get().map(|diag| view! {
+                        <ImportValidationPanel diagnostics=diag />
+                    })}
                 </section>
             </div>
 
@@ -699,7 +1341,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                         </p>
                     </div>
                     {move || {
-                        let corr = correlate_glucose_and_mood(&readings.get(), &checkins.get());
+                        let corr = correlate_glucose_and_mood(&windowed_readings.get(), &checkins.get());
                         let href = csv_data_uri(&export_correlations_csv(&corr));
                         view! {
                             <a
@@ -725,7 +1367,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                         </thead>
                         <tbody class="divide-y divide-white/5 text-slate-200">
                             {move || {
-                                let corr = correlate_glucose_and_mood(&readings.get(), &checkins.get());
+                                let corr = correlate_glucose_and_mood(&windowed_readings.get(), &checkins.get());
                                 corr.into_iter().map(|row| {
                                     let badge = if row.spike_adjacent {
                                         view! {
@@ -780,7 +1422,7 @@ pub fn MentalHealthPage() -> impl IntoView {
             <SupportAndClinicianBriefSection
                 glucose_summary=Signal::derive(move || {
                     summarize_commercial_glucose(
-                        &readings.get(),
+                        &windowed_readings.get(),
                         detected_monitor.get(),
                         source_unit.get(),
                         measurement_method.get(),
@@ -831,6 +1473,104 @@ fn MetricCard(
 }
 
 #[component]
+fn ImportValidationPanel(diagnostics: GlucoseImportDiagnostics) -> impl IntoView {
+    let format_label = diagnostics.format.label();
+    let span_text = if diagnostics.span_hours >= 48.0 {
+        format!("{:.1}d", diagnostics.span_hours / 24.0)
+    } else {
+        format!("{:.1}h", diagnostics.span_hours)
+    };
+    let cadence_text = diagnostics
+        .median_interval_minutes
+        .map(|m| format!("{m:.1} min"))
+        .unwrap_or_else(|| "—".to_string());
+    let range_text = match (&diagnostics.first_timestamp, &diagnostics.last_timestamp) {
+        (Some(first), Some(last)) => format!("{first} → {last}"),
+        _ => "—".to_string(),
+    };
+    let sources_text = if diagnostics.detected_sources.is_empty() {
+        None
+    } else {
+        Some(diagnostics.detected_sources.join(", "))
+    };
+    let warnings = diagnostics.sample_warnings;
+    let checks = diagnostics.checks;
+
+    view! {
+        <div class="mt-4 rounded-xl border border-white/10 bg-slate-950/70 p-3.5 space-y-2.5 text-xs">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+                <span class="font-semibold text-white">"Import Validation Report"</span>
+                <span class="rounded-full border border-cyan-400/25 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-medium text-cyan-200">
+                    {format_label}
+                </span>
+            </div>
+            <div class="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
+                <div class="rounded-lg border border-white/5 bg-slate-900/70 px-2.5 py-1.5">
+                    <p class="text-slate-400">"Parsed"</p>
+                    <p class="font-mono font-semibold text-white">{diagnostics.parsed_readings}</p>
+                </div>
+                <div class="rounded-lg border border-white/5 bg-slate-900/70 px-2.5 py-1.5">
+                    <p class="text-slate-400">"Span"</p>
+                    <p class="font-mono font-semibold text-cyan-200">{span_text}</p>
+                </div>
+                <div class="rounded-lg border border-white/5 bg-slate-900/70 px-2.5 py-1.5">
+                    <p class="text-slate-400">"Cadence"</p>
+                    <p class="font-mono font-semibold text-emerald-200">{cadence_text}</p>
+                </div>
+                <div class="rounded-lg border border-white/5 bg-slate-900/70 px-2.5 py-1.5">
+                    <p class="text-slate-400">"Sentinels / Skipped"</p>
+                    <p class="font-mono font-semibold text-amber-200">
+                        {format!("{} / {}", diagnostics.bounded_sentinels, diagnostics.skipped_invalid_rows)}
+                    </p>
+                </div>
+            </div>
+            <p class="font-mono text-[10px] text-slate-400 break-all">{range_text}</p>
+            {sources_text.map(|s| view! {
+                <p class="text-[11px] text-slate-300">
+                    <span class="text-slate-400">"Detected source(s): "</span>
+                    <span class="font-mono text-cyan-200">{s}</span>
+                </p>
+            })}
+            <ul class="space-y-1.5">
+                {checks.into_iter().map(|chk| {
+                    let (badge_cls, badge_txt) = match chk.level {
+                        ValidationLevel::Pass => (
+                            "bg-emerald-500/15 text-emerald-300 border-emerald-400/25",
+                            "PASS",
+                        ),
+                        ValidationLevel::Warn => (
+                            "bg-amber-500/15 text-amber-300 border-amber-400/25",
+                            "WARN",
+                        ),
+                        ValidationLevel::Info => (
+                            "bg-cyan-500/15 text-cyan-200 border-cyan-400/25",
+                            "INFO",
+                        ),
+                    };
+                    view! {
+                        <li class="flex items-start gap-2 text-[11px] text-slate-300">
+                            <span class=format!("mt-0.5 shrink-0 rounded border px-1.5 py-0.5 font-mono text-[9px] font-semibold {badge_cls}")>
+                                {badge_txt}
+                            </span>
+                            <span>
+                                <strong class="text-slate-100">{chk.name}": "</strong>
+                                {chk.detail}
+                            </span>
+                        </li>
+                    }
+                }).collect_view()}
+            </ul>
+            {(!warnings.is_empty()).then(|| view! {
+                <div class="rounded-lg border border-amber-400/25 bg-amber-500/10 p-2 text-[11px] text-amber-200 space-y-0.5">
+                    <p class="font-semibold">"Sample row notices:"</p>
+                    {warnings.into_iter().map(|w| view! { <p class="font-mono text-[10px]">{w}</p> }).collect_view()}
+                </div>
+            })}
+        </div>
+    }
+}
+
+#[component]
 fn LingoMoodTimelineChart(
     readings: Vec<LingoReading>,
     checkins: Vec<MentalHealthCheckIn>,
@@ -871,7 +1611,10 @@ fn LingoMoodTimelineChart(
     let band_bottom = y_for_g(70.0);
     let band_h = (band_bottom - band_top).max(1.0);
 
-    let points: String = readings
+    let plot_readings = downsample_readings_for_chart(&readings, 360);
+    let spike_peaks = select_notable_spike_peaks(&readings, 36);
+
+    let points: String = plot_readings
         .iter()
         .map(|r| {
             format!(
@@ -916,8 +1659,8 @@ fn LingoMoodTimelineChart(
                 points=points
             />
 
-            // Spike markers (> 140 mg/dL)
-            {readings.into_iter().filter(|r| r.glucose_mg_dl > 140.0).map(|r| {
+            // Spike markers (> 140 mg/dL local peaks)
+            {spike_peaks.into_iter().map(|r| {
                 let cx = x_for(r.hour_offset);
                 let cy = y_for_g(r.glucose_mg_dl);
                 view! {
@@ -942,10 +1685,18 @@ fn LingoMoodTimelineChart(
             // X-axis labels
             <text x=pad_l y=height - 8.0 fill=SLATE_LIGHT font-size="10">"0h"</text>
             <text x=pad_l + plot_w / 2.0 y=height - 8.0 text-anchor="middle" fill=SLATE_LIGHT font-size="10">
-                {format!("{:.0}h", max_hour / 2.0)}
+                {if max_hour >= 72.0 {
+                    format!("{:.1}d", (max_hour / 2.0) / 24.0)
+                } else {
+                    format!("{:.0}h", max_hour / 2.0)
+                }}
             </text>
             <text x=width - pad_r y=height - 8.0 text-anchor="end" fill=SLATE_LIGHT font-size="10">
-                {format!("{:.0}h", max_hour)}
+                {if max_hour >= 72.0 {
+                    format!("{:.1}d", max_hour / 24.0)
+                } else {
+                    format!("{:.0}h", max_hour)
+                }}
             </text>
         </svg>
     }
@@ -1020,16 +1771,239 @@ fn Phq9Gad7TrendChart(series: Vec<AssessmentPoint>) -> impl IntoView {
     }
 }
 
+#[component]
+fn HealthConnectSyncCard(
+    status: HealthBridgeStatusUi,
+    busy: RwSignal<bool>,
+    message: RwSignal<Option<String>>,
+    error: RwSignal<Option<String>>,
+    on_request_permission: Callback<()>,
+    on_sync_days: Callback<u32>,
+) -> impl IntoView {
+    let platform_kind = status.platform_kind();
+    let platform_name = platform_kind.display_name();
+    let permission_summary = platform_kind.permission_summary();
+    let sdk_available = status.sdk_status == "available";
+    let (badge_label, badge_class) = if !sdk_available {
+        if status.sdk_status == "update_required" {
+            (
+                "Update Health Connect",
+                "border-amber-400/35 bg-amber-500/15 text-amber-200",
+            )
+        } else {
+            (
+                "SDK Unavailable",
+                "border-rose-400/35 bg-rose-500/15 text-rose-200",
+            )
+        }
+    } else if status.has_glucose_permission {
+        (
+            "Connected · Read-only",
+            "border-emerald-400/35 bg-emerald-500/15 text-emerald-200",
+        )
+    } else {
+        (
+            "Permission required",
+            "border-amber-400/35 bg-amber-500/15 text-amber-200",
+        )
+    };
+
+    let package_id = status.package_id.clone();
+    let has_permission = status.has_glucose_permission;
+
+    view! {
+        <div
+            data-health-connect-card="true"
+            class="mb-6 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-4 text-xs text-slate-200"
+        >
+            <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                    <p class="text-[11px] font-semibold uppercase tracking-wider text-emerald-300">
+                        {format!("{platform_name} · Live On-Device Sync")}
+                    </p>
+                    <p class="mt-0.5 text-[11px] text-slate-300">
+                        {format!("Personal package {package_id} · {permission_summary}")}
+                    </p>
+                </div>
+                <span class=format!("rounded-full border px-2.5 py-0.5 text-[11px] font-semibold {badge_class}")>
+                    {badge_label}
+                </span>
+            </div>
+
+            {if !sdk_available {
+                view! {
+                    <p class="text-[11px] leading-relaxed text-amber-200">
+                        {if status.sdk_status == "update_required" {
+                            "Health Connect requires an update on this Android device. Update Health Connect in Google Play or Android System Settings, then reopen Dabney.moe Personal."
+                        } else {
+                            platform_kind.unavailable_hint()
+                        }}
+                    </p>
+                }
+                .into_any()
+            } else {
+                view! {
+                    <div class="flex flex-wrap items-center gap-2">
+                        {if !has_permission {
+                            view! {
+                                <button
+                                    type="button"
+                                    disabled=move || busy.get()
+                                    on:click=move |_| on_request_permission.run(())
+                                    class="rounded-full bg-emerald-400 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:opacity-50"
+                                >
+                                    {move || if busy.get() {
+                                        format!("Opening {platform_name}…")
+                                    } else {
+                                        "Grant Blood Glucose Access".to_string()
+                                    }}
+                                </button>
+                            }
+                            .into_any()
+                        } else {
+                            view! {
+                                <button
+                                    type="button"
+                                    disabled=move || busy.get()
+                                    on:click=move |_| on_sync_days.run(14)
+                                    class="rounded-full bg-emerald-400 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:opacity-50"
+                                >
+                                    {move || if busy.get() { "Syncing…" } else { "Sync Last 14 Days" }}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled=move || busy.get()
+                                    on:click=move |_| on_sync_days.run(90)
+                                    class="rounded-full border border-emerald-300/40 bg-slate-950/60 px-3.5 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/20 disabled:opacity-50"
+                                >
+                                    "Sync Last 90 Days"
+                                </button>
+                            }
+                            .into_any()
+                        }}
+                    </div>
+                }
+                .into_any()
+            }}
+
+            {move || message.get().map(|msg| view! {
+                <p class="mt-2 text-[11px] text-emerald-200">{msg}</p>
+            })}
+            {move || error.get().map(|err| view! {
+                <p class="mt-2 text-[11px] text-rose-300">{err}</p>
+            })}
+        </div>
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::health_bridge::{HealthBridgePermissionUi, HealthBridgeReadUi};
     use leptos::prelude::RenderHtml;
 
     #[test]
+    fn health_connect_bridge_payloads_and_card_render_cleanly() {
+        let status: HealthBridgeStatusUi = serde_json::from_str(
+            r#"{
+                "enabled": true,
+                "platform": "android_health_connect",
+                "sdk_status": "available",
+                "has_glucose_permission": false,
+                "package_id": "moe.dabney.personal"
+            }"#,
+        )
+        .unwrap();
+        assert!(status.enabled);
+        assert!(!status.has_glucose_permission);
+
+        let perm: HealthBridgePermissionUi = serde_json::from_str(
+            r#"{
+                "granted": true,
+                "granted_permissions": ["android.permission.health.READ_BLOOD_GLUCOSE"]
+            }"#,
+        )
+        .unwrap();
+        assert!(perm.granted);
+        assert_eq!(perm.granted_permissions.len(), 1);
+
+        let read: HealthBridgeReadUi = serde_json::from_str(
+            r#"{
+                "bridge_json": "{\"schema\":\"dabney.health_bridge.v1\",\"records\":[]}",
+                "record_count": 2,
+                "sources": ["com.abbott.lingo"]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(read.record_count, 2);
+        assert_eq!(read.sources, vec!["com.abbott.lingo"]);
+
+        let busy = RwSignal::new(false);
+        let msg = RwSignal::new(None);
+        let err = RwSignal::new(None);
+        let req = Callback::new(|()| {});
+        let sync = Callback::new(|_: u32| {});
+
+        let needs_perm_html = view! {
+            <HealthConnectSyncCard
+                status=status.clone()
+                busy=busy
+                message=msg
+                error=err
+                on_request_permission=req
+                on_sync_days=sync
+            />
+        }
+        .to_html();
+        assert!(needs_perm_html.contains("Android Health Connect"));
+        assert!(needs_perm_html.contains("Grant Blood Glucose Access"));
+        assert!(needs_perm_html.contains("moe.dabney.personal"));
+
+        let connected_status = HealthBridgeStatusUi {
+            has_glucose_permission: true,
+            ..status
+        };
+        let connected_html = view! {
+            <HealthConnectSyncCard
+                status=connected_status
+                busy=busy
+                message=msg
+                error=err
+                on_request_permission=req
+                on_sync_days=sync
+            />
+        }
+        .to_html();
+        assert!(connected_html.contains("Sync Last 14 Days"));
+        assert!(connected_html.contains("Sync Last 90 Days"));
+
+        let ios_status = HealthBridgeStatusUi {
+            enabled: true,
+            platform: "ios_healthkit".to_string(),
+            sdk_status: "available".to_string(),
+            has_glucose_permission: true,
+            package_id: "moe.dabney.personal".to_string(),
+        };
+        let ios_html = view! {
+            <HealthConnectSyncCard
+                status=ios_status
+                busy=busy
+                message=msg
+                error=err
+                on_request_permission=req
+                on_sync_days=sync
+            />
+        }
+        .to_html();
+        assert!(ios_html.contains("Apple HealthKit"));
+        assert!(ios_html.contains("HKQuantityTypeIdentifierBloodGlucose"));
+        assert!(ios_html.contains("Sync Last 14 Days"));
+    }
+
+    #[test]
     fn mental_health_chart_and_metrics_render_cleanly() {
-        let readings = parse_commercial_glucose_csv(SAMPLE_LINGO_CSV, None)
-            .unwrap()
-            .readings;
+        let import = parse_commercial_glucose_input(SAMPLE_LINGO_CSV, None).unwrap();
+        let readings = import.readings;
         let checkins = sample_checkins();
         let html = view! {
             <LingoMoodTimelineChart readings=readings checkins=checkins />
@@ -1039,6 +2013,13 @@ mod tests {
         assert!(html.contains("<polyline"));
         assert!(html.contains("140"));
         assert!(html.contains("70"));
+
+        let diag_html = view! {
+            <ImportValidationPanel diagnostics=import.diagnostics />
+        }
+        .to_html();
+        assert!(diag_html.contains("Import Validation Report"));
+        assert!(diag_html.contains("Timestamps &amp; Chronology"));
 
         let trend_html = view! {
             <Phq9Gad7TrendChart series=sample_assessment_history() />

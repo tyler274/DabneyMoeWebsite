@@ -1,0 +1,45 @@
+Categories:
+  - Science & Education
+  - Sports & Health
+License: MIT
+AuthorName: Tyler Port
+AuthorEmail: tp@dabney.moe
+AuthorWebSite: https://dabney.moe
+WebSite: https://dabney.moe/clinical
+SourceCode: https://github.com/tyler274/DabneyMoeWebsite
+IssueTracker: https://github.com/tyler274/DabneyMoeWebsite/issues
+Changelog: https://github.com/tyler274/DabneyMoeWebsite/releases
+AutoName: Dabney.moe Clinical Demo
+RepoType: git
+Repo: https://github.com/tyler274/DabneyMoeWebsite.git
+Builds:
+  - versionName: 1.0.0
+    versionCode: 1
+    commit: v1.0.0
+    output: target/android-release/dabney-demo-unsigned.apk
+    sudo:
+      - apt-get update
+      - apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev nodejs npm python3
+    init:
+      - export RUSTUP_HOME="$PWD/.rustup"
+      - export CARGO_HOME="$PWD/.cargo"
+      - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.96.0
+      - export PATH="$CARGO_HOME/bin:$PATH"
+      - rustup target add wasm32-unknown-unknown aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+      - cargo install --locked wasm-bindgen-cli --version 0.2.130
+      - cargo install --locked trunk --version 0.21.14
+      - cargo install --locked tauri-cli --version 2.12.6
+      - npm install --no-audit --no-fund
+    build:
+      - export RUSTUP_HOME="$PWD/.rustup"
+      - export CARGO_HOME="$PWD/.cargo"
+      - export PATH="$PWD/node_modules/.bin:$CARGO_HOME/bin:$PATH"
+      - export ANDROID_HOME="$$SDK$$"
+      - export NDK_HOME="$$NDK$$"
+      - SKIP_DEBUG_SIGN=1 scripts/android-release.sh --apk --target aarch64 --target x86_64
+    ndk: r26d
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+UpdateCheckData: src-tauri/tauri.android.conf.json|"versionCode":\s*(\d+)|src-tauri/tauri.android.conf.json|"version":\s*"([^"]+)"
+CurrentVersion: 1.0.0
+CurrentVersionCode: 1

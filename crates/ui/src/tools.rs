@@ -41,6 +41,10 @@ pub const TOOLS_LINKS: &[NavMenuLink] = &[
         label: "Clinical Workspace",
     },
     NavMenuLink {
+        href: "/clinical/patient",
+        label: "Patient Experience Demo",
+    },
+    NavMenuLink {
         href: "/clinical/physician",
         label: "Physician Workspace Demo",
     },

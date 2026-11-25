@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "validate-cgm"
+path = "src/bin/validate_cgm.rs"
+required-features = ["ssr"]
+
 [dependencies]
 clinical-workspace = { path = "../clinical-workspace" }
 leptos = { workspace = true }

@@ -74,10 +74,9 @@ jobs:
           nix develop .#android -c bash -c '
             set -euxo pipefail
 
-            cargo tauri android init --skip-targets-install
-            cargo tauri android build --apk --target x86_64
+            scripts/android-release.sh --apk --target x86_64
 
-            APK=$(find src-tauri/gen/android -name "*.apk" | head -n1)
+            APK=$(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" | head -n1)
             echo "Built APK: $APK"
             test -n "$APK"
 
