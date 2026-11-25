@@ -82,10 +82,10 @@ const WEBSITE_BEFORE_AFTER: &[(&str, f64, f64, &str)] = &[
         "Replaced third-party icon, vendor logos & artist binaries with original @tyler274 assets",
     ),
     (
-        "Legacy branding & external weight dependencies",
+        "Legacy product branding & external weight dependencies",
         0.0,
         100.0,
-        "0 legacy brand strings repo-wide; 0 external GGUF weights in OCI image",
+        "0 legacy product branding in clinical workspace & assets; 0 external GGUF weights in OCI image",
     ),
 ];
 
@@ -426,11 +426,11 @@ pub fn OwnershipReportPage() -> impl IntoView {
                     </div>
                     <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
                         <p class="text-xs font-medium uppercase tracking-wider text-slate-400">
-                            "Legacy Brand Strings"
+                            "Legacy Product Branding"
                         </p>
                         <p class="mt-1 text-2xl font-bold text-white">"0"</p>
                         <p class="mt-1 text-xs text-slate-300">
-                            "Verified across source, Cargo.lock, Nix & resume.pdf"
+                            "Verified across clinical workspace, assets, Cargo.lock & Nix"
                         </p>
                     </div>
                     <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
