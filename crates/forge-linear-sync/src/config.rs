@@ -191,4 +191,23 @@ mod tests {
             Err(ConfigError::MissingEnv(_))
         ));
     }
+
+    #[test]
+    fn serv00_example_config_parses_and_resolves() {
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../selfhost/serv00/sync.json.example");
+        let raw = std::fs::read_to_string(&path).expect("read Serv00 sync.json.example");
+        let file: FileConfig = serde_json::from_str(&raw).expect("valid Serv00 sync.json.example");
+        let cfg = file
+            .resolve(|name| Some(format!("stub-{name}")))
+            .expect("all example env vars resolve");
+        assert_eq!(cfg.teams.len(), 2);
+        assert!(cfg.repos.iter().any(|r| r.forge == Forge::Dabney));
+        assert!(cfg.repos.iter().any(|r| r.forge == Forge::Forgejo));
+        assert!(cfg
+            .repos
+            .iter()
+            .filter(|r| matches!(r.forge, Forge::Gitea | Forge::GitLab))
+            .all(|r| r.authority == Authority::External));
+    }
 }

@@ -1,0 +1,56 @@
+{
+  "teams": [
+    "COD",
+    "TYL"
+  ],
+  "repos": [
+    {
+      "forge": "dabney",
+      "path": "tyler274/dabney-moe",
+      "authority": "canonical",
+      "default_branch": "main",
+      "secret_envs": [
+        "DABNEY_FORGE_WEBHOOK_SECRET"
+      ]
+    },
+    {
+      "forge": "dabney",
+      "path": "tyler274/dabney-moe-website",
+      "authority": "canonical",
+      "default_branch": "main",
+      "secret_envs": [
+        "DABNEY_FORGE_WEBHOOK_SECRET"
+      ]
+    },
+    {
+      "forge": "forgejo",
+      "path": "tyler274/dabney-moe-rust",
+      "authority": "canonical",
+      "default_branch": "main",
+      "secret_envs": [
+        "CODEBERG_WEBHOOK_SECRET"
+      ]
+    },
+    {
+      "forge": "gitea",
+      "path": "tyler274/coda-rust",
+      "authority": "external",
+      "default_branch": "main",
+      "secret_envs": [
+        "GITEA_WEBHOOK_SECRET"
+      ]
+    },
+    {
+      "forge": "gitlab",
+      "path": "tyler274/coda-rust",
+      "authority": "external",
+      "default_branch": "main",
+      "secret_envs": [
+        "GITLAB_WEBHOOK_TOKEN"
+      ]
+    }
+  ],
+  "linear_endpoint": "https://api.linear.app/graphql",
+  "linear_api_key_env": "LINEAR_API_KEY",
+  "max_attempts": 8
+}

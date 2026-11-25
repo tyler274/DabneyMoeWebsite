@@ -145,6 +145,7 @@
       echo "  zig $(zig version)"
       echo ""
       echo "  build forge: cargo zigbuild --release --target x86_64-unknown-freebsd -p forge --bin dabney-forge"
+      echo "  build web:   cargo zigbuild --release --target x86_64-unknown-freebsd -p web --features ssr --bin web"
       echo "  deploy:      scripts/deploy-serv00.sh --help"
     '';
   };
