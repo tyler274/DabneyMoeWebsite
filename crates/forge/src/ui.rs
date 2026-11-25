@@ -39,7 +39,7 @@ code,pre,.diff{font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
 .open{background:var(--ok)}.merged{background:#8250df}.closed{background:var(--bad)}
 .ready{color:var(--ok)}.blocked{color:var(--bad)}
 table.diff{border-collapse:collapse;width:100%}table.diff td{padding:0 8px;white-space:pre-wrap;word-break:break-all;vertical-align:top}
-td.n{width:1%;color:var(--muted);text-align:right;user-select:none}tr.add td{background:var(--add)}tr.del td{background:var(--del)}
+table.diff td.n{width:1%;min-width:3ch;white-space:nowrap;word-break:normal;color:var(--muted);text-align:right;user-select:none}tr.add td{background:var(--add)}tr.del td{background:var(--del)}
 tr.hunk td{background:#ddf4ff;color:var(--muted)}tr.note td{background:#fff8c5;font-family:system-ui,sans-serif;padding:6px 12px}
 .clone{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 10px}
 "#;
@@ -148,7 +148,7 @@ async fn repository(
             html! {
                 (repo_nav(&record))
                 p { "Clone: " code class="clone" { (clone_url) } }
-                p class="muted" { "Default branch " code { (record.default_branch) } " · " (open) " open pull requests" }
+                p class="muted" { "Default branch " code { (record.default_branch) } " · " (open) (if open == 1 { " open pull request" } else { " open pull requests" }) }
                 @if tip.is_none() {
                     div class="box" { div class="head" { "Empty repository" }
                         ul class="rows" { li { "Push a branch to get started: " code { "git push " (clone_url) " " (record.default_branch) } } } }
