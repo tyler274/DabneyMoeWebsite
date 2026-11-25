@@ -1,0 +1,52 @@
+[package]
+name = "forge"
+description = "git.dabney.moe: a pure-Rust (gitoxide) Git forge and pull-request coordinator."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "dabney-forge"
+path = "src/main.rs"
+
+[dependencies]
+forge-linear-sync = { path = "../forge-linear-sync" }
+# Pure-Rust Git: object database, refs, revwalk, tree diff and in-memory merge.
+# No feature here spawns the `git` executable.
+gix = { version = "0.91", default-features = false, features = ["sha1", "merge", "revision", "parallel", "pack-cache-lru-static"] }
+gix-packetline = { version = "0.24", features = ["blocking-io"] }
+# Pack generation (upload-pack) and streaming pack input (receive-pack).
+gix-pack = { version = "0.78", default-features = false, features = ["generate", "streaming-input"] }
+axum = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "net", "signal"] }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+url = { workspace = true, features = ["serde"] }
+base64 = { workspace = true }
+http = { workspace = true }
+bytes = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+argon2 = { version = "0.5", features = ["std"] }
+getrandom = { version = "0.3", features = ["std"] }
+hex = "0.4"
+hmac = "0.12"
+sha2 = "0.10"
+jiff = { version = "0.2", features = ["serde"] }
+thiserror = "2"
+maud = { version = "0.27", features = ["axum"] }
+flate2 = "1"
+clap = { version = "4", features = ["derive", "env"] }
+
+[dev-dependencies]
+tempfile = "3"
+forge-linear-sync = { path = "../forge-linear-sync", features = ["mock-linear"] }
+
+[lints.rust]
+unsafe_code = "forbid"

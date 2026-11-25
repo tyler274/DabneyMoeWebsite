@@ -1,0 +1,45 @@
+[package]
+name = "forge-linear-sync"
+description = "Verified forge pull-request webhooks to idempotent Linear attachments and canonical-only Done transitions."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "forge-linear-sync"
+path = "src/bin/forge-linear-sync.rs"
+
+[features]
+# In-memory Linear GraphQL server for tests in this and dependent crates.
+mock-linear = []
+
+[dependencies]
+axum = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "net", "signal"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+url = { workspace = true, features = ["serde"] }
+http = { workspace = true }
+bytes = "1"
+hmac = "0.12"
+sha2 = "0.10"
+subtle = "2.6"
+hex = "0.4"
+jiff = { version = "0.2", features = ["serde"] }
+thiserror = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+clap = { version = "4", features = ["derive", "env"] }
+
+[dev-dependencies]
+tempfile = "3"
+tower = { workspace = true, features = ["util"] }
+forge-linear-sync = { path = ".", features = ["mock-linear"] }
+
+[lints.rust]
+unsafe_code = "forbid"
