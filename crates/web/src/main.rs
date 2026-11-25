@@ -55,15 +55,17 @@ async fn main() {
         );
     }
 
-    let site_routes = web::mount_legacy_redirects(web::mount_removed_pages(Router::new()))
-        .route("/api/telemetry/errors", post(report_client_error))
-        .leptos_routes(&leptos_options, routes, {
-            let leptos_options = leptos_options.clone();
-            move || shell(leptos_options.clone())
-        })
-        .fallback(leptos_axum::file_and_error_handler(shell))
-        .layer(RequestBodyLimitLayer::new(8 * 1024))
-        .with_state(leptos_options.clone());
+    let site_routes = web::mount_ownership_json(web::mount_legacy_redirects(
+        web::mount_removed_pages(Router::new()),
+    ))
+    .route("/api/telemetry/errors", post(report_client_error))
+    .leptos_routes(&leptos_options, routes, {
+        let leptos_options = leptos_options.clone();
+        move || shell(leptos_options.clone())
+    })
+    .fallback(leptos_axum::file_and_error_handler(shell))
+    .layer(RequestBodyLimitLayer::new(8 * 1024))
+    .with_state(leptos_options.clone());
 
     let app = web::mount_clinical_api_routes(Router::new(), clinical_api_proxy)
         .merge(site_routes)

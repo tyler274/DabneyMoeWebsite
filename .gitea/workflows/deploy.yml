@@ -27,6 +27,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: https://gitea.com/actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Ensure Nix is available
         run: |
@@ -36,8 +38,44 @@ jobs:
             echo "${HOME}/.nix-profile/bin" >> "$GITHUB_PATH"
           fi
 
+      - name: Refresh code ownership metrics
+        env:
+          OWNERSHIP_UPSTREAM_REPO_URL: ${{ vars.OWNERSHIP_UPSTREAM_REPO_URL }}
+        run: |
+          set -euo pipefail
+          if command -v python3 >/dev/null 2>&1; then
+            python3 scripts/update-ownership.py --allow-offline
+          else
+            nix run .#update-ownership -- --allow-offline
+          fi
+
       - name: Run Nix CI checks (format, deny, clippy, tests)
         run: nix run .#ci
+
+      - name: Commit refreshed ownership metrics on main
+        if: ${{ gitea.ref == 'refs/heads/main' && gitea.event_name != 'pull_request' }}
+        env:
+          GITEA_ACTOR: ${{ gitea.actor }}
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- crates/ui/data/ownership-metrics.json; then
+            echo "Code ownership metrics are already up to date."
+            exit 0
+          fi
+          if [ -z "${GITEA_TOKEN:-}" ]; then
+            echo "GITEA_TOKEN is not set; continuing build with refreshed metrics without pushing commit."
+            exit 0
+          fi
+          git config user.name "dabney-ci"
+          git config user.email "ci@dabney.moe"
+          git add crates/ui/data/ownership-metrics.json
+          git commit -m "chore(ownership): refresh automated code ownership metrics [skip ci]"
+          for key in $(git config --local --get-regexp '^http\..*\.extraheader$' 2>/dev/null | awk '{print $1}' || true); do
+            git config --local --unset-all "$key" || true
+          done
+          AUTH_B64="$(printf '%s:%s' "${GITEA_ACTOR:-x-access-token}" "$GITEA_TOKEN" | base64 | tr -d '\n')"
+          git -c "http.extraHeader=Authorization: Basic ${AUTH_B64}" push origin HEAD:main
 
       - name: Build server OCI image
         run: |

@@ -1,204 +1,184 @@
 //! Transparent Code Ownership, Provenance & Good-Faith Clean-Room Audit page (`/ownership`).
 //!
 //! Renders interactive-style inline SVG charts and provenance tables directly in pure
-//! Rust/Leptos (zero external charting scripts) documenting single-owner `@tyler274`
-//! authorship of `dabney.moe`, the REA v6.8.0 clean-room replacement of all imported
-//! multi-contributor code and third-party assets, and the line-level `git blame`
-//! audit of the standalone `dabney-moe` workspace.
+//! Rust/Leptos (zero external charting scripts) from the compile-time-embedded
+//! `crates/ui/data/ownership-metrics.json` report refreshed automatically by CI.
+
+use std::sync::LazyLock;
 
 use leptos::prelude::*;
 use leptos_meta::{Link, Meta, Title};
 use leptos_router::components::A;
+use serde::Deserialize;
 
 use crate::sections::{Footer, NavBar};
+
+/// Embedded, CI-refreshed machine-readable ownership metrics JSON served at `/ownership.json`.
+pub const OWNERSHIP_METRICS_JSON: &str = include_str!("../data/ownership-metrics.json");
 
 /// Inline code styling for command, file and identifier names in prose.
 const INLINE_CODE: &str = "rounded bg-white/10 px-1 py-0.5 font-mono text-[0.85em] text-cyan-200";
 
-struct OwnershipBar {
-    label: &'static str,
-    detail: &'static str,
-    pct: f64,
-    color: &'static str,
+/// Top-level ownership and provenance report parsed from [`OWNERSHIP_METRICS_JSON`].
+#[derive(Debug, Clone, Deserialize)]
+pub struct OwnershipReport {
+    pub schema_version: u32,
+    pub generated_at: String,
+    pub website: WebsiteMetrics,
+    pub upstream: UpstreamMetrics,
+    pub before_after: Vec<BeforeAfterRow>,
+    pub replacement_ledger: Vec<ReplacementRow>,
+    pub total_bundles: usize,
+    pub rea_evidence: Vec<ReaRecord>,
 }
 
-struct ReplacementRow {
-    category: &'static str,
-    removed: &'static str,
-    replacement: &'static str,
-    owner: &'static str,
+/// Live Git blame metrics for the `DabneyMoeWebsite` repository.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WebsiteMetrics {
+    pub repo: String,
+    pub revision: String,
+    pub short_revision: String,
+    pub commit_timestamp: String,
+    pub total_files: usize,
+    pub total_lines: u64,
+    pub tyler_lines: u64,
+    pub tyler_pct: f64,
+    pub external_lines: u64,
 }
 
-struct ReaRecord {
-    operation: &'static str,
-    evidence_id: &'static str,
-    scope: &'static str,
+/// Live Git blame metrics for the standalone `dabney-moe` workspace.
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpstreamMetrics {
+    pub name: String,
+    pub revision: String,
+    pub short_revision: String,
+    pub commit_timestamp: String,
+    pub source_files: usize,
+    pub source_lines: u64,
+    pub source_tyler_lines: u64,
+    pub source_tyler_pct: f64,
+    pub source_provenance_adjusted_pct: f64,
+    pub patients_files: usize,
+    pub patients_lines: u64,
+    pub patients_tyler_lines: u64,
+    pub combined_files: usize,
+    pub combined_lines: u64,
+    pub combined_tyler_lines: u64,
+    pub combined_tyler_pct: f64,
+    pub authors: Vec<OwnershipBar>,
+    pub tiers: Vec<TierRow>,
 }
 
-const UPSTREAM_AUTHORSHIP: &[OwnershipBar] = &[
-    OwnershipBar {
-        label: "Tyler Port — Combined Surviving Lines (f52931447)",
-        detail: "581,606 source lines (88.8%) + 177,864 clean-room patient lines (759,470 combined; 89.8% provenance-adjusted source)",
-        pct: 89.0,
-        color: "#22d3ee",
-    },
-    OwnershipBar {
-        label: "Dev Patale (remaining mixed/docs & diff tokens)",
-        detail: "66,904 source lines · down from 122,840 (-45.5%) + 3.04M legacy patients purged",
-        pct: 10.3,
-        color: "#f59e0b",
-    },
-    OwnershipBar {
-        label: "Elijah Gwynn (remaining mixed/diff tokens)",
-        detail: "6,101 source lines · down from 14,865 (-59.0%)",
-        pct: 0.7,
-        color: "#a78bfa",
-    },
-];
+/// Per-author stacked bar row in the upstream authorship breakdown.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OwnershipBar {
+    pub author: String,
+    pub label: String,
+    pub detail: String,
+    pub source_lines: u64,
+    pub patients_lines: u64,
+    pub combined_lines: u64,
+    pub pct: f64,
+    pub color: String,
+}
 
-const WEBSITE_BEFORE_AFTER: &[(&str, f64, f64, &str)] = &[
-    (
-        "Core dabney.moe app crates (ui, web, tauri-ui, nix, terraform)",
-        100.0,
-        100.0,
-        "100% @tyler274 since initial commit (June 5, 2026)",
-    ),
-    (
-        "Embedded clinical workspace & API (dabney.moe)",
-        63.7,
-        100.0,
-        "Removed imported 7-crate slice (-68,131 lines); rebuilt clean-room from REA specs",
-    ),
-    (
-        "Hosted site icons, illustrations & gallery assets (dabney.moe)",
-        55.0,
-        100.0,
-        "Replaced third-party icon, vendor logos & artist binaries with original @tyler274 assets",
-    ),
-    (
-        "Standalone dabney-moe workspace (combined source + patients/)",
-        14.4,
-        89.0,
-        "Wave 1+2 Chinese-wall REA swarm replaced all 9 Tier-4 crates + 468 patients (-2.85M lines)",
-    ),
-];
+/// Per-tier directory and crate distribution bucket.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TierRow {
+    pub key: String,
+    pub label: String,
+    pub count: usize,
+    pub examples: String,
+    pub color: String,
+}
 
-const UPSTREAM_TIERS: &[(&str, usize, &str, &str)] = &[
-    (
-        "Reclaimed Clean-Room · 9/9 Tier-4 crates + patients/",
-        10,
-        "boundaries, agent-skills, extension-popup, ui, ui-gallery, harness, clinical-library, patient-bank, patients/ (468 units), root configs",
-        "#22d3ee",
-    ),
-    (
-        "Tier 1 & 2 · >90% Tyler-authored crates & ops",
-        25,
-        "physician-demo-api, physician-demo-db, observability-relay, duet-*, physician-app, physician-bus, http, spruce, front-door, workspace-tools, infra/",
-        "#34d399",
-    ),
-    (
-        "Tier 3 · Mixed multi-contributor areas",
-        15,
-        "local-product, physician-sample, public-site, book/, scripts/, extension/, .agents/ (incl. PStack MIT)",
-        "#fbbf24",
-    ),
-    (
-        "Remaining Doc-Only Tier-4 areas",
-        4,
-        "intent/, verification/, AGENTS.md, flake.nix (prose/specs only — zero runtime crates)",
-        "#fb7185",
-    ),
-];
+/// Before-vs-after clean-room comparison bar entry.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BeforeAfterRow {
+    pub label: String,
+    pub before_pct: f64,
+    pub after_pct: f64,
+    pub note: String,
+}
 
-const REPLACEMENT_LEDGER: &[ReplacementRow] = &[
-    ReplacementRow {
-        category: "Embedded clinical API",
-        removed: "Imported 7-crate vendor slice (36.3% external lines, incl. 78.4% in harness)",
-        replacement: "Clean-room crates/clinical-workspace + crates/web/src/clinical_proxy.rs",
-        owner: "100% @tyler274 (MIT)",
-    },
-    ReplacementRow {
-        category: "Static clinical demo & synthetic data",
-        removed: "Pre-built static export & imported synthetic patient fixtures",
-        replacement: "Clean-room Leptos /clinical & /clinical/physician + 4 freshly authored synthetic patients",
-        owner: "100% @tyler274 (MIT)",
-    },
-    ReplacementRow {
-        category: "Site favicon & Tauri app icons",
-        removed: "Third-party character icon & copyright notice",
-        replacement: "Original Caltech Dabney House green elephant emblem (SVG + PNG + Tauri icon set)",
-        owner: "100% @tyler274",
-    },
-    ReplacementRow {
-        category: "Technical expertise visuals",
-        removed: "Vendor GPU logo and third-party FPGA development board photo",
-        replacement: "Original generated dark-slate GPU compute & FPGA silicon fabric illustrations",
-        owner: "100% @tyler274",
-    },
-    ReplacementRow {
-        category: "Artwork gallery binaries",
-        removed: "Hosted third-party commissioned character binaries",
-        replacement: "Original @tyler274 SVG & brand pieces (/dabney-elephant.svg, piece-01..03.svg)",
-        owner: "100% @tyler274",
-    },
-    ReplacementRow {
-        category: "Container weights & CI lock-in",
-        removed: "Pre-baked external GGUF weights & single-provider sync workflow",
-        replacement: "Lean static-musl OCI image + Dockerfile + Gitea/Forgejo/GitLab/SSH/Fly/Cloud deploy kit",
-        owner: "100% @tyler274 (MIT)",
-    },
-    ReplacementRow {
-        category: "Standalone workspace Tier-4 crates & patients (f52931447)",
-        removed: "9 Tier-4 crates + 3.04M-line synthetic patient dump (-2,852,062 lines)",
-        replacement: "Two-stage Chinese-wall REA rewrites (96 Evidence JSONs, 26/26 Chromium E2E, 93/93 PG 16 tests)",
-        owner: "100% clean-room @tyler274",
-    },
-];
+/// Good-faith removal and clean-room replacement ledger entry.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReplacementRow {
+    pub category: String,
+    pub removed: String,
+    pub replacement: String,
+    pub owner: String,
+}
 
-const REA_EVIDENCE: &[ReaRecord] = &[
-    ReaRecord {
-        operation: "inspect_sqlite_database",
-        evidence_id: "ev_b2efc5ea4b1d0d911e4b98887586384c382f00c09f7ad80a0041fe3acd56a243",
-        scope: "16-table schema inventory of shipped demo SQLite artifact (SHA-256 1deb6f01...)",
-    },
-    ReaRecord {
-        operation: "analyze_javascript_application",
-        evidence_id: "ev_3ba425daa5c7e9fb43bf43a0c995dbb0ee7fe51e85dc347bb43ba1dc4143052c",
-        scope: "Static JS application graph of shipped web bundle (summary view ev_c5aecc0b...)",
-    },
-    ReaRecord {
-        operation: "audit_release_exposure",
-        evidence_id: "ev_fb324872970b189df97901b55126a29a8848c1847f608362f8296300bb71e5a3",
-        scope: "Release exposure audit across 14 shipped artifact members (0 exposed checks)",
-    },
-    ReaRecord {
-        operation: "inspect_rust_binary + capture_process (Wave 1 · 22 bundles)",
-        evidence_id: "ev_b3863679beb14dda39100fcbdc422d786eaf59c7b6e9545f4a2a401742dc054a",
-        scope: "Black-box ELF/WASM/process specs for boundaries (24 tests), agent-skills (pure-Rust YAML, 0 unsafe-libyaml), and extension-popup (MV3 CSP)",
-    },
-    ReaRecord {
-        operation: "inspect_rust_binary + capture_process (Wave 2 UI/Harness · 30 bundles)",
-        evidence_id: "ev_9720392deb663e70b4da1aab64f1767601ed284addee675f94055bfb202ab8cf",
-        scope: "Black-box specs for ui (215 public items, 26/26 Chromium E2E), ui-gallery (97 components), and harness (166 items, 16 modules, ev_783cdbda...)",
-    },
-    ReaRecord {
-        operation: "inspect_rust_binary + capture_process (Wave 2 Clinical/Bank · 44 bundles)",
-        evidence_id: "ev_b2b4cb893a065c384a85e5acbfda4c754305abb6c0588b01286ec3c4e1f4b1b2",
-        scope: "Black-box specs for clinical-library (15 PG tables, 93/93 PG 16 + pgvector tests) and patient-bank + 468 synthetic patients (21,982 FHIR R4 resources, ev_1a23930f...)",
-    },
-];
+/// REA v6.8.0 clean-room evidence record.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReaRecord {
+    pub operation: String,
+    pub evidence_id: String,
+    pub bundles: usize,
+    pub scope: String,
+}
+
+static OWNERSHIP_REPORT: LazyLock<OwnershipReport> = LazyLock::new(|| {
+    serde_json::from_str(OWNERSHIP_METRICS_JSON)
+        .expect("embedded crates/ui/data/ownership-metrics.json must be valid OwnershipReport JSON")
+});
+
+/// Returns the parsed, statically cached ownership report.
+pub fn ownership_report() -> &'static OwnershipReport {
+    &OWNERSHIP_REPORT
+}
+
+fn format_u64(value: u64) -> String {
+    let digits = value.to_string();
+    let len = digits.len();
+    let mut out = String::with_capacity(len + len / 3);
+    for (idx, ch) in digits.chars().enumerate() {
+        if idx > 0 && (len - idx).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
 
 #[component]
-fn StackedAuthorshipSvg() -> impl IntoView {
+fn StackedAuthorshipSvg(upstream: &'static UpstreamMetrics) -> impl IntoView {
+    let total_pct: f64 = upstream
+        .authors
+        .iter()
+        .map(|row| row.pct.max(0.0))
+        .sum::<f64>()
+        .max(1.0);
     let mut cursor = 0.0_f64;
-    let segments: Vec<(&'static str, f64, f64, &'static str)> = UPSTREAM_AUTHORSHIP
+    let segments: Vec<(&'static str, f64, f64, f64, &'static str)> = upstream
+        .authors
         .iter()
         .map(|row| {
+            let scaled_pct = (row.pct.max(0.0) / total_pct) * 100.0;
             let start = cursor;
-            cursor += row.pct;
-            (row.label, start, row.pct, row.color)
+            cursor += scaled_pct;
+            (
+                row.label.as_str(),
+                start,
+                scaled_pct,
+                row.pct,
+                row.color.as_str(),
+            )
         })
         .collect();
+
+    let summary_parts: Vec<String> = upstream
+        .authors
+        .iter()
+        .map(|row| format!("{:.1}% {}", row.pct, row.author))
+        .collect();
+    let aria_label = format!(
+        "Stacked bar chart of surviving lines in the standalone {} workspace at {}: {}",
+        upstream.name,
+        upstream.short_revision,
+        summary_parts.join(", ")
+    );
 
     view! {
         <div class="space-y-4">
@@ -207,16 +187,16 @@ fn StackedAuthorshipSvg() -> impl IntoView {
                 preserveAspectRatio="none"
                 class="h-11 w-full overflow-hidden rounded-xl border border-white/10 bg-slate-950"
                 role="img"
-                aria-label="Stacked bar chart of surviving lines in the standalone dabney-moe workspace at f52931447: 89.0% Tyler Port, 10.3% Dev Patale, 0.7% Elijah Gwynn"
+                aria-label=aria_label
             >
                 {segments
                     .into_iter()
-                    .map(|(label, start, pct, color)| {
+                    .map(|(label, start, width_pct, raw_pct, color)| {
                         let x = format!("{:.2}", start * 6.0);
-                        let w = format!("{:.2}", pct * 6.0);
+                        let w = format!("{:.2}", width_pct * 6.0);
                         view! {
                             <rect x=x y="0" width=w height="44" fill=color>
-                                <title>{format!("{label}: {pct:.1}%")}</title>
+                                <title>{format!("{label}: {raw_pct:.1}%")}</title>
                             </rect>
                         }
                     })
@@ -224,7 +204,8 @@ fn StackedAuthorshipSvg() -> impl IntoView {
             </svg>
 
             <div class="grid gap-3 sm:grid-cols-2">
-                {UPSTREAM_AUTHORSHIP
+                {upstream
+                    .authors
                     .iter()
                     .map(|row| {
                         let dot_style = format!("background-color: {}", row.color);
@@ -233,8 +214,8 @@ fn StackedAuthorshipSvg() -> impl IntoView {
                                 <div class="flex items-start gap-2.5">
                                     <span class="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style=dot_style></span>
                                     <div>
-                                        <p class="text-sm font-medium text-white">{row.label}</p>
-                                        <p class="text-xs text-slate-400">{row.detail}</p>
+                                        <p class="text-sm font-medium text-white">{row.label.as_str()}</p>
+                                        <p class="text-xs text-slate-400">{row.detail.as_str()}</p>
                                     </div>
                                 </div>
                                 <span class="font-mono text-sm font-semibold text-slate-200">
@@ -250,11 +231,13 @@ fn StackedAuthorshipSvg() -> impl IntoView {
 }
 
 #[component]
-fn WebsiteCleanRoomChartSvg() -> impl IntoView {
+fn WebsiteCleanRoomChartSvg(rows: &'static [BeforeAfterRow]) -> impl IntoView {
+    let height = 48 + (rows.len() as i32) * 52;
+    let view_box = format!("0 0 680 {height}");
     view! {
         <div class="space-y-4">
             <svg
-                viewBox="0 0 680 250"
+                viewBox=view_box
                 class="w-full rounded-xl border border-white/10 bg-slate-950/90 p-2"
                 role="img"
                 aria-label="Before and after comparison chart showing dabney.moe reaching 100 percent single-owner Tyler Port code and assets after good-faith clean-room replacement"
@@ -266,14 +249,16 @@ fn WebsiteCleanRoomChartSvg() -> impl IntoView {
                 </text>
                 <rect x="330" y="10" width="12" height="12" rx="2" fill="#34d399" />
                 <text x="348" y="20" fill="#e2e8f0" font-size="11" font-family="ui-sans-serif, system-ui, sans-serif">
-                    "After REA clean-room replacement (100% @tyler274)"
+                    "After REA clean-room replacement (live git blame)"
                 </text>
 
-                {WEBSITE_BEFORE_AFTER
+                {rows
                     .iter()
                     .enumerate()
-                    .map(|(idx, (label, before, after, _note))| {
+                    .map(|(idx, row)| {
                         let y_base = 44 + (idx as i32) * 52;
+                        let before = row.before_pct.clamp(0.0, 100.0);
+                        let after = row.after_pct.clamp(0.0, 100.0);
                         let bar_w_before = format!("{:.1}", before * 5.6);
                         let bar_w_after = format!("{:.1}", after * 5.6);
                         let y_label = (y_base + 11).to_string();
@@ -293,7 +278,7 @@ fn WebsiteCleanRoomChartSvg() -> impl IntoView {
                                     font-weight="600"
                                     font-family="ui-sans-serif, system-ui, sans-serif"
                                 >
-                                    {*label}
+                                    {row.label.as_str()}
                                 </text>
                                 <rect x="16" y=y_before.clone() width="560" height="9" rx="4" fill="#0f172a" />
                                 <rect x="16" y=y_before width=bar_w_before height="9" rx="4" fill="#64748b" />
@@ -328,26 +313,48 @@ fn WebsiteCleanRoomChartSvg() -> impl IntoView {
 }
 
 #[component]
-fn TierDistributionSvg() -> impl IntoView {
-    let max_count = 25.0_f64;
+fn TierDistributionSvg(upstream: &'static UpstreamMetrics) -> impl IntoView {
+    let max_count = upstream
+        .tiers
+        .iter()
+        .map(|tier| tier.count)
+        .max()
+        .unwrap_or(1)
+        .max(1) as f64;
+    let height = 16 + (upstream.tiers.len() as i32) * 40;
+    let view_box = format!("0 0 680 {height}");
+    let tier_summary: Vec<String> = upstream
+        .tiers
+        .iter()
+        .map(|tier| format!("{} {}", tier.count, tier.label))
+        .collect();
+    let aria_label = format!(
+        "Horizontal bar chart of crate and directory ownership tiers in the standalone {} workspace at {}: {}",
+        upstream.name,
+        upstream.short_revision,
+        tier_summary.join("; ")
+    );
+
     view! {
         <svg
-            viewBox="0 0 680 176"
+            viewBox=view_box
             class="w-full rounded-xl border border-white/10 bg-slate-950/90 p-2"
             role="img"
-            aria-label="Horizontal bar chart of crate and directory ownership tiers in the standalone dabney-moe workspace after Wave 1 and Wave 2 clean-room reclamation: 10 reclaimed clean-room areas, 25 Tier 1 and 2 over 90 percent Tyler, 15 Tier 3 mixed, 4 doc-only Tier 4 areas"
+            aria-label=aria_label
         >
-            {UPSTREAM_TIERS
+            {upstream
+                .tiers
                 .iter()
                 .enumerate()
-                .map(|(idx, (tier, count, _examples, color))| {
+                .map(|(idx, tier)| {
                     let y = 14 + (idx as i32) * 40;
-                    let width = (*count as f64 / max_count) * 340.0;
+                    let width = (tier.count as f64 / max_count) * 340.0;
                     let y_txt = (y + 13).to_string();
                     let y_bar = (y + 18).to_string();
                     let y_cnt = (y + 30).to_string();
                     let bar_w = format!("{:.1}", width);
                     let cnt_x = format!("{:.1}", 16.0 + width + 10.0);
+                    let unit = if tier.count == 1 { "area" } else { "areas" };
                     view! {
                         <g>
                             <text
@@ -358,19 +365,19 @@ fn TierDistributionSvg() -> impl IntoView {
                                 font-weight="600"
                                 font-family="ui-sans-serif, system-ui, sans-serif"
                             >
-                                {*tier}
+                                {tier.label.as_str()}
                             </text>
                             <rect x="16" y=y_bar.clone() width="340" height="12" rx="6" fill="#0f172a" />
-                            <rect x="16" y=y_bar width=bar_w height="12" rx="6" fill=*color />
+                            <rect x="16" y=y_bar width=bar_w height="12" rx="6" fill=tier.color.as_str() />
                             <text
                                 x=cnt_x
                                 y=y_cnt
-                                fill=*color
+                                fill=tier.color.as_str()
                                 font-size="11"
                                 font-weight="700"
                                 font-family="ui-monospace, monospace"
                             >
-                                {format!("{count} areas")}
+                                {format!("{} {unit}", tier.count)}
                             </text>
                         </g>
                     }
@@ -383,6 +390,11 @@ fn TierDistributionSvg() -> impl IntoView {
 /// Public code ownership, provenance, and good-faith clean-room replacement report (`/ownership`).
 #[component]
 pub fn OwnershipReportPage() -> impl IntoView {
+    let report = ownership_report();
+    let website = &report.website;
+    let upstream = &report.upstream;
+    let total_areas: usize = upstream.tiers.iter().map(|tier| tier.count).sum();
+
     view! {
         <Title text="Code Ownership & Clean-Room Provenance Report | dabney.moe" />
         <Meta
@@ -419,33 +431,86 @@ pub fn OwnershipReportPage() -> impl IntoView {
                     />
                 </div>
 
+                // Automated CI freshness badge + machine-readable JSON link
+                <div class="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-cyan-400/20 bg-slate-900/70 px-4 py-2.5 text-xs">
+                    <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-300">
+                        <span class="inline-flex items-center gap-1.5 font-semibold text-emerald-300">
+                            <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
+                            "Updated automatically by CI"
+                        </span>
+                        <span class="text-slate-500">"·"</span>
+                        <span>
+                            "Timestamp: "
+                            <code class=INLINE_CODE>{report.generated_at.as_str()}</code>
+                        </span>
+                        <span class="text-slate-500">"·"</span>
+                        <span>
+                            "Site: "
+                            <code class=INLINE_CODE>{website.short_revision.as_str()}</code>
+                        </span>
+                        <span class="text-slate-500">"·"</span>
+                        <span>
+                            "Workspace: "
+                            <code class=INLINE_CODE>{upstream.name.as_str()}</code>
+                            " @ "
+                            <code class=INLINE_CODE>{upstream.short_revision.as_str()}</code>
+                        </span>
+                    </div>
+                    <a
+                        href="/ownership.json"
+                        rel="external"
+                        class="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1 font-mono text-[11px] font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
+                    >
+                        "GET /ownership.json"
+                    </a>
+                </div>
+
                 // Key metrics strip
-                <div class="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     <div class="rounded-2xl border border-emerald-400/25 bg-emerald-500/10 p-4">
                         <p class="text-xs font-medium uppercase tracking-wider text-emerald-300">
                             "dabney.moe Code"
                         </p>
-                        <p class="mt-1 text-2xl font-bold text-white">"100.0%"</p>
+                        <p class="mt-1 text-2xl font-bold text-white">
+                            {format!("{:.1}%", website.tyler_pct)}
+                        </p>
                         <p class="mt-1 text-xs text-slate-300">
-                            "Sole-authored by @tyler274 · MIT LICENSE & CODEOWNERS"
+                            {format!(
+                                "{} files · {} lines · {} external · @tyler274",
+                                format_u64(website.total_files as u64),
+                                format_u64(website.total_lines),
+                                format_u64(website.external_lines),
+                            )}
                         </p>
                     </div>
                     <div class="rounded-2xl border border-cyan-400/25 bg-cyan-500/10 p-4">
                         <p class="text-xs font-medium uppercase tracking-wider text-cyan-300">
-                            "Good-Faith Removal"
+                            {format!("{} Workspace", upstream.name)}
                         </p>
-                        <p class="mt-1 text-2xl font-bold text-white">"-2.92M"</p>
+                        <p class="mt-1 text-2xl font-bold text-white">
+                            {format!("{:.1}%", upstream.combined_tyler_pct)}
+                        </p>
                         <p class="mt-1 text-xs text-slate-300">
-                            "68k website lines + 2.85M standalone lines replaced clean-room"
+                            {format!(
+                                "{:.1}% raw / {:.1}% adj. source · {} lines audited",
+                                upstream.source_tyler_pct,
+                                upstream.source_provenance_adjusted_pct,
+                                format_u64(upstream.combined_lines),
+                            )}
                         </p>
                     </div>
                     <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
                         <p class="text-xs font-medium uppercase tracking-wider text-slate-400">
-                            "Legacy Product Branding"
+                            "REA Evidence Bundles"
                         </p>
-                        <p class="mt-1 text-2xl font-bold text-white">"0"</p>
+                        <p class="mt-1 text-2xl font-bold text-white">
+                            {format_u64(report.total_bundles as u64)}
+                        </p>
                         <p class="mt-1 text-xs text-slate-300">
-                            "Verified across clinical workspace, assets, Cargo.lock & Nix"
+                            {format!(
+                                "{} verified chains · 0 legacy brand strings",
+                                report.rea_evidence.len()
+                            )}
                         </p>
                     </div>
                     <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
@@ -469,7 +534,9 @@ pub fn OwnershipReportPage() -> impl IntoView {
                     "Rather than relying on narrow technical arguments about what is or is not copyrightable (for instance, uncopyrightable functional interfaces, database table layouts, factual medical ranges, synthetic schemas, or AI-generated boilerplate), we took the conservative, good-faith step of removing "
                     <strong class="text-white">"100% of imported multi-contributor source files, third-party hosted images, vendor trademarks, and external model binaries"</strong>
                     " from the "
-                    <code class="rounded bg-slate-900 px-1.5 py-0.5 text-xs text-cyan-300">"DabneyMoeWebsite"</code>
+                    <code class="rounded bg-slate-900 px-1.5 py-0.5 text-xs text-cyan-300">
+                        {website.repo.as_str()}
+                    </code>
                     " repository."
                 </p>
                 <p class="text-sm leading-relaxed text-slate-300">
@@ -490,20 +557,29 @@ pub fn OwnershipReportPage() -> impl IntoView {
                         "2. dabney.moe Ownership: Before vs. After Clean-Room Replacement"
                     </h2>
                     <p class="mt-1 text-sm text-slate-400">
-                        "DabneyMoeWebsite was started on June 5, 2026 (100% @tyler274 human commits). Removing the imported clinical slice and third-party media brought both code and hosted assets to 100.0% @tyler274 ownership."
+                        {format!(
+                            "{} was started on June 5, 2026 (100% @tyler274 human commits). Live git blame at {} verifies {} files ({} lines) at {:.1}% @tyler274 ownership with {} external lines.",
+                            website.repo,
+                            website.short_revision,
+                            format_u64(website.total_files as u64),
+                            format_u64(website.total_lines),
+                            website.tyler_pct,
+                            format_u64(website.external_lines),
+                        )}
                     </p>
                 </div>
-                <WebsiteCleanRoomChartSvg />
+                <WebsiteCleanRoomChartSvg rows=report.before_after.as_slice() />
                 <div class="grid gap-3 sm:grid-cols-2">
-                    {WEBSITE_BEFORE_AFTER
+                    {report
+                        .before_after
                         .iter()
-                        .map(|(label, _before, _after, note)| {
+                        .map(|row| {
                             view! {
                                 <div class="rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3">
                                     <p class="text-xs font-semibold uppercase tracking-wider text-emerald-300">
-                                        {*label}
+                                        {row.label.as_str()}
                                     </p>
-                                    <p class="mt-1 text-xs text-slate-300">{*note}</p>
+                                    <p class="mt-1 text-xs text-slate-300">{row.note.as_str()}</p>
                                 </div>
                             }
                         })
@@ -532,15 +608,16 @@ pub fn OwnershipReportPage() -> impl IntoView {
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-white/5 text-slate-300">
-                            {REPLACEMENT_LEDGER
+                            {report
+                                .replacement_ledger
                                 .iter()
                                 .map(|row| {
                                     view! {
                                         <tr class="hover:bg-white/[0.02]">
-                                            <td class="px-4 py-3 font-medium text-white">{row.category}</td>
-                                            <td class="px-4 py-3 text-slate-400">{row.removed}</td>
-                                            <td class="px-4 py-3 text-cyan-200">{row.replacement}</td>
-                                            <td class="px-4 py-3 font-mono text-xs text-emerald-300">{row.owner}</td>
+                                            <td class="px-4 py-3 font-medium text-white">{row.category.as_str()}</td>
+                                            <td class="px-4 py-3 text-slate-400">{row.removed.as_str()}</td>
+                                            <td class="px-4 py-3 text-cyan-200">{row.replacement.as_str()}</td>
+                                            <td class="px-4 py-3 font-mono text-xs text-emerald-300">{row.owner.as_str()}</td>
                                         </tr>
                                     }
                                 })
@@ -552,29 +629,45 @@ pub fn OwnershipReportPage() -> impl IntoView {
 
             // Section 4: REA Evidence Chain
             <section class="space-y-4">
-                <div>
-                    <h2 class="text-xl font-semibold text-white">
-                        "4. REA v6.8.0 Clean-Room Evidence Records"
-                    </h2>
-                    <p class="mt-1 text-sm text-slate-400">
-                        "Behavioral observations extracted from shipped artifacts before deleting imported directories, establishing a clean specification boundary."
-                    </p>
+                <div class="flex flex-wrap items-baseline justify-between gap-2">
+                    <div>
+                        <h2 class="text-xl font-semibold text-white">
+                            "4. REA v6.8.0 Clean-Room Evidence Records"
+                        </h2>
+                        <p class="mt-1 text-sm text-slate-400">
+                            "Behavioral observations extracted from shipped artifacts before deleting imported directories, establishing a clean specification boundary."
+                        </p>
+                    </div>
+                    <span class="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 font-mono text-xs font-semibold text-emerald-300">
+                        {format!("{} total bundles", format_u64(report.total_bundles as u64))}
+                    </span>
                 </div>
                 <div class="space-y-3">
-                    {REA_EVIDENCE
+                    {report
+                        .rea_evidence
                         .iter()
                         .map(|rec| {
+                            let bundle_label = if rec.bundles == 1 {
+                                "1 bundle".to_string()
+                            } else {
+                                format!("{} bundles", rec.bundles)
+                            };
                             view! {
                                 <div class="rounded-xl border border-white/10 bg-slate-950/80 p-4">
                                     <div class="flex flex-wrap items-center justify-between gap-2">
-                                        <span class="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-0.5 font-mono text-xs text-cyan-300">
-                                            {rec.operation}
-                                        </span>
+                                        <div class="flex flex-wrap items-center gap-2">
+                                            <span class="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-0.5 font-mono text-xs text-cyan-300">
+                                                {rec.operation.as_str()}
+                                            </span>
+                                            <span class="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 font-mono text-[11px] text-slate-300">
+                                                {bundle_label}
+                                            </span>
+                                        </div>
                                         <span class="break-all font-mono text-xs text-slate-400">
-                                            {rec.evidence_id}
+                                            {rec.evidence_id.as_str()}
                                         </span>
                                     </div>
-                                    <p class="mt-2 text-xs text-slate-300">{rec.scope}</p>
+                                    <p class="mt-2 text-xs text-slate-300">{rec.scope.as_str()}</p>
                                 </div>
                             }
                         })
@@ -586,34 +679,63 @@ pub fn OwnershipReportPage() -> impl IntoView {
             <section class="space-y-6">
                 <div>
                     <h2 class="text-xl font-semibold text-white">
-                        "5. Standalone Workspace Line-Level Authorship Audit (" <code class=INLINE_CODE>"dabney-moe"</code> " @ " <code class=INLINE_CODE>"f52931447"</code> ")"
+                        "5. Standalone Workspace Line-Level Authorship Audit ("
+                        <code class=INLINE_CODE>{upstream.name.as_str()}</code>
+                        " @ "
+                        <code class=INLINE_CODE>{upstream.short_revision.as_str()}</code>
+                        ")"
                     </h2>
                     <p class="mt-1 text-sm text-slate-400">
-                        "Line-by-line " <code class=INLINE_CODE>"git blame"</code> " across 2,317 files (654,643 source lines across 1,848 files + 198,686 lines across 469 clean-room patient files = 853,329 combined surviving lines, excluding generated wire output). After Wave 1 and Wave 2 Chinese-wall REA reimplementation of all 8 Tier-4 crates, root configs, and " <code class=INLINE_CODE>"patients/"</code> ", raw " <code class=INLINE_CODE>"git blame"</code> " Tyler authorship jumped from 14.4% to 89.0% combined (source-only: 79.5% to 88.8%; 89.8% provenance-adjusted excluding coincidental brace/JSON line matches on recreated paths), while preserving truthful Git history with " <code class=INLINE_CODE>"CODEOWNERS"</code> " set to " <code class=INLINE_CODE>"* @tyler274"</code> "."
+                        "Line-by-line "
+                        <code class=INLINE_CODE>"git blame"</code>
+                        {format!(
+                            " across {} files ({} source lines across {} files + {} lines across {} clean-room patient files = {} combined surviving lines, excluding generated wire output). Raw ",
+                            format_u64(upstream.combined_files as u64),
+                            format_u64(upstream.source_lines),
+                            format_u64(upstream.source_files as u64),
+                            format_u64(upstream.patients_lines),
+                            format_u64(upstream.patients_files as u64),
+                            format_u64(upstream.combined_lines),
+                        )}
+                        <code class=INLINE_CODE>"git blame"</code>
+                        {format!(
+                            " Tyler authorship stands at {:.1}% combined ({:.1}% raw source; {:.1}% provenance-adjusted excluding coincidental brace/JSON line matches on clean-room recreated paths), while preserving truthful Git history with ",
+                            upstream.combined_tyler_pct,
+                            upstream.source_tyler_pct,
+                            upstream.source_provenance_adjusted_pct,
+                        )}
+                        <code class=INLINE_CODE>"CODEOWNERS"</code>
+                        " set to "
+                        <code class=INLINE_CODE>"* @tyler274"</code>
+                        "."
                     </p>
                 </div>
 
-                <StackedAuthorshipSvg />
+                <StackedAuthorshipSvg upstream=upstream />
 
                 <div class="space-y-3">
                     <h3 class="text-sm font-semibold uppercase tracking-wider text-slate-300">
-                        "Crate & Directory Ownership Tiers (54 Areas Audited · 0 Tier-4 Runtime Crates Remaining)"
+                        {format!(
+                            "Crate & Directory Ownership Tiers ({} Areas Audited)",
+                            format_u64(total_areas as u64)
+                        )}
                     </h3>
-                    <TierDistributionSvg />
+                    <TierDistributionSvg upstream=upstream />
                     <div class="grid gap-3 sm:grid-cols-2">
-                        {UPSTREAM_TIERS
+                        {upstream
+                            .tiers
                             .iter()
-                            .map(|(tier, count, examples, color)| {
-                                let badge_style = format!("color: {color}");
+                            .map(|tier| {
+                                let badge_style = format!("color: {}", tier.color);
                                 view! {
                                     <div class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
                                         <div class="flex items-center justify-between gap-2">
-                                            <p class="text-xs font-semibold text-white">{*tier}</p>
+                                            <p class="text-xs font-semibold text-white">{tier.label.as_str()}</p>
                                             <span class="font-mono text-xs font-bold" style=badge_style>
-                                                {format!("{count}")}
+                                                {format!("{}", tier.count)}
                                             </span>
                                         </div>
-                                        <p class="mt-1.5 text-xs text-slate-400">{*examples}</p>
+                                        <p class="mt-1.5 text-xs text-slate-400">{tier.examples.as_str()}</p>
                                     </div>
                                 }
                             })
@@ -630,10 +752,27 @@ pub fn OwnershipReportPage() -> impl IntoView {
                             "Provider-Agnostic & Independently Verifiable"
                         </h2>
                         <p class="mt-1 text-xs leading-relaxed text-slate-300">
-                            "dabney.moe builds reproducibly via Nix (" <code class=INLINE_CODE>"nix build .#serverImage"</code> ") or standard OCI " <code class=INLINE_CODE>"Dockerfile"</code> " and deploys without vendor lock-in via GitHub-free Gitea, Forgejo, or GitLab pipelines across any VPS (SSH + Caddy + optional self-hosted Gitea), Fly.io, GCP Cloud Run, AWS App Runner, or Azure Container Apps. This technical provenance audit is published for transparency and is not legal advice."
+                            "dabney.moe builds reproducibly via Nix ("
+                            <code class=INLINE_CODE>"nix build .#serverImage"</code>
+                            ") or standard OCI "
+                            <code class=INLINE_CODE>"Dockerfile"</code>
+                            " and deploys without vendor lock-in via GitHub-free Gitea, Forgejo, or GitLab pipelines across any VPS (SSH + Caddy + optional self-hosted Gitea), Fly.io, GCP Cloud Run, AWS App Runner, or Azure Container Apps. Metrics are refreshed deterministically via "
+                            <code class=INLINE_CODE>"nix run .#update-ownership"</code>
+                            " and published at "
+                            <a href="/ownership.json" rel="external" class="text-cyan-300 underline hover:text-cyan-200">
+                                "/ownership.json"
+                            </a>
+                            ". This technical provenance audit is published for transparency and is not legal advice."
                         </p>
                     </div>
                     <div class="flex shrink-0 flex-wrap gap-2">
+                        <a
+                            href="/ownership.json"
+                            rel="external"
+                            class="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
+                        >
+                            "Inspect JSON"
+                        </a>
                         <A
                             href="/clinical/physician"
                             attr:class="rounded-full bg-cyan-500 px-4 py-2 text-xs font-semibold text-slate-950 transition hover:bg-cyan-400"
@@ -652,6 +791,125 @@ pub fn OwnershipReportPage() -> impl IntoView {
         </div>
 
         <Footer />
+    }
+}
+
+#[cfg(test)]
+mod data_tests {
+    use super::*;
+
+    fn is_valid_pct(value: f64) -> bool {
+        value.is_finite() && (0.0..=100.0).contains(&value)
+    }
+
+    fn is_full_sha(value: &str) -> bool {
+        value.len() == 40
+            && value
+                .bytes()
+                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    }
+
+    #[test]
+    fn format_u64_inserts_commas() {
+        assert_eq!(format_u64(0), "0");
+        assert_eq!(format_u64(42), "42");
+        assert_eq!(format_u64(999), "999");
+        assert_eq!(format_u64(1_000), "1,000");
+        assert_eq!(format_u64(32_226), "32,226");
+        assert_eq!(format_u64(853_103), "853,103");
+        assert_eq!(format_u64(2_920_000), "2,920,000");
+    }
+
+    #[test]
+    fn embedded_ownership_metrics_json_is_valid_and_consistent() {
+        let report = ownership_report();
+        assert_eq!(report.schema_version, 1);
+        assert!(
+            !report.generated_at.is_empty() && report.generated_at.ends_with('Z'),
+            "generated_at must be UTC RFC3339: {}",
+            report.generated_at
+        );
+
+        // Website invariants
+        let ws = &report.website;
+        assert_eq!(ws.repo, "DabneyMoeWebsite");
+        assert!(
+            is_full_sha(&ws.revision),
+            "invalid website SHA: {}",
+            ws.revision
+        );
+        assert!(!ws.short_revision.is_empty());
+        assert!(ws.revision.starts_with(&ws.short_revision));
+        assert!(ws.total_files > 0);
+        assert!(ws.total_lines > 0);
+        assert_eq!(ws.tyler_lines, ws.total_lines);
+        assert_eq!(ws.external_lines, 0);
+        assert_eq!(ws.tyler_pct, 100.0);
+
+        // Upstream invariants
+        let up = &report.upstream;
+        assert_eq!(up.name, "dabney-moe");
+        assert!(
+            is_full_sha(&up.revision),
+            "invalid upstream SHA: {}",
+            up.revision
+        );
+        assert!(!up.short_revision.is_empty());
+        assert!(up.revision.starts_with(&up.short_revision));
+        assert!(up.source_files > 0 && up.source_lines > 0);
+        assert_eq!(up.combined_files, up.source_files + up.patients_files);
+        assert_eq!(up.combined_lines, up.source_lines + up.patients_lines);
+        assert_eq!(
+            up.combined_tyler_lines,
+            up.source_tyler_lines + up.patients_tyler_lines
+        );
+        assert!(is_valid_pct(up.source_tyler_pct));
+        assert!(is_valid_pct(up.source_provenance_adjusted_pct));
+        assert!(is_valid_pct(up.combined_tyler_pct));
+        assert!(up.source_provenance_adjusted_pct >= up.source_tyler_pct);
+        assert!(!up.authors.is_empty());
+        for bar in &up.authors {
+            assert!(
+                is_valid_pct(bar.pct),
+                "invalid author pct for {}",
+                bar.author
+            );
+            assert!(!bar.label.is_empty());
+            assert!(bar.color.starts_with('#'));
+        }
+        assert_eq!(up.tiers.len(), 4);
+
+        // Before/after & ledger invariants
+        assert!(!report.before_after.is_empty());
+        for row in &report.before_after {
+            assert!(is_valid_pct(row.before_pct));
+            assert!(is_valid_pct(row.after_pct));
+        }
+        assert!(!report.replacement_ledger.is_empty());
+
+        // REA evidence invariants
+        assert!(!report.rea_evidence.is_empty());
+        let bundle_sum: usize = report.rea_evidence.iter().map(|r| r.bundles).sum();
+        assert_eq!(report.total_bundles, bundle_sum);
+        for rec in &report.rea_evidence {
+            assert!(
+                rec.evidence_id.starts_with("ev_")
+                    && rec.evidence_id.len() == 67
+                    && rec.evidence_id[3..]
+                        .bytes()
+                        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+                "invalid REA evidence_id: {}",
+                rec.evidence_id
+            );
+            assert!(rec.bundles > 0);
+        }
+
+        // Zero legacy branding in embedded JSON
+        let lowered = OWNERSHIP_METRICS_JSON.to_ascii_lowercase();
+        let legacy_brand = ["co", "da"].concat();
+        let legacy_credit = ["hoyo", "verse"].concat();
+        assert!(!lowered.contains(&legacy_brand));
+        assert!(!lowered.contains(&legacy_credit));
     }
 }
 
@@ -685,6 +943,7 @@ mod tests {
 
     #[test]
     fn ownership_report_renders_charts_evidence_and_zero_legacy_brand() {
+        let report = ownership_report();
         let html = render_in_app_context("/ownership", || {
             view! { <OwnershipReportPage /> }.into_any()
         });
@@ -695,6 +954,11 @@ mod tests {
         );
         assert!(html.contains("100.0%"));
         assert!(html.contains("@tyler274"));
+        assert!(html.contains("Updated automatically by CI"));
+        assert!(html.contains("href=\"/ownership.json\""));
+        assert!(html.contains(&report.generated_at));
+        assert!(html.contains(&report.website.short_revision));
+        assert!(html.contains(&report.upstream.short_revision));
         assert!(
             !html.contains('`'),
             "Markdown backticks must render as <code>, not literal text"
@@ -705,6 +969,7 @@ mod tests {
             "dabney-moe",
             "Dockerfile",
             "nix build .#serverImage",
+            "nix run .#update-ownership",
         ] {
             assert!(
                 html.contains(&format!(">{code}</code>")),

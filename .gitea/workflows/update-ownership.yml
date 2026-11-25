@@ -1,0 +1,94 @@
+# Scheduled & dispatchable Code Ownership refresh workflow (Gitea Actions — zero GitHub dependency).
+#
+# Runs daily at 06:00 UTC or via `workflow_dispatch` (e.g. triggered by upstream
+# `dabney-moe` CI on push). Regenerates `crates/ui/data/ownership-metrics.json`,
+# verifies the full `nix run .#ci` gate, and pushes to `main` WITHOUT `[skip ci]`
+# so `.gitea/workflows/deploy.yml` automatically rebuilds and publishes the
+# updated `/ownership` page and `/ownership.json` endpoint.
+
+name: Update Code Ownership Metrics (Gitea)
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      upstream_url:
+        description: "Optional Git URL for the upstream dabney-moe workspace (overrides vars.OWNERSHIP_UPSTREAM_REPO_URL)"
+        required: false
+        type: string
+
+jobs:
+  update-ownership:
+    name: Refresh ownership metrics and open deploy
+    runs-on: ubuntu-latest
+    env:
+      NIX_CONFIG: "experimental-features = nix-command flakes"
+    steps:
+      - name: Check out repository
+        uses: https://gitea.com/actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Ensure Nix is available
+        run: |
+          set -euo pipefail
+          if ! command -v nix >/dev/null 2>&1; then
+            curl -L https://nixos.org/nix/install | sh -s -- --no-daemon --yes
+            echo "${HOME}/.nix-profile/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Refresh code ownership metrics
+        id: refresh
+        env:
+          INPUT_UPSTREAM_URL: ${{ inputs.upstream_url }}
+          VAR_UPSTREAM_URL: ${{ vars.OWNERSHIP_UPSTREAM_REPO_URL }}
+        run: |
+          set -euo pipefail
+          UPSTREAM_URL="${INPUT_UPSTREAM_URL:-${VAR_UPSTREAM_URL:-}}"
+          ARGS=()
+          if [ -n "$UPSTREAM_URL" ]; then
+            ARGS+=(--upstream-url "$UPSTREAM_URL")
+          else
+            ARGS+=(--allow-offline)
+          fi
+
+          if command -v python3 >/dev/null 2>&1; then
+            python3 scripts/update-ownership.py "${ARGS[@]}"
+          else
+            nix run .#update-ownership -- "${ARGS[@]}"
+          fi
+
+          if git diff --quiet -- crates/ui/data/ownership-metrics.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Code ownership metrics are already up to date."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --stat -- crates/ui/data/ownership-metrics.json
+          fi
+
+      - name: Verify refreshed metrics with Nix CI gate
+        if: ${{ steps.refresh.outputs.changed == 'true' }}
+        run: nix run .#ci
+
+      - name: Commit and push updated ownership metrics to main
+        if: ${{ steps.refresh.outputs.changed == 'true' }}
+        env:
+          GITEA_ACTOR: ${{ gitea.actor }}
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GITEA_TOKEN:-}" ]; then
+            echo "warning: GITEA_TOKEN is not set; skipping push of updated ownership metrics." >&2
+            exit 0
+          fi
+          git config user.name "dabney-ci"
+          git config user.email "ci@dabney.moe"
+          git add crates/ui/data/ownership-metrics.json
+          git commit -m "chore(ownership): refresh automated code ownership metrics"
+          for key in $(git config --local --get-regexp '^http\..*\.extraheader$' 2>/dev/null | awk '{print $1}' || true); do
+            git config --local --unset-all "$key" || true
+          done
+          AUTH_B64="$(printf '%s:%s' "${GITEA_ACTOR:-x-access-token}" "$GITEA_TOKEN" | base64 | tr -d '\n')"
+          git -c "http.extraHeader=Authorization: Basic ${AUTH_B64}" push origin HEAD:main

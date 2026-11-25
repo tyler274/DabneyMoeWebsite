@@ -71,6 +71,27 @@ where
 }
 
 #[cfg(feature = "ssr")]
+pub fn mount_ownership_json<S>(router: axum::Router<S>) -> axum::Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    async fn ownership_json() -> impl axum::response::IntoResponse {
+        (
+            axum::http::StatusCode::OK,
+            [
+                (
+                    axum::http::header::CONTENT_TYPE,
+                    "application/json; charset=utf-8",
+                ),
+                (axum::http::header::CACHE_CONTROL, "public, max-age=300"),
+            ],
+            ui::ownership::OWNERSHIP_METRICS_JSON,
+        )
+    }
+    router.route("/ownership.json", axum::routing::get(ownership_json))
+}
+
+#[cfg(feature = "ssr")]
 pub fn mount_clinical_api_routes<S>(
     router: axum::Router<S>,
     api_proxy: Option<clinical_proxy::ClinicalApiProxyConfig>,
@@ -848,5 +869,72 @@ mod tests {
         let sse_text = String::from_utf8_lossy(&sse_bytes);
         assert!(sse_text.contains("event: chart_updated"));
         assert!(sse_text.contains("\"patient_id\":\"pt-nadia-kulkarni\""));
+    }
+
+    #[tokio::test]
+    async fn ownership_json_endpoint_serves_valid_metrics_json() {
+        use leptos::prelude::LeptosOptions;
+        use leptos_axum::LeptosRoutes;
+
+        let options = LeptosOptions::builder().output_name("dabney").build();
+        let app = super::mount_ownership_json(Router::new())
+            .leptos_routes(&options, generate_route_list(App), {
+                let options = options.clone();
+                move || ui::shell(options.clone())
+            })
+            .with_state(options);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/ownership.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/json; charset=utf-8"
+        );
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            "public, max-age=300"
+        );
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let raw = String::from_utf8(body.to_vec()).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed["schema_version"], 1);
+        assert_eq!(parsed["website"]["repo"], "DabneyMoeWebsite");
+        assert_eq!(parsed["website"]["tyler_pct"], 100.0);
+        assert_eq!(parsed["website"]["external_lines"], 0);
+        assert_eq!(parsed["upstream"]["name"], "dabney-moe");
+        assert!(parsed["generated_at"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty() && s.ends_with('Z')));
+        assert!(parsed["rea_evidence"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()));
+        let legacy_brand = ["co", "da"].concat();
+        assert!(!raw.to_ascii_lowercase().contains(&legacy_brand));
+
+        let head = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::HEAD)
+                    .uri("/ownership.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(head.status(), StatusCode::OK);
+        assert_eq!(
+            head.headers()[header::CONTENT_TYPE],
+            "application/json; charset=utf-8"
+        );
+        assert_eq!(head.headers()[header::CACHE_CONTROL], "public, max-age=300");
     }
 }
