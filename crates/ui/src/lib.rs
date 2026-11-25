@@ -26,6 +26,7 @@ pub mod mental_health_exports;
 pub mod mental_health_lingo;
 pub mod mental_health_support;
 pub mod ownership;
+pub mod patient_demo;
 pub mod portfolio;
 pub mod portfolio_chart;
 pub mod privacy;
@@ -33,8 +34,6 @@ pub mod sections;
 pub mod tools;
 
 use leptos::prelude::*;
-#[cfg(feature = "csr")]
-use leptos_meta::Stylesheet;
 use leptos_meta::{provide_meta_context, HashedStylesheet, Link, Meta, MetaTags, Title};
 use leptos_router::components::{Route, Router, Routes};
 use leptos_router::hooks::use_location;
@@ -50,6 +49,18 @@ use tools::InvestmentAccountPage;
 use sections::{
     About, Contact, Experience, Expertise, Footer, Hero, NavBar, Projects, Services, Skills,
 };
+
+/// Presentation mode shared between the full dabney.moe website and the
+/// standalone zero-PHI mobile/desktop clinical demo app.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AppShellMode {
+    /// Full dabney.moe web experience (résumé homepage at `/`, optional web consent/analytics).
+    Website,
+    /// Standalone Dabney.moe Clinical & Patient Demo app: lands directly on the
+    /// synthetic zero-PHI Patient Demo, uses mobile-first clinical suite chrome,
+    /// and disables cookies/analytics/telemetry completely.
+    ClinicalDemoApp,
+}
 
 /// Server-rendered HTML document shell. Used only by the SSR build; the Tauri
 /// CSR build supplies its own `index.html`.
@@ -73,27 +84,56 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
     }
 }
 
-/// Root application component shared by every target.
+/// Root application component for the dabney.moe web server and browser hydration.
 #[component]
 pub fn App() -> impl IntoView {
+    view! { <AppWithMode mode=AppShellMode::Website /> }
+}
+
+/// Root application component parameterized by [`AppShellMode`].
+#[component]
+pub fn AppWithMode(mode: AppShellMode) -> impl IntoView {
     provide_meta_context();
     provide_consent_context();
+    provide_context(mode);
+
+    let is_demo_app = mode == AppShellMode::ClinicalDemoApp;
 
     view! {
-        {#[cfg(feature = "csr")] { view! { <Stylesheet id="leptos" href="/pkg/dabney.css" /> } }}
         <Link rel="icon" href="/favicon.svg" type_="image/svg+xml" />
         <Link rel="icon" href="/favicon.png" type_="image/png" />
 
-        <ConsentBanner />
+        {(!is_demo_app).then(|| view! { <ConsentBanner /> })}
 
         <Router>
-            <PageMetadata />
-            <AnalyticsRuntime />
+            {(!is_demo_app).then(|| view! {
+                <PageMetadata />
+                <AnalyticsRuntime />
+            })}
             <main>
-                <Routes fallback=|| view! { <HomePage /> }>
-                    <Route path=StaticSegment("") view=HomePage />
+                <Routes fallback=move || {
+                    if is_demo_app {
+                        view! { <patient_demo::PatientDemoPage /> }.into_any()
+                    } else {
+                        view! { <HomePage /> }.into_any()
+                    }
+                }>
+                    <Route
+                        path=StaticSegment("")
+                        view=move || {
+                            if is_demo_app {
+                                view! { <patient_demo::PatientDemoPage /> }.into_any()
+                            } else {
+                                view! { <HomePage /> }.into_any()
+                            }
+                        }
+                    />
                     <Route path=StaticSegment("privacy") view=PrivacyPage />
                     <Route path=StaticSegment("clinical") view=clinical::ClinicalOverviewPage />
+                    <Route
+                        path=(StaticSegment("clinical"), StaticSegment("patient"))
+                        view=patient_demo::PatientDemoPage
+                    />
                     <Route
                         path=(StaticSegment("clinical"), StaticSegment("physician"))
                         view=clinical::PhysicianWorkspacePage

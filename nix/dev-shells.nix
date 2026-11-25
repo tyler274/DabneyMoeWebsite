@@ -99,11 +99,9 @@
     # Tauri's mobile tooling reads NDK_HOME specifically.
     NDK_HOME = android.androidNdkRoot;
     JAVA_HOME = pkgs.jdk17.home;
-    # Point Gradle at the Nix-provided aapt2 (its bundled one is a
-    # dynamically-linked ELF binary that won't run on NixOS).
-    # AGP 8.x also needs build-tools 35.0.0 for R8/D8; that version is
-    # pre-provisioned in the Nix SDK (see android.nix buildToolsVersions).
-    GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${android.androidSdkRoot}/build-tools/${android.androidBuildToolsVersion}/aapt2";
+    # Point Gradle at the Nix-provided aapt2 from the newest provisioned
+    # build-tools (37.0.0) so AGP 9.x resource optimization works cleanly on NixOS.
+    GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${android.androidSdkRoot}/build-tools/${android.androidSigningToolsVersion}/aapt2";
 
     shellHook = ''
       if [ -n "''${NO_COLOR:-}" ]; then export NO_COLOR=true; fi

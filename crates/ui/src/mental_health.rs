@@ -21,6 +21,7 @@ use crate::mental_health_lingo::{
     AssessmentPoint, LingoReading, MentalHealthCheckIn, SAMPLE_LINGO_CSV,
 };
 use crate::mental_health_support::SupportAndClinicianBriefSection;
+use crate::patient_demo::ClinicalSuiteSwitcher;
 use crate::sections::{Footer, NavBar};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -243,10 +244,16 @@ pub fn MentalHealthPage() -> impl IntoView {
                 </div>
                 <div class="flex flex-wrap gap-3">
                     <A
+                        href="/clinical/patient"
+                        attr:class="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
+                    >
+                        "Open Patient Demo →"
+                    </A>
+                    <A
                         href="/clinical/physician"
                         attr:class="inline-flex items-center gap-2 rounded-full bg-cyan-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
                     >
-                        "Open Clinical Workspace →"
+                        "Open Physician Demo →"
                     </A>
                     <button
                         type="button"
@@ -256,6 +263,10 @@ pub fn MentalHealthPage() -> impl IntoView {
                         "Reset sample"
                     </button>
                 </div>
+            </div>
+
+            <div class="mb-8">
+                <ClinicalSuiteSwitcher />
             </div>
 
             // Top-of-page calm Cool-Down banner when activation signals stack up

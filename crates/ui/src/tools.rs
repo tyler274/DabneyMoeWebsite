@@ -63,6 +63,11 @@ pub fn ToolsMenu() -> impl IntoView {
                             "Clinical Workspace"
                         </span>
                     </A>
+                    <A href="/clinical/patient" on:click=close>
+                        <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
+                            "Patient Experience Demo"
+                        </span>
+                    </A>
                     <A href="/clinical/physician" on:click=close>
                         <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
                             "Physician Workspace Demo"

@@ -14,7 +14,9 @@ use leptos::prelude::*;
 use leptos_meta::{Link, Meta, Title};
 use leptos_router::components::A;
 
+use crate::patient_demo::ClinicalSuiteSwitcher;
 use crate::sections::{Footer, NavBar};
+use crate::AppShellMode;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DraftReviewState {
@@ -95,25 +97,30 @@ fn preset_questions_for_patient(patient_id: &str) -> &'static [&'static str] {
 #[component]
 pub fn ClinicalOverviewPage() -> impl IntoView {
     let overview = today_overview();
+    let app_mode = use_context::<AppShellMode>().unwrap_or(AppShellMode::Website);
+    let container_cls = match app_mode {
+        AppShellMode::Website => "mx-auto max-w-5xl px-6 py-12 space-y-12",
+        AppShellMode::ClinicalDemoApp => "mx-auto max-w-4xl px-4 pt-6 pb-28 sm:px-6 space-y-8",
+    };
 
     view! {
         <Title text="Dabney.moe Clinical Workspace — Local-First Rust & WASM | dabney.moe" />
         <Meta
             name="description"
-            content="Clean-room Dabney.moe Clinical Workspace built in pure Rust and WebAssembly: synthetic zero-PHI physician chart review, verbatim record citations, and local-first metabolic & mental health tracking."
+            content="Clean-room Dabney.moe Clinical Workspace built in pure Rust and WebAssembly: synthetic zero-PHI patient & physician demos, verbatim record citations, and local-first metabolic & mental health tracking."
         />
         <Link rel="canonical" href="https://dabney.moe/clinical" />
 
         <NavBar />
 
-        <div class="mx-auto max-w-5xl px-6 py-12 space-y-12">
+        <div class=container_cls>
             // Hero
             <section class="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-slate-900/90 via-slate-950 to-slate-950 p-8 sm:p-10">
                 <div class="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60%_50%_at_80%_0%,rgba(34,211,238,0.14),transparent)]"></div>
                 <div class="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
                     <div class="max-w-2xl space-y-4">
                         <div class="inline-flex items-center gap-3">
-                            <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-2">
+                            <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/40 bg-white/95 p-1.5 shadow-sm">
                                 <img
                                     src="/dabney-elephant.svg"
                                     alt="Dabney.moe elephant emblem"
@@ -134,6 +141,12 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
                         </p>
                         <div class="flex flex-wrap gap-3 pt-2">
                             <A
+                                href="/clinical/patient"
+                                attr:class="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-6 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
+                            >
+                                "Open Patient Demo →"
+                            </A>
+                            <A
                                 href="/clinical/physician"
                                 attr:class="inline-flex items-center gap-2 rounded-full bg-cyan-500 px-6 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
                             >
@@ -149,6 +162,8 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
                     </div>
                 </div>
             </section>
+
+            <ClinicalSuiteSwitcher />
 
             // Synthetic Zero-PHI Guarantee Banner
             <section
@@ -224,6 +239,39 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
                 </div>
             </section>
 
+            // Standalone Android Demo App card
+            <section class="rounded-2xl border border-cyan-400/25 bg-slate-900/50 p-6">
+                <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div class="space-y-1.5">
+                        <p class="text-xs font-semibold uppercase tracking-widest text-emerald-300">
+                            "Android App · moe.dabney.demo"
+                        </p>
+                        <h2 class="text-xl font-bold text-white">
+                            "Same Zero-PHI Clinical Suite on Android"
+                        </h2>
+                        <p class="max-w-2xl text-sm leading-relaxed text-slate-300">
+                            "Packaged from the exact same Rust & WebAssembly crate via Tauri v2 for Google Play "
+                            "demonstration. Runs offline with 100% synthetic sample profiles, zero analytics, zero "
+                            "Health Connect permissions, and zero PHI collection."
+                        </p>
+                    </div>
+                    <div class="flex flex-wrap gap-2.5 shrink-0">
+                        <A
+                            href="/clinical/patient"
+                            attr:class="inline-flex items-center rounded-full bg-emerald-500 px-5 py-2.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-400"
+                        >
+                            "Try Patient Demo in Browser →"
+                        </A>
+                        <A
+                            href="/privacy"
+                            attr:class="inline-flex items-center rounded-full border border-white/15 px-4 py-2.5 text-xs font-medium text-slate-200 transition hover:bg-white/5"
+                        >
+                            "Zero-PHI Privacy Policy"
+                        </A>
+                    </div>
+                </div>
+            </section>
+
             // Built-in Synthetic Clinic Preview
             <section class="space-y-4">
                 <div class="flex flex-wrap items-end justify-between gap-3">
@@ -288,6 +336,11 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
 pub fn PhysicianWorkspacePage() -> impl IntoView {
     let panel = StoredValue::new(synthetic_panel());
     let overview = today_overview();
+    let app_mode = use_context::<AppShellMode>().unwrap_or(AppShellMode::Website);
+    let container_cls = match app_mode {
+        AppShellMode::Website => "mx-auto max-w-6xl px-6 py-10 space-y-6",
+        AppShellMode::ClinicalDemoApp => "mx-auto max-w-6xl px-4 pt-5 pb-28 sm:px-6 space-y-5",
+    };
 
     let (initial_id, initial_question, initial_answer) = panel.with_value(|charts| {
         if let Some(first) = charts.first() {
@@ -356,11 +409,11 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
 
         <NavBar />
 
-        <div class="mx-auto max-w-6xl px-6 py-10 space-y-6">
+        <div class=container_cls>
             // Top bar
             <header class="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-6">
                 <div class="flex items-center gap-4">
-                    <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-2">
+                    <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/40 bg-white/95 p-1.5 shadow-sm">
                         <img
                             src="/dabney-elephant.svg"
                             alt="Dabney.moe elephant emblem"
@@ -378,6 +431,12 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                 </div>
                 <div class="flex flex-wrap items-center gap-2.5 text-xs">
                     <A
+                        href="/clinical/patient"
+                        attr:class="rounded-full border border-emerald-400/35 bg-emerald-500/15 px-4 py-2 font-medium text-emerald-200 transition hover:bg-emerald-500/25"
+                    >
+                        "Patient Demo"
+                    </A>
+                    <A
                         href="/clinical"
                         attr:class="rounded-full border border-white/15 px-4 py-2 font-medium text-slate-200 transition hover:bg-white/5"
                     >
@@ -391,6 +450,8 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                     </A>
                 </div>
             </header>
+
+            <ClinicalSuiteSwitcher />
 
             // Synthetic-data banner
             <div
@@ -991,8 +1052,10 @@ mod tests {
         });
         assert!(html.contains("Dabney.moe Clinical Workspace"));
         assert!(html.contains("/dabney-elephant.svg"));
+        assert!(html.contains("/clinical/patient"));
         assert!(html.contains("/clinical/physician"));
         assert!(html.contains("/mental-health"));
+        assert!(html.contains("moe.dabney.demo"));
         assert!(html.contains("Synthetic Zero-PHI Guarantee"));
         assert!(html.contains("Nadia Kulkarni"));
         assert!(html.contains("David Okafor"));

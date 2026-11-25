@@ -690,4 +690,77 @@ mod tests {
         assert!(sse_text.contains("event: chart_updated"));
         assert!(sse_text.contains("\"patient_id\":\"pt-nadia-kulkarni\""));
     }
+
+    #[tokio::test]
+    async fn patient_demo_and_privacy_pages_render_zero_phi_disclosures() {
+        use leptos::prelude::LeptosOptions;
+        use leptos_axum::LeptosRoutes;
+
+        let options = LeptosOptions::builder().output_name("dabney").build();
+        let app = mount_clinical_api_routes(Router::new(), None)
+            .leptos_routes(&options, generate_route_list(App), {
+                let options = options.clone();
+                move || ui::shell(options.clone())
+            })
+            .with_state(options);
+
+        let patient_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/clinical/patient")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(patient_resp.status(), StatusCode::OK);
+        let patient_html = String::from_utf8(
+            to_bytes(patient_resp.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(patient_html.contains("Patient Experience Demo"));
+        assert!(patient_html.contains("Zero PHI"));
+        assert!(patient_html.contains("Nadia Kulkarni"));
+
+        let privacy_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/privacy")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(privacy_resp.status(), StatusCode::OK);
+        let privacy_html = String::from_utf8(
+            to_bytes(privacy_resp.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(privacy_html.contains("moe.dabney.demo"));
+        assert!(privacy_html.contains("Zero PHI"));
+
+        let api_resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/clinical/api/patient-demo/pt-nadia-kulkarni")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(api_resp.status(), StatusCode::OK);
+        let api_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(api_resp.into_body(), 64 * 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(api_json["patient"]["id"], "pt-nadia-kulkarni");
+        assert_eq!(api_json["preview"]["private_note_count"], 1);
+    }
 }

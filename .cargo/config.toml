@@ -7,3 +7,19 @@
 # Retry transient registry / crate download failures (network blips, 5xx).
 [net]
 retry = 5
+
+# Google Play requires 16 KB ELF LOAD-segment alignment for 64-bit native
+# libraries targeting Android 15+ (API 35/36). Set max-page-size and
+# common-page-size to 16384 so every compiled `libdabney_app_lib.so` passes
+# Play Console 16 KB validation even under NDK r26.
+[target.aarch64-linux-android]
+rustflags = [
+  "-C", "link-arg=-Wl,-z,max-page-size=16384",
+  "-C", "link-arg=-Wl,-z,common-page-size=16384",
+]
+
+[target.x86_64-linux-android]
+rustflags = [
+  "-C", "link-arg=-Wl,-z,max-page-size=16384",
+  "-C", "link-arg=-Wl,-z,common-page-size=16384",
+]

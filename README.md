@@ -95,8 +95,12 @@ as Tauri's `beforeDevCommand` / `beforeBuildCommand`, emitting to `dist/`.
 
 ### Mobile (Android / iOS)
 
-The project is wired for mobile (lib crate-types, mobile entry point, and icon
-assets are already generated under `src-tauri/icons/android` and `.../ios`).
+The Android app (`moe.dabney.demo`, configured via `src-tauri/tauri.android.conf.json`)
+launches directly into the zero-PHI **Dabney.moe Clinical Demo** suite
+(`Patient`, `Physician`, `Mood & CGM`, and `Overview` tabs) sharing the exact
+same Rust/WASM components served in-browser at `dabney.moe/clinical`,
+`dabney.moe/clinical/patient`, `dabney.moe/clinical/physician`, and
+`dabney.moe/mental-health`.
 
 Android tooling is provided declaratively by a dedicated flake dev shell,
 `nix develop .#android`, which adds the Android SDK/NDK (via `androidenv`), a
@@ -106,10 +110,19 @@ environment. No manual SDK install or license clicking required:
 ```bash
 nix develop .#android
 
-cargo tauri android init   # regenerates src-tauri/gen/android (git-ignored)
-cargo tauri android build --apk
-cargo tauri android dev
+# Emulator APK (16 KB ELF + zero-PHI manifest verified):
+scripts/android-release.sh --apk --target x86_64
+
+# Google Play Store release AAB (arm64-v8a + x86_64, 16 KB ELF verified):
+scripts/android-release.sh --aab
+
+# Generate 512x512 icon + 1024x500 Play Store feature graphic:
+cargo run -p icon-gen -- --play-assets target/android-release/play-store-assets
 ```
+
+See [`docs/google-play/README.md`](docs/google-play/README.md) for upload
+keystore generation, Google Play Console Data Safety & Health Apps declarations,
+and store listing copy.
 
 iOS still needs Xcode (macOS only): `cargo tauri ios init && cargo tauri ios dev`.
 
