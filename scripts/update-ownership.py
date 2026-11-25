@@ -113,6 +113,18 @@ DEFAULT_REPLACEMENT_LEDGER: list[dict[str, str]] = [
         "replacement": "Two-stage Chinese-wall REA clean-room reimplementation of public-site, gmail, TLA+ charts, mdbook & flake dev-shell",
         "owner": "100% clean-room @tyler274",
     },
+    {
+        "category": "Standalone workspace Wave 3B-1 local-product (7506e445e)",
+        "removed": "46 multi-contributor runtime, store, chat & source modules in local-product (23,043 external lines)",
+        "replacement": "Two-stage Chinese-wall REA clean-room rewrites (local-product 88.6% -> 95.2% Tyler; 37 Evidence JSONs)",
+        "owner": "100% clean-room @tyler274",
+    },
+    {
+        "category": "Standalone workspace Wave 3B-2 physician-sample & CI sync (1197630b4)",
+        "removed": "33 multi-contributor physician-sample modules & legacy upstream repository names",
+        "replacement": "Two-stage Chinese-wall REA rewrites (physician-sample 85.7% -> 91.6%; 5/5 Chromium suites + PG 16 PASS) & automated CI ownership sync",
+        "owner": "100% clean-room @tyler274",
+    },
 ]
 
 DEFAULT_REA_EVIDENCE: list[dict[str, Any]] = [
@@ -151,6 +163,24 @@ DEFAULT_REA_EVIDENCE: list[dict[str, Any]] = [
         "evidence_id": "ev_b2b4cb893a065c384a85e5acbfda4c754305abb6c0588b01286ec3c4e1f4b1b2",
         "bundles": 44,
         "scope": "Black-box specs for clinical-library (15 PG tables, 93/93 PG 16 + pgvector tests) and patient-bank + 468 synthetic patients (21,982 FHIR R4 resources, ev_1a23930f...)",
+    },
+    {
+        "operation": "inspect_rust_binary + capture_process (Wave 3A Public Site/Gmail · 36 bundles)",
+        "evidence_id": "ev_5190f19888ff60b87506a691faeb6c37d0075c6c61909ee88345e4a73d87b16a",
+        "bundles": 36,
+        "scope": "Black-box specs for public-site (98.0% Tyler), gmail (93.6%), intent/, verification/ TLA+ charts, book/ & flake dev-shell",
+    },
+    {
+        "operation": "inspect_rust_binary + capture_process (Wave 3B-1 Local Product · 37 bundles)",
+        "evidence_id": "ev_9fd8a12c964a4c48422fea5710acfcf64fcd901ab5b9c019f1b0ae5bbd42d71b",
+        "bundles": 37,
+        "scope": "Black-box specs for 46 multi-contributor local-product runtime, store, chart & chat-operation modules (95.2% Tyler)",
+    },
+    {
+        "operation": "inspect_rust_binary + capture_process (Wave 3B-2 Physician Sample · 89 bundles)",
+        "evidence_id": "ev_123639bb71aa92f2b354f718637b3d104c57178e2fdfc46be8f995ce9f7f3fc3",
+        "bundles": 89,
+        "scope": "Black-box specs for 33 multi-contributor physician-sample server, worker & browser test modules (26/26 site + 4/4 auth + shell + sign-in + 6-path TLA+ Chromium E2E PASS)",
     },
 ]
 
