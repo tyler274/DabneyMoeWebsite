@@ -37,81 +37,75 @@ struct ReaRecord {
 
 const UPSTREAM_AUTHORSHIP: &[OwnershipBar] = &[
     OwnershipBar {
-        label: "Tyler Port (post-Nov 17, 2026)",
-        detail: "354,543 lines · 230 commits",
-        pct: 52.8,
+        label: "Tyler Port — Combined Surviving Lines (f52931447)",
+        detail: "581,606 source lines (88.8%) + 177,864 clean-room patient lines (759,470 combined; 89.8% provenance-adjusted source)",
+        pct: 89.0,
         color: "#22d3ee",
     },
     OwnershipBar {
-        label: "Tyler Port (Oct 9 – Nov 16, 2026)",
-        detail: "178,863 lines · 380 commits",
-        pct: 26.7,
-        color: "#34d399",
-    },
-    OwnershipBar {
-        label: "Dev Patale (Oct 21 – Nov 16, 2026)",
-        detail: "122,840 lines · 597 commits",
-        pct: 18.3,
+        label: "Dev Patale (remaining mixed/docs & diff tokens)",
+        detail: "66,904 source lines · down from 122,840 (-45.5%) + 3.04M legacy patients purged",
+        pct: 10.3,
         color: "#f59e0b",
     },
     OwnershipBar {
-        label: "Elijah Gwynn (Oct 30 – Nov 9, 2026)",
-        detail: "14,865 lines · 31 commits",
-        pct: 2.2,
+        label: "Elijah Gwynn (remaining mixed/diff tokens)",
+        detail: "6,101 source lines · down from 14,865 (-59.0%)",
+        pct: 0.7,
         color: "#a78bfa",
     },
 ];
 
 const WEBSITE_BEFORE_AFTER: &[(&str, f64, f64, &str)] = &[
     (
-        "Core app crates (ui, web, tauri-ui, src-tauri, nix, terraform)",
+        "Core dabney.moe app crates (ui, web, tauri-ui, nix, terraform)",
         100.0,
         100.0,
         "100% @tyler274 since initial commit (June 5, 2026)",
     ),
     (
-        "Embedded clinical workspace & API",
+        "Embedded clinical workspace & API (dabney.moe)",
         63.7,
         100.0,
-        "Removed imported 7-crate slice (-37k lines); rebuilt clean-room from REA specs",
+        "Removed imported 7-crate slice (-68,131 lines); rebuilt clean-room from REA specs",
     ),
     (
-        "Hosted site icons, illustrations & gallery assets",
+        "Hosted site icons, illustrations & gallery assets (dabney.moe)",
         55.0,
         100.0,
         "Replaced third-party icon, vendor logos & artist binaries with original @tyler274 assets",
     ),
     (
-        "Legacy product branding & external weight dependencies",
-        0.0,
-        100.0,
-        "0 legacy product branding in clinical workspace & assets; 0 external GGUF weights in OCI image",
+        "Standalone dabney-moe workspace (combined source + patients/)",
+        14.4,
+        89.0,
+        "Wave 1+2 Chinese-wall REA swarm replaced all 9 Tier-4 crates + 468 patients (-2.85M lines)",
     ),
 ];
 
 const UPSTREAM_TIERS: &[(&str, usize, &str, &str)] = &[
     (
-        "Tier 1 · 100% Tyler-only crates & ops",
-        4,
-        "physician-demo-api, physician-demo-db, observability-relay, docs/CI",
+        "Reclaimed Clean-Room · 9/9 Tier-4 crates + patients/",
+        10,
+        "boundaries, agent-skills, extension-popup, ui, ui-gallery, harness, clinical-library, patient-bank, patients/ (468 units), root configs",
         "#22d3ee",
     ),
     (
-        "Tier 2 · >90% Tyler (minor external touches)",
-        21,
-        "duet-*, physician-app, physician-bus, http, spruce, front-door, workspace-tools, infra/",
+        "Tier 1 & 2 · >90% Tyler-authored crates & ops",
+        25,
+        "physician-demo-api, physician-demo-db, observability-relay, duet-*, physician-app, physician-bus, http, spruce, front-door, workspace-tools, infra/",
         "#34d399",
     ),
     (
         "Tier 3 · Mixed multi-contributor areas",
-        16,
-        "local-product, physician-sample, public-site, agent-skills, book/, scripts/, extension/",
+        15,
+        "local-product, physician-sample, public-site, book/, scripts/, extension/, .agents/ (incl. PStack MIT)",
         "#fbbf24",
     ),
     (
-        "Tier 4 · Majority other-contributor areas",
-        14,
-        "patients/ (100% Dev), patient-bank, ui, ui-gallery, harness, clinical-library, boundaries, verification/, intent/",
+        "Remaining Doc-Only Tier-4 areas",
+        4,
+        "intent/, verification/, AGENTS.md, flake.nix (prose/specs only — zero runtime crates)",
         "#fb7185",
     ),
 ];
@@ -150,8 +144,14 @@ const REPLACEMENT_LEDGER: &[ReplacementRow] = &[
     ReplacementRow {
         category: "Container weights & CI lock-in",
         removed: "Pre-baked external GGUF weights & single-provider sync workflow",
-        replacement: "Lean static-musl OCI image + Dockerfile + GitLab/Forgejo/SSH/Fly/Cloud deploy kit",
+        replacement: "Lean static-musl OCI image + Dockerfile + Gitea/Forgejo/GitLab/SSH/Fly/Cloud deploy kit",
         owner: "100% @tyler274 (MIT)",
+    },
+    ReplacementRow {
+        category: "Standalone workspace Tier-4 crates & patients (f52931447)",
+        removed: "9 Tier-4 crates + 3.04M-line synthetic patient dump (-2,852,062 lines)",
+        replacement: "Two-stage Chinese-wall REA rewrites (96 Evidence JSONs, 26/26 Chromium E2E, 93/93 PG 16 tests)",
+        owner: "100% clean-room @tyler274",
     },
 ];
 
@@ -170,6 +170,21 @@ const REA_EVIDENCE: &[ReaRecord] = &[
         operation: "audit_release_exposure",
         evidence_id: "ev_fb324872970b189df97901b55126a29a8848c1847f608362f8296300bb71e5a3",
         scope: "Release exposure audit across 14 shipped artifact members (0 exposed checks)",
+    },
+    ReaRecord {
+        operation: "inspect_rust_binary + capture_process (Wave 1 · 22 bundles)",
+        evidence_id: "ev_b3863679beb14dda39100fcbdc422d786eaf59c7b6e9545f4a2a401742dc054a",
+        scope: "Black-box ELF/WASM/process specs for boundaries (24 tests), agent-skills (pure-Rust YAML, 0 unsafe-libyaml), and extension-popup (MV3 CSP)",
+    },
+    ReaRecord {
+        operation: "inspect_rust_binary + capture_process (Wave 2 UI/Harness · 30 bundles)",
+        evidence_id: "ev_9720392deb663e70b4da1aab64f1767601ed284addee675f94055bfb202ab8cf",
+        scope: "Black-box specs for ui (215 public items, 26/26 Chromium E2E), ui-gallery (97 components), and harness (166 items, 16 modules, ev_783cdbda...)",
+    },
+    ReaRecord {
+        operation: "inspect_rust_binary + capture_process (Wave 2 Clinical/Bank · 44 bundles)",
+        evidence_id: "ev_b2b4cb893a065c384a85e5acbfda4c754305abb6c0588b01286ec3c4e1f4b1b2",
+        scope: "Black-box specs for clinical-library (15 PG tables, 93/93 PG 16 + pgvector tests) and patient-bank + 468 synthetic patients (21,982 FHIR R4 resources, ev_1a23930f...)",
     },
 ];
 
@@ -192,7 +207,7 @@ fn StackedAuthorshipSvg() -> impl IntoView {
                 preserveAspectRatio="none"
                 class="h-11 w-full overflow-hidden rounded-xl border border-white/10 bg-slate-950"
                 role="img"
-                aria-label="Stacked bar chart of surviving source lines in the standalone dabney-moe workspace: 52.8% Tyler Port post-Nov 17, 26.7% Tyler Port pre-Nov 17, 18.3% Dev Patale, 2.2% Elijah Gwynn"
+                aria-label="Stacked bar chart of surviving lines in the standalone dabney-moe workspace at f52931447: 89.0% Tyler Port, 10.3% Dev Patale, 0.7% Elijah Gwynn"
             >
                 {segments
                     .into_iter()
@@ -314,13 +329,13 @@ fn WebsiteCleanRoomChartSvg() -> impl IntoView {
 
 #[component]
 fn TierDistributionSvg() -> impl IntoView {
-    let max_count = 21.0_f64;
+    let max_count = 25.0_f64;
     view! {
         <svg
             viewBox="0 0 680 176"
             class="w-full rounded-xl border border-white/10 bg-slate-950/90 p-2"
             role="img"
-            aria-label="Horizontal bar chart of crate and directory ownership tiers in the standalone dabney-moe workspace: 4 Tier 1 Tyler-only, 21 Tier 2 over 90 percent Tyler, 16 Tier 3 mixed, 14 Tier 4 majority other contributors"
+            aria-label="Horizontal bar chart of crate and directory ownership tiers in the standalone dabney-moe workspace after Wave 1 and Wave 2 clean-room reclamation: 10 reclaimed clean-room areas, 25 Tier 1 and 2 over 90 percent Tyler, 15 Tier 3 mixed, 4 doc-only Tier 4 areas"
         >
             {UPSTREAM_TIERS
                 .iter()
@@ -419,9 +434,9 @@ pub fn OwnershipReportPage() -> impl IntoView {
                         <p class="text-xs font-medium uppercase tracking-wider text-cyan-300">
                             "Good-Faith Removal"
                         </p>
-                        <p class="mt-1 text-2xl font-bold text-white">"-68,131"</p>
+                        <p class="mt-1 text-2xl font-bold text-white">"-2.92M"</p>
                         <p class="mt-1 text-xs text-slate-300">
-                            "Imported lines, third-party assets & legacy exports purged"
+                            "68k website lines + 2.85M standalone lines replaced clean-room"
                         </p>
                     </div>
                     <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
@@ -571,10 +586,10 @@ pub fn OwnershipReportPage() -> impl IntoView {
             <section class="space-y-6">
                 <div>
                     <h2 class="text-xl font-semibold text-white">
-                        "5. Standalone Workspace Line-Level Authorship Audit (" <code class=INLINE_CODE>"dabney-moe"</code> ")"
+                        "5. Standalone Workspace Line-Level Authorship Audit (" <code class=INLINE_CODE>"dabney-moe"</code> " @ " <code class=INLINE_CODE>"f52931447"</code> ")"
                     </h2>
                     <p class="mt-1 text-sm text-slate-400">
-                        "Line-by-line " <code class=INLINE_CODE>"git blame"</code> " across 1,878 text/source files (671,146 surviving lines, excluding synthetic patient JSON fixtures and generated wire output). This repository is completely separated from dabney.moe and retains full truthful Git history with " <code class=INLINE_CODE>"CODEOWNERS"</code> " set to " <code class=INLINE_CODE>"* @tyler274"</code> "."
+                        "Line-by-line " <code class=INLINE_CODE>"git blame"</code> " across 2,317 files (654,643 source lines across 1,848 files + 198,686 lines across 469 clean-room patient files = 853,329 combined surviving lines, excluding generated wire output). After Wave 1 and Wave 2 Chinese-wall REA reimplementation of all 8 Tier-4 crates, root configs, and " <code class=INLINE_CODE>"patients/"</code> ", raw " <code class=INLINE_CODE>"git blame"</code> " Tyler authorship jumped from 14.4% to 89.0% combined (source-only: 79.5% to 88.8%; 89.8% provenance-adjusted excluding coincidental brace/JSON line matches on recreated paths), while preserving truthful Git history with " <code class=INLINE_CODE>"CODEOWNERS"</code> " set to " <code class=INLINE_CODE>"* @tyler274"</code> "."
                     </p>
                 </div>
 
@@ -582,7 +597,7 @@ pub fn OwnershipReportPage() -> impl IntoView {
 
                 <div class="space-y-3">
                     <h3 class="text-sm font-semibold uppercase tracking-wider text-slate-300">
-                        "Crate & Directory Ownership Tiers (55 Areas Audited)"
+                        "Crate & Directory Ownership Tiers (54 Areas Audited · 0 Tier-4 Runtime Crates Remaining)"
                     </h3>
                     <TierDistributionSvg />
                     <div class="grid gap-3 sm:grid-cols-2">
@@ -615,7 +630,7 @@ pub fn OwnershipReportPage() -> impl IntoView {
                             "Provider-Agnostic & Independently Verifiable"
                         </h2>
                         <p class="mt-1 text-xs leading-relaxed text-slate-300">
-                            "dabney.moe builds reproducibly via Nix (" <code class=INLINE_CODE>"nix build .#serverImage"</code> ") or standard OCI " <code class=INLINE_CODE>"Dockerfile"</code> " and deploys without vendor lock-in across any VPS (SSH + Caddy), Fly.io, GCP Cloud Run, AWS App Runner, or Azure Container Apps. This technical provenance audit is published for transparency and is not legal advice."
+                            "dabney.moe builds reproducibly via Nix (" <code class=INLINE_CODE>"nix build .#serverImage"</code> ") or standard OCI " <code class=INLINE_CODE>"Dockerfile"</code> " and deploys without vendor lock-in via GitHub-free Gitea, Forgejo, or GitLab pipelines across any VPS (SSH + Caddy + optional self-hosted Gitea), Fly.io, GCP Cloud Run, AWS App Runner, or Azure Container Apps. This technical provenance audit is published for transparency and is not legal advice."
                         </p>
                     </div>
                     <div class="flex shrink-0 flex-wrap gap-2">
