@@ -66,6 +66,11 @@
 
         formatCheck = import ./nix/format-check.nix { inherit pkgs rustToolchain; };
 
+        updateOwnership = import ./nix/update-ownership.nix {
+          inherit pkgs;
+          script = ./scripts/update-ownership.py;
+        };
+
         web = import ./nix/web-server.nix {
           inherit
             pkgs
@@ -101,6 +106,7 @@
 
         packages.ci = ci;
         packages.format-check = formatCheck;
+        packages.update-ownership = updateOwnership;
         # The release SSR build (server binary + hashed assets). Default is the
         # hardened static-musl build; the glibc build is kept as a fallback.
         packages.web = web.webServerStatic;
@@ -121,6 +127,11 @@
         apps.format-check = {
           type = "app";
           program = "${formatCheck}/bin/format-check";
+        };
+
+        apps.update-ownership = {
+          type = "app";
+          program = "${updateOwnership}/bin/update-ownership";
         };
 
         formatter = pkgs.nixpkgs-fmt;

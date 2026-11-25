@@ -11,26 +11,74 @@
 # Leave DEPLOY_TARGET unset to run checks and image builds without deploying.
 
 stages:
+  - refresh
   - check
   - build
   - deploy
 
 variables:
+  GIT_DEPTH: "0"
   NIX_CONFIG: "experimental-features = nix-command flakes"
   SITE_DOMAIN: "dabney.moe"
 
 default:
   image: nixos/nix:latest
 
+refresh-ownership:
+  stage: refresh
+  script:
+    - |
+      set -euo pipefail
+      if [ -n "${OWNERSHIP_UPSTREAM_REPO_URL:-}" ] && { [ "${CI_PIPELINE_SOURCE:-}" = "schedule" ] || [ "${CI_PIPELINE_SOURCE:-}" = "trigger" ]; }; then
+        nix run .#update-ownership -- --upstream-url "$OWNERSHIP_UPSTREAM_REPO_URL"
+      else
+        nix run .#update-ownership -- --allow-offline
+      fi
+  artifacts:
+    name: "dabney-ownership-metrics-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - crates/ui/data/ownership-metrics.json
+    expire_in: 1 day
+
 ci-checks:
   stage: check
+  needs:
+    - job: refresh-ownership
+      artifacts: true
   script:
     - nix run .#ci
+
+commit-ownership:
+  stage: build
+  needs:
+    - job: refresh-ownership
+      artifacts: true
+    - job: ci-checks
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $GITLAB_PUSH_TOKEN'
+  script:
+    - |
+      set -euo pipefail
+      if git diff --quiet -- crates/ui/data/ownership-metrics.json; then
+        echo "Code ownership metrics are already up to date."
+        exit 0
+      fi
+      git config user.name "dabney-ci"
+      git config user.email "ci@dabney.moe"
+      git add crates/ui/data/ownership-metrics.json
+      git commit -m "chore(ownership): refresh automated code ownership metrics [skip ci]"
+      for key in $(git config --local --get-regexp '^http\..*\.extraheader$' 2>/dev/null | awk '{print $1}' || true); do
+        git config --local --unset-all "$key" || true
+      done
+      AUTH_B64="$(printf 'oauth2:%s' "$GITLAB_PUSH_TOKEN" | base64 | tr -d '\n')"
+      git -c "http.extraHeader=Authorization: Basic ${AUTH_B64}" push -o ci.skip "${CI_PROJECT_URL}.git" "HEAD:${CI_DEFAULT_BRANCH}"
 
 build-image:
   stage: build
   needs:
-    - ci-checks
+    - job: refresh-ownership
+      artifacts: true
+    - job: ci-checks
   script:
     - nix build .#serverImage
     - cp -L result server-image.tar.gz

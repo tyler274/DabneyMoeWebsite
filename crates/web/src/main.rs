@@ -55,7 +55,7 @@ async fn main() {
         );
     }
 
-    let site_routes = web::mount_removed_pages(Router::new())
+    let site_routes = web::mount_ownership_json(web::mount_removed_pages(Router::new()))
         .route("/api/telemetry/errors", post(report_client_error))
         .leptos_routes(&leptos_options, routes, {
             let leptos_options = leptos_options.clone();
