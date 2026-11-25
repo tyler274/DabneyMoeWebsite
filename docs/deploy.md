@@ -144,8 +144,8 @@ SCW_SECRET_KEY=... ./scripts/deploy.sh --target scaleway --region fr-par --push
 
 `--compose-dir` selects which compose stack `--target ssh` syncs. The default,
 `selfhost`, is the single-site stack; `selfhost/eu` is the multi-service stack
-with its encrypted `secrets.sops.env`, which the host decrypts with its own age
-key.
+with per-service encrypted `secrets/*.sops.env` files, which the host decrypts
+with its own age key into mode-`0600` `secrets/*.env` files.
 
 ### Target: Fly.io (`--target fly`)
 

@@ -130,6 +130,12 @@ print_cmd() {
   echo "${out# }"
 }
 
+# POSIX-sh single-quote escaping so remote `ssh` commands preserve empty and
+# special-character arguments without collapsing positional parameters.
+sh_quote() {
+  printf "'%s'" "${1//\'/\'\\\'\'}"
+}
+
 run_cmd() {
   if [[ "$PUSH" -eq 1 ]]; then
     echo "+ $(print_cmd "$@")"
@@ -255,13 +261,48 @@ push_image_to_registry() {
     local cli
     cli="$(detect_container_cli)"
     need_cmd "$cli"
+    local docker_cfg=""
+    local podman_auth=""
+    if [[ -n "$creds" && "$dest_ref" == */* ]]; then
+      local reg_host="${dest_ref%%/*}"
+      local reg_user="${creds%%:*}"
+      local reg_pass="${creds#*:}"
+      if [[ "$PUSH" -eq 1 ]]; then
+        ensure_tmp_dir
+        if [[ "$cli" == "podman" ]]; then
+          podman_auth="$TMP_DIR/podman-auth.json"
+          echo "+ printf '<redacted>' | podman login $(printf '%q' "$reg_host") -u $(printf '%q' "$reg_user") --password-stdin --authfile $(printf '%q' "$podman_auth")"
+          printf '%s' "$reg_pass" | podman login "$reg_host" -u "$reg_user" --password-stdin --authfile "$podman_auth"
+        else
+          docker_cfg="$TMP_DIR/docker-config"
+          mkdir -p "$docker_cfg"
+          chmod 0700 "$docker_cfg"
+          echo "+ printf '<redacted>' | DOCKER_CONFIG=<tmp> docker login $(printf '%q' "$reg_host") -u $(printf '%q' "$reg_user") --password-stdin"
+          printf '%s' "$reg_pass" | DOCKER_CONFIG="$docker_cfg" docker login "$reg_host" -u "$reg_user" --password-stdin
+        fi
+      else
+        echo "[dry-run] printf '<redacted>' | ${cli} login $(printf '%q' "$reg_host") -u $(printf '%q' "$reg_user") --password-stdin"
+      fi
+    fi
     if [[ -n "$local_ref" && "$local_ref" != "$dest_ref" ]]; then
       run_cmd "$cli" tag "$local_ref" "$dest_ref"
     fi
-    run_cmd "$cli" push "$dest_ref"
+    if [[ -n "$podman_auth" ]]; then
+      run_cmd "$cli" push --authfile "$podman_auth" "$dest_ref"
+    elif [[ -n "$docker_cfg" ]]; then
+      DOCKER_CONFIG="$docker_cfg" run_cmd "$cli" push "$dest_ref"
+    else
+      run_cmd "$cli" push "$dest_ref"
+    fi
     if [[ "$also_latest" -eq 1 ]]; then
       run_cmd "$cli" tag "$dest_ref" "${repo}:latest"
-      run_cmd "$cli" push "${repo}:latest"
+      if [[ -n "$podman_auth" ]]; then
+        run_cmd "$cli" push --authfile "$podman_auth" "${repo}:latest"
+      elif [[ -n "$docker_cfg" ]]; then
+        DOCKER_CONFIG="$docker_cfg" run_cmd "$cli" push "${repo}:latest"
+      else
+        run_cmd "$cli" push "${repo}:latest"
+      fi
     fi
   fi
 }
@@ -399,6 +440,9 @@ fi
 if [[ "$PUSH" -eq 0 ]]; then
   info "Dry-run mode (pass --push to execute). target=${TARGET} build=${BUILD_MODE} tag=${TAG} domain=${DOMAIN}"
 else
+  if [[ "$TARGET" == "scaleway" && ( "$BUILD_MODE" != "none" || -n "$IMAGE_ARCHIVE" ) && -z "${SCW_SECRET_KEY:-}" ]]; then
+    die "--target scaleway with --push requires SCW_SECRET_KEY to push to Scaleway Container Registry"
+  fi
   info "Deploying dabney.moe: target=${TARGET} build=${BUILD_MODE} tag=${TAG} domain=${DOMAIN}"
 fi
 
@@ -473,17 +517,31 @@ case "$TARGET" in
       [[ -f "${STACK_DIR}/${required}" ]] || die "--compose-dir ${COMPOSE_DIR} has no ${required}"
     done
     STACK_FILES=("${STACK_DIR}/docker-compose.yml" "${STACK_DIR}/Caddyfile" "${STACK_DIR}/.env.example")
-    # Optional pieces of larger stacks (selfhost/eu): encrypted secrets, the
-    # secrets template, and config directories. Plaintext secrets.env never leaves.
+    # Optional pieces of larger stacks (selfhost/eu): config directories and
+    # encrypted/template files. Plaintext secrets.env and secrets/*.env never
+    # leave the workstation.
     for optional in secrets.sops.env secrets.env.example postgres-init attic; do
       if [[ -e "${STACK_DIR}/${optional}" ]]; then
         STACK_FILES+=("${STACK_DIR}/${optional}")
       fi
     done
+    SECRET_FILES=()
+    if [[ -d "${STACK_DIR}/secrets" ]]; then
+      while IFS= read -r secret_path; do
+        SECRET_FILES+=("$secret_path")
+      done < <(find "${STACK_DIR}/secrets" -maxdepth 1 -type f \( -name '*.example' -o -name '*.sops.*' \) | sort)
+    fi
 
     info "Syncing ${COMPOSE_DIR}/ Caddy + Compose stack to ${SSH_HOST}:${SSH_DIR}"
-    run_cmd ssh "${SSH_OPTS[@]}" "$SSH_HOST" "mkdir -p $(printf '%q' "$SSH_DIR")"
+    if [[ ${#SECRET_FILES[@]} -gt 0 ]]; then
+      run_cmd ssh "${SSH_OPTS[@]}" "$SSH_HOST" "mkdir -p $(sh_quote "$SSH_DIR") $(sh_quote "${SSH_DIR}/secrets")"
+    else
+      run_cmd ssh "${SSH_OPTS[@]}" "$SSH_HOST" "mkdir -p $(sh_quote "$SSH_DIR")"
+    fi
     run_cmd scp -r "${SCP_OPTS[@]}" "${STACK_FILES[@]}" "${SSH_HOST}:${SSH_DIR}/"
+    if [[ ${#SECRET_FILES[@]} -gt 0 ]]; then
+      run_cmd scp "${SCP_OPTS[@]}" "${SECRET_FILES[@]}" "${SSH_HOST}:${SSH_DIR}/secrets/"
+    fi
 
     REMOTE_ARCHIVE=""
     REMOTE_IMAGE=""
@@ -558,6 +616,20 @@ fi
 
 # Decrypt container secrets on the host with its own age key; the plaintext
 # stays on the host with mode 0600.
+for enc in secrets/*.sops.env; do
+  [ -f "$enc" ] || continue
+  if ! command -v sops >/dev/null 2>&1; then
+    echo "error: $enc is present but sops is not installed on the host" >&2
+    exit 1
+  fi
+  plain="${enc%.sops.env}.env"
+  (
+    umask 077
+    SOPS_AGE_KEY_FILE="${SOPS_AGE_KEY_FILE:-/etc/dabney-moe/age.key}" \
+      sops decrypt --input-type dotenv --output-type dotenv --output "${plain}.tmp" "$enc"
+    mv "${plain}.tmp" "$plain"
+  )
+done
 if [ -f secrets.sops.env ]; then
   if ! command -v sops >/dev/null 2>&1; then
     echo "error: secrets.sops.env is present but sops is not installed on the host" >&2
@@ -600,9 +672,9 @@ REMOTE_EOF
 
     info "Loading image and rolling Compose stack on ${SSH_HOST} (Docker/Podman + Caddy HTTPS for ${DOMAIN})"
     if [[ "$PUSH" -eq 1 ]]; then
+      REMOTE_CMD="sh -s -- $(sh_quote "$SSH_DIR") $(sh_quote "$DOMAIN") $(sh_quote "$REMOTE_IMAGE") $(sh_quote "$REMOTE_ARCHIVE") $(sh_quote "$ACME_EMAIL_ARG")"
       echo "+ ssh ${SSH_OPTS[*]} ${SSH_HOST} sh -s -- ${SSH_DIR} ${DOMAIN} ${REMOTE_IMAGE} ${REMOTE_ARCHIVE:-<registry-pull>} <acme-email>"
-      ssh "${SSH_OPTS[@]}" "$SSH_HOST" sh -s -- \
-        "$SSH_DIR" "$DOMAIN" "$REMOTE_IMAGE" "$REMOTE_ARCHIVE" "$ACME_EMAIL_ARG" <<< "$REMOTE_SCRIPT"
+      ssh "${SSH_OPTS[@]}" "$SSH_HOST" "$REMOTE_CMD" <<< "$REMOTE_SCRIPT"
     else
       echo "[dry-run] ssh ${SSH_OPTS[*]} ${SSH_HOST} 'detect docker|podman; load/pull ${REMOTE_IMAGE}; update ${SSH_DIR}/.env (SITE_DOMAIN=${DOMAIN}, WEB_IMAGE=${REMOTE_IMAGE}); <compose> up -d --remove-orphans'"
     fi
@@ -628,6 +700,8 @@ REMOTE_EOF
       SCW_CREDS="nologin:${SCW_SECRET_KEY}"
     elif [[ "$PUSH" -eq 0 ]]; then
       SCW_CREDS="nologin:<SCW_SECRET_KEY>"
+    elif [[ "$BUILD_MODE" != "none" || -n "$IMAGE_ARCHIVE" ]]; then
+      die "--target scaleway with --push requires SCW_SECRET_KEY to push to Scaleway Container Registry"
     fi
 
     if [[ -z "$SCW_CONTAINER_ID" && "$PUSH" -eq 1 ]]; then

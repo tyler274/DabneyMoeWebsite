@@ -3,7 +3,7 @@
 #
 #   Caddy          HTTPS for dabney.moe, www, git, coda, cache, auth, app, api
 #   dabney-web     Leptos SSR site
-#   dabney-forge   Rust Git forge (HTTP behind Caddy, SSH on FORGE_SSH_PORT)
+#   dabney-forge   Rust Git forge (profile "forge"; HTTP behind Caddy, SSH on FORGE_SSH_PORT)
 #   radicle        Radicle seed node (profile "radicle")
 #   postgres       Postgres 16, one database and role per service
 #   valkey         Valkey 8, in-memory only
@@ -18,18 +18,27 @@
 #   ./scripts/deploy.sh --target ssh --compose-dir selfhost/eu --ssh-host deploy@host --push
 #
 # Configuration: .env (non-secret, interpolated here; from .env.example) and
-# secrets.env (passed to containers; decrypted on the host from
-# secrets.sops.env with sops and an age key, never committed in plaintext).
+# per-service secret files under secrets/*.env (decrypted on the host from
+# secrets/*.sops.env with sops and an age key, never committed in plaintext):
+#   secrets/postgres.env   postgres superuser + per-service init passwords
+#   secrets/forge.env      dabney-forge database URL
+#   secrets/pocket-id.env  pocket-id database URL + ENCRYPTION_KEY
+#   secrets/attic.env      attic database URL + RS256 token signing key
+#   secrets/coda.env       Coda demo DB URLs + MAIL_SMTP_* (consumed by
+#                          coda-rust's mail-relay binary and by physician-sample /
+#                          duet-api once wired to SmtpRelayConfig::from_env)
+#
+# Networks:
+#   edge      Caddy and its HTTP upstreams only
+#   internal  internal-only network for postgres and database clients
+#   cache     internal-only network for valkey and physician services
+#   radicle   isolated P2P network for the radicle seed node
+#
 # Images default to their upstream registries; set the *_IMAGE variables to
 # copies in an EU registry (rg.fr-par.scw.cloud or codeberg.org) to avoid
 # US-hosted registries at runtime.
 
 name: dabney-eu
-
-x-secrets: &secrets
-  env_file:
-    - path: ./secrets.env
-      required: false
 
 x-restart: &restart
   restart: unless-stopped
@@ -51,6 +60,8 @@ services:
       - ./coda-site:/srv/coda-site:ro
       - caddy_data:/data
       - caddy_config:/config
+    networks:
+      - edge
     depends_on:
       - dabney-web
 
@@ -62,10 +73,16 @@ services:
     environment:
       RUST_LOG: ${RUST_LOG:-info}
       CLINICAL_API_URL: ${CLINICAL_API_URL:-}
+    networks:
+      - edge
 
   dabney-forge:
-    <<: [*restart, *secrets]
+    <<: *restart
+    profiles: ["forge"]
     image: ${FORGE_IMAGE:-dabney-forge:latest}
+    env_file:
+      - path: ./secrets/forge.env
+        required: false
     expose:
       - "8080"
     ports:
@@ -77,8 +94,12 @@ services:
       RUST_LOG: ${RUST_LOG:-info}
     volumes:
       - forge_data:/var/lib/forge
+    networks:
+      - edge
+      - internal
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
 
   radicle:
     <<: *restart
@@ -90,17 +111,24 @@ services:
       RAD_HOME: /var/lib/radicle
     volumes:
       - radicle_data:/var/lib/radicle
+    networks:
+      - radicle
 
   postgres:
-    <<: [*restart, *secrets]
+    <<: *restart
     image: ${POSTGRES_IMAGE:-docker.io/library/postgres:16}
+    env_file:
+      - path: ./secrets/postgres.env
+        required: false
     environment:
       # POSTGRES_PASSWORD and the per-service *_DB_PASSWORD values come from
-      # secrets.env; postgres-init creates one database and role per service.
+      # secrets/postgres.env; postgres-init creates one database and role per service.
       POSTGRES_SERVICE_DATABASES: forge attic pocketid physician duet
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -111,24 +139,41 @@ services:
     <<: *restart
     image: ${VALKEY_IMAGE:-docker.io/valkey/valkey:8}
     command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    networks:
+      - cache
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   attic:
-    <<: [*restart, *secrets]
+    <<: *restart
     # Upstream publishes to GHCR (US); mirror it or build nixpkgs#attic-server.
     image: ${ATTIC_IMAGE:-ghcr.io/zhaofengli/attic:latest}
+    env_file:
+      - path: ./secrets/attic.env
+        required: false
     command: ["-f", "/attic/server.toml", "--mode", "monolithic"]
     expose:
       - "8080"
     volumes:
       - ./attic:/attic:ro
       - attic_data:/var/lib/attic
+    networks:
+      - edge
+      - internal
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
 
   pocket-id:
-    <<: [*restart, *secrets]
+    <<: *restart
     # Upstream publishes to GHCR (US); mirror it to an EU registry.
     image: ${POCKET_ID_IMAGE:-ghcr.io/pocket-id/pocket-id:v1}
+    env_file:
+      - path: ./secrets/pocket-id.env
+        required: false
     expose:
       - "1411"
     environment:
@@ -137,45 +182,82 @@ services:
       DB_PROVIDER: postgres
     volumes:
       - pocket_id_data:/app/data
+    networks:
+      - edge
+      - internal
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
 
   physician-sample:
-    <<: [*restart, *secrets]
+    <<: *restart
     profiles: ["coda"]
     image: ${PHYSICIAN_IMAGE:-physician-sample:latest}
+    env_file:
+      - path: ./secrets/coda.env
+        required: false
     expose:
       - "8080"
     environment:
       PHYSICIAN_LISTEN_ADDR: 0.0.0.0:8080
       PHYSICIAN_PUBLIC_ORIGIN: https://app.${SITE_DOMAIN:-dabney.moe}
       PHYSICIAN_REDIS_URL: redis://valkey:6379
+    networks:
+      - edge
+      - internal
+      - cache
     depends_on:
-      - postgres
-      - valkey
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
 
   physician-worker:
-    <<: [*restart, *secrets]
+    <<: *restart
     profiles: ["coda"]
     image: ${PHYSICIAN_IMAGE:-physician-sample:latest}
+    env_file:
+      - path: ./secrets/coda.env
+        required: false
     entrypoint: ["/bin/physician-worker"]
     environment:
       PHYSICIAN_WORKER_LISTEN_ADDR: 0.0.0.0:8081
       PHYSICIAN_REDIS_URL: redis://valkey:6379
+    networks:
+      - internal
+      - cache
     depends_on:
-      - postgres
-      - valkey
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
 
   duet-api:
-    <<: [*restart, *secrets]
+    <<: *restart
     profiles: ["coda"]
     image: ${DUET_IMAGE:-duet-api:latest}
+    env_file:
+      - path: ./secrets/coda.env
+        required: false
     expose:
       - "8080"
     environment:
       DUET_LISTEN_ADDR: 0.0.0.0:8080
+      DUET_PUBLIC_ORIGIN: https://api.${SITE_DOMAIN:-dabney.moe}
+    networks:
+      - edge
+      - internal
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+
+networks:
+  edge:
+  internal:
+    internal: true
+  cache:
+    internal: true
+  radicle:
 
 volumes:
   caddy_data:
