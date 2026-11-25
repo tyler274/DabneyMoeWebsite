@@ -719,6 +719,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                 // Selected patient header
                                 <div
                                     id=PATIENT_CHART_HEADER_ID
+                                    role="region"
                                     tabindex="-1"
                                     class="scroll-mt-24 rounded-2xl border border-white/10 bg-white/[0.02] p-6 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60"
                                     aria-label=format!("Chart for {}", patient.display_name)
@@ -1325,7 +1326,7 @@ mod tests {
         assert!(html.contains("scroll-mt-24 rounded-xl"));
         // Empty-question guidance target and mobile chart focus target.
         assert!(html.contains(r#"aria-describedby="chart-question-error""#));
-        assert!(html.contains(r#"id="patient-chart-header" tabindex="-1""#));
+        assert!(html.contains(r#"id="patient-chart-header" role="region" tabindex="-1""#));
         // Sidebar selector is desktop-only and sticks below the navbar.
         assert!(html.contains("hidden lg:col-span-4 lg:block lg:sticky lg:top-24"));
         // Singular follow-up counts and AA-contrast metadata.

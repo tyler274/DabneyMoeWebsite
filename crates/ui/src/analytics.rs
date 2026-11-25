@@ -112,12 +112,47 @@ pub fn AnalyticsRuntime() -> impl IntoView {
 #[cfg(any(feature = "csr", feature = "hydrate"))]
 const GA4_SCRIPT_ID: &str = "ga4-gtag-loader";
 
+/// Ordered operations executed when reconciling GA4 with a visitor's consent.
+#[cfg(any(feature = "csr", feature = "hydrate", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Ga4SyncStep {
+    /// Sets `window["ga-disable-<ID>"] = true` before any consent update so
+    /// Google's tag cannot dispatch a cookieless revocation ping.
+    DisableTracking,
+    /// Clears `window["ga-disable-<ID>"] = false` before granting consent.
+    EnableTracking,
+    /// Calls `gtag('consent', 'update', ...)`.
+    UpdateConsent { granted: bool },
+    /// Queues `gtag('js')` + `gtag('config', ..., { send_page_view: false })`
+    /// and injects the `gtag.js` script element once.
+    LoadAndConfigureTag,
+}
+
+#[cfg(any(feature = "csr", feature = "hydrate", test))]
+fn ga4_sync_plan(analytics: bool, already_loaded: bool) -> Vec<Ga4SyncStep> {
+    if analytics {
+        let mut steps = vec![
+            Ga4SyncStep::EnableTracking,
+            Ga4SyncStep::UpdateConsent { granted: true },
+        ];
+        if !already_loaded {
+            steps.push(Ga4SyncStep::LoadAndConfigureTag);
+        }
+        steps
+    } else {
+        vec![
+            Ga4SyncStep::DisableTracking,
+            Ga4SyncStep::UpdateConsent { granted: false },
+        ]
+    }
+}
+
 /// Brings Google's tag in line with the visitor's analytics choice.
 ///
-/// Opting in loads `gtag.js` once and configures it. Opting out (or never
-/// loading it) sets Google's documented `ga-disable-<ID>` switch, which stops
-/// every hit for the ID, including the cookieless pings Consent Mode would
-/// otherwise still send after a mid-session revocation.
+/// Opting in enables tracking, grants Consent Mode storage, and loads `gtag.js`
+/// once. Opting out sets Google's documented `ga-disable-<ID>` switch *before*
+/// calling `gtag('consent', 'update', ...)` so Consent Mode cannot emit a
+/// cookieless revocation ping.
 #[cfg(any(feature = "csr", feature = "hydrate"))]
 pub(crate) fn sync_ga4_with_consent(analytics: bool) {
     use js_sys::{Function, Reflect};
@@ -129,65 +164,124 @@ pub(crate) fn sync_ga4_with_consent(analytics: bool) {
     let Some(document) = window.document() else {
         return;
     };
-    let Some(id) = document
+    let measurement_id = document
         .query_selector(&format!("meta[name=\"{GA4_META_NAME}\"]"))
         .ok()
         .flatten()
         .and_then(|meta| meta.get_attribute("content"))
-        .filter(|id| is_valid_measurement_id(id))
-    else {
+        .filter(|id| is_valid_measurement_id(id));
+
+    let already_loaded = document.get_element_by_id(GA4_SCRIPT_ID).is_some();
+    for step in ga4_sync_plan(analytics, already_loaded) {
+        match step {
+            Ga4SyncStep::DisableTracking => {
+                if let Some(id) = measurement_id.as_deref() {
+                    let _ = Reflect::set(
+                        window.as_ref(),
+                        &JsValue::from_str(&format!("ga-disable-{id}")),
+                        &JsValue::from_bool(true),
+                    );
+                }
+            }
+            Ga4SyncStep::EnableTracking => {
+                if let Some(id) = measurement_id.as_deref() {
+                    let _ = Reflect::set(
+                        window.as_ref(),
+                        &JsValue::from_str(&format!("ga-disable-{id}")),
+                        &JsValue::from_bool(false),
+                    );
+                }
+            }
+            Ga4SyncStep::UpdateConsent { granted } => {
+                update_gtag_consent(&window, granted);
+            }
+            Ga4SyncStep::LoadAndConfigureTag => {
+                let Some(id) = measurement_id.as_deref() else {
+                    continue;
+                };
+                let Some(gtag) = Reflect::get(window.as_ref(), &JsValue::from_str("gtag"))
+                    .ok()
+                    .and_then(|f| f.dyn_into::<Function>().ok())
+                else {
+                    continue;
+                };
+                let config = js_sys::Object::new();
+                for (key, value) in [
+                    ("anonymize_ip", true),
+                    ("allow_google_signals", false),
+                    ("allow_ad_personalization_signals", false),
+                    // AnalyticsRuntime sends page views itself, once per route.
+                    ("send_page_view", false),
+                ] {
+                    let _ =
+                        Reflect::set(&config, &JsValue::from_str(key), &JsValue::from_bool(value));
+                }
+                let _ = gtag.call2(
+                    &JsValue::NULL,
+                    &JsValue::from_str("js"),
+                    &js_sys::Date::new_0(),
+                );
+                let _ = gtag.call3(
+                    &JsValue::NULL,
+                    &JsValue::from_str("config"),
+                    &JsValue::from_str(id),
+                    &config,
+                );
+
+                let Ok(script) = document.create_element("script") else {
+                    continue;
+                };
+                script.set_id(GA4_SCRIPT_ID);
+                let _ = script.set_attribute("async", "");
+                let _ = script.set_attribute(
+                    "src",
+                    &format!("https://www.googletagmanager.com/gtag/js?id={id}"),
+                );
+                if let Some(head) = document.query_selector("head").ok().flatten() {
+                    let _ = head.append_child(&script);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(any(feature = "csr", feature = "hydrate"))]
+fn update_gtag_consent(window: &web_sys::Window, analytics: bool) {
+    use js_sys::{Function, Reflect};
+    use wasm_bindgen::{JsCast, JsValue};
+
+    let gtag = Reflect::get(window.as_ref(), &JsValue::from_str("gtag")).ok();
+    let Some(gtag) = gtag.and_then(|f| f.dyn_into::<Function>().ok()) else {
         return;
     };
-
+    let granted = if analytics { "granted" } else { "denied" };
+    let params = js_sys::Object::new();
     let _ = Reflect::set(
-        window.as_ref(),
-        &JsValue::from_str(&format!("ga-disable-{id}")),
-        &JsValue::from_bool(!analytics),
+        &params,
+        &JsValue::from_str("analytics_storage"),
+        &JsValue::from_str(granted),
     );
-    if !analytics || document.get_element_by_id(GA4_SCRIPT_ID).is_some() {
-        return;
-    }
-
-    let Some(gtag) = Reflect::get(window.as_ref(), &JsValue::from_str("gtag"))
-        .ok()
-        .and_then(|f| f.dyn_into::<Function>().ok())
-    else {
-        return;
-    };
-    let config = js_sys::Object::new();
-    for (key, value) in [
-        ("anonymize_ip", true),
-        ("allow_google_signals", false),
-        ("allow_ad_personalization_signals", false),
-        // AnalyticsRuntime sends page views itself, once per route.
-        ("send_page_view", false),
-    ] {
-        let _ = Reflect::set(&config, &JsValue::from_str(key), &JsValue::from_bool(value));
-    }
-    let _ = gtag.call2(
-        &JsValue::NULL,
-        &JsValue::from_str("js"),
-        &js_sys::Date::new_0(),
+    let _ = Reflect::set(
+        &params,
+        &JsValue::from_str("ad_storage"),
+        &JsValue::from_str("denied"),
+    );
+    let _ = Reflect::set(
+        &params,
+        &JsValue::from_str("ad_user_data"),
+        &JsValue::from_str("denied"),
+    );
+    let _ = Reflect::set(
+        &params,
+        &JsValue::from_str("ad_personalization"),
+        &JsValue::from_str("denied"),
     );
     let _ = gtag.call3(
         &JsValue::NULL,
-        &JsValue::from_str("config"),
-        &JsValue::from_str(&id),
-        &config,
+        &JsValue::from_str("consent"),
+        &JsValue::from_str("update"),
+        &params,
     );
-
-    let Ok(script) = document.create_element("script") else {
-        return;
-    };
-    script.set_id(GA4_SCRIPT_ID);
-    let _ = script.set_attribute("async", "");
-    let _ = script.set_attribute(
-        "src",
-        &format!("https://www.googletagmanager.com/gtag/js?id={id}"),
-    );
-    if let Some(head) = document.query_selector("head").ok().flatten() {
-        let _ = head.append_child(&script);
-    }
 }
 
 #[cfg(any(feature = "csr", feature = "hydrate"))]
@@ -380,5 +474,41 @@ mod tests {
         assert!(!is_valid_measurement_id("G-ab12"));
         assert!(!is_valid_measurement_id("AW-123"));
         assert!(!is_valid_measurement_id("G-12 34"));
+    }
+
+    #[test]
+    fn ga4_sync_disables_tracking_before_revoking_consent_and_loads_only_on_opt_in() {
+        assert_eq!(
+            ga4_sync_plan(false, false),
+            vec![
+                Ga4SyncStep::DisableTracking,
+                Ga4SyncStep::UpdateConsent { granted: false },
+            ]
+        );
+        // Mid-session revocation must set `ga-disable-<ID> = true` before
+        // updating gtag consent so no cookieless revocation ping can fire.
+        assert_eq!(
+            ga4_sync_plan(false, true),
+            vec![
+                Ga4SyncStep::DisableTracking,
+                Ga4SyncStep::UpdateConsent { granted: false },
+            ]
+        );
+        assert_eq!(
+            ga4_sync_plan(true, false),
+            vec![
+                Ga4SyncStep::EnableTracking,
+                Ga4SyncStep::UpdateConsent { granted: true },
+                Ga4SyncStep::LoadAndConfigureTag,
+            ]
+        );
+        // Once injected, re-enabling does not inject a second script tag.
+        assert_eq!(
+            ga4_sync_plan(true, true),
+            vec![
+                Ga4SyncStep::EnableTracking,
+                Ga4SyncStep::UpdateConsent { granted: true },
+            ]
+        );
     }
 }

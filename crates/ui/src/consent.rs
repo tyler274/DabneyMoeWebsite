@@ -36,10 +36,7 @@ pub fn provide_consent_context() {
                 return;
             }
             status.set(match load_consent() {
-                Some(choices) => {
-                    apply_consent_scripts(&choices);
-                    ConsentStatus::Decided(choices)
-                }
+                Some(choices) => ConsentStatus::Decided(choices),
                 None => ConsentStatus::Undecided,
             });
         });
@@ -88,8 +85,7 @@ pub fn ConsentBanner() -> impl IntoView {
         }
         #[cfg(not(any(feature = "csr", feature = "hydrate")))]
         let _ = store_consent(&choices);
-        status.set(ConsentStatus::Decided(choices.clone()));
-        apply_consent_scripts(&choices);
+        status.set(ConsentStatus::Decided(choices));
         show_preferences.set(false);
     };
 
@@ -270,7 +266,6 @@ fn store_consent(_choices: &ConsentChoices) -> bool {
 pub fn apply_consent_scripts(choices: &ConsentChoices) {
     #[cfg(any(feature = "csr", feature = "hydrate"))]
     {
-        update_gtag_consent(choices.analytics);
         crate::analytics::sync_ga4_with_consent(choices.analytics);
         if choices.error_reporting {
             crate::analytics::enable_error_reporting();
@@ -280,48 +275,6 @@ pub fn apply_consent_scripts(choices: &ConsentChoices) {
     {
         let _ = choices;
     }
-}
-
-#[cfg(any(feature = "csr", feature = "hydrate"))]
-fn update_gtag_consent(analytics: bool) {
-    use js_sys::{Function, Reflect};
-    use wasm_bindgen::{JsCast, JsValue};
-
-    let Some(window) = web_sys::window() else {
-        return;
-    };
-    let gtag = Reflect::get(window.as_ref(), &JsValue::from_str("gtag")).ok();
-    let Some(gtag) = gtag.and_then(|f| f.dyn_into::<Function>().ok()) else {
-        return;
-    };
-    let granted = if analytics { "granted" } else { "denied" };
-    let params = js_sys::Object::new();
-    let _ = Reflect::set(
-        &params,
-        &JsValue::from_str("analytics_storage"),
-        &JsValue::from_str(granted),
-    );
-    let _ = Reflect::set(
-        &params,
-        &JsValue::from_str("ad_storage"),
-        &JsValue::from_str("denied"),
-    );
-    let _ = Reflect::set(
-        &params,
-        &JsValue::from_str("ad_user_data"),
-        &JsValue::from_str("denied"),
-    );
-    let _ = Reflect::set(
-        &params,
-        &JsValue::from_str("ad_personalization"),
-        &JsValue::from_str("denied"),
-    );
-    let _ = gtag.call3(
-        &JsValue::NULL,
-        &JsValue::from_str("consent"),
-        &JsValue::from_str("update"),
-        &params,
-    );
 }
 
 #[cfg(test)]

@@ -117,7 +117,17 @@ impl OpenNavMenu {
             Self::Tools => "nav-menu-tools",
         }
     }
+
+    const fn trigger_dom_id(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::Commissions => "nav-trigger-commissions",
+            Self::Tools => "nav-trigger-tools",
+        }
+    }
 }
+
+const MOBILE_NAV_TRIGGER_ID: &str = "mobile-nav-toggle";
 
 /// One in-site page linked from a navbar dropdown and the mobile menu.
 pub struct NavMenuLink {
@@ -141,6 +151,7 @@ pub fn NavDropdown(
     view! {
         <div class="relative" data-nav-menu="">
             <button
+                id=menu.trigger_dom_id()
                 type="button"
                 class="flex items-center gap-1 transition hover:text-white"
                 aria-expanded=move || is_open().to_string()
@@ -216,10 +227,32 @@ fn close_nav_menus_on_dismiss(open: RwSignal<OpenNavMenu>, mobile_open: RwSignal
     {
         use wasm_bindgen::JsCast;
 
+        let focus_element_by_id = |id: &str| {
+            if let Some(el) = web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.get_element_by_id(id))
+                .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
+            {
+                let _ = el.focus();
+            }
+        };
+
         let escape = window_event_listener(leptos::ev::keydown, move |ev| {
             if ev.key() == "Escape" {
+                let previous_menu = open.get_untracked();
+                let was_mobile_open = mobile_open.get_untracked();
                 open.set(OpenNavMenu::None);
                 mobile_open.set(false);
+                let trigger_id = match previous_menu {
+                    OpenNavMenu::Commissions | OpenNavMenu::Tools => {
+                        Some(previous_menu.trigger_dom_id())
+                    }
+                    OpenNavMenu::None if was_mobile_open => Some(MOBILE_NAV_TRIGGER_ID),
+                    OpenNavMenu::None => None,
+                };
+                if let Some(id) = trigger_id {
+                    focus_element_by_id(id);
+                }
             }
         });
         let outside_click = window_event_listener(leptos::ev::click, move |ev| {
@@ -274,6 +307,7 @@ pub fn NavBar() -> impl IntoView {
                     </a>
                 </div>
                 <button
+                    id=MOBILE_NAV_TRIGGER_ID
                     type="button"
                     class="rounded-lg p-2 text-slate-300 transition hover:bg-white/5 hover:text-white md:hidden"
                     aria-expanded=move || mobile_open.get().to_string()
@@ -911,5 +945,7 @@ mod nav_render_tests {
         assert!(!html.contains("/commissions/lapidary"));
         assert!(html.contains(r#"aria-expanded="true""#));
         assert!(html.contains(r#"aria-expanded="false""#));
+        assert!(html.contains(r#"id="nav-trigger-commissions""#));
+        assert!(html.contains(r#"id="nav-trigger-tools""#));
     }
 }

@@ -257,7 +257,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                     recorded_at: "2026-11-20".into(),
                     source_label: "Home CGM Export".into(),
                     body: "14-day sensor wear 96%. Mean glucose 136 mg/dL, GMI 6.6%, CV 23.4%. \
-                           Time in range (70-180 mg/dL) 78%, above 180 mg/dL 21%, below 70 mg/dL 1%. \
+                           Time in range (TIR, 70-180 mg/dL) 78%, above 180 mg/dL 21%, below 70 mg/dL 1%. \
                            Fasting glucose climbs from ~114 mg/dL at 04:00 to ~146 mg/dL by 07:30."
                         .into(),
                     key_values: vec![
@@ -627,6 +627,8 @@ const STOP_WORDS: &[&str] = &[
     "its",
     "me",
     "my",
+    "no",
+    "not",
     "of",
     "on",
     "or",
@@ -697,12 +699,19 @@ fn words(text: &str) -> impl Iterator<Item = String> + '_ {
         .map(str::to_lowercase)
 }
 
-/// Whether a query term names the same word as `word`, allowing a plural.
+/// Clinical shorthand pairs treated as equivalent whole words during retrieval.
+const CLINICAL_SYNONYMS: &[(&str, &str)] = &[("a1c", "hba1c")];
+
+/// Whether a query term names the same word as `word`, allowing plurals and
+/// recognized clinical shorthand pairs (such as `A1c` ↔ `HbA1c`).
 fn same_word(term: &str, word: &str) -> bool {
     word == term
         || word.strip_suffix('s') == Some(term)
         || term.strip_suffix('s') == Some(word)
         || word.strip_suffix("es") == Some(term)
+        || CLINICAL_SYNONYMS
+            .iter()
+            .any(|&(a, b)| (term == a && word == b) || (term == b && word == a))
 }
 
 fn mentions(text: &str, term: &str) -> bool {
@@ -746,14 +755,32 @@ fn term_weight(rec: &ChartRecord, term: &str) -> u32 {
     .unwrap_or(0)
 }
 
+/// Honorifics and abbreviations whose trailing `.` does not end a sentence.
+const NON_TERMINAL_ABBREVS: &[&str] = &[
+    "dr", "mr", "mrs", "ms", "prof", "sr", "jr", "vs", "approx", "eg", "ie",
+];
+
+fn ends_with_abbreviation(prefix: &str) -> bool {
+    let word = prefix
+        .rsplit(|c: char| !c.is_alphabetic())
+        .next()
+        .unwrap_or("");
+    !word.is_empty()
+        && NON_TERMINAL_ABBREVS
+            .iter()
+            .any(|abbr| abbr.eq_ignore_ascii_case(word))
+}
+
 /// Splits a record body into sentences at `.`, `?` or `!` followed by
-/// whitespace, so decimals such as `6.7%` stay inside their sentence.
+/// whitespace, keeping decimals (`6.7%`) and honorifics (`Dr. Patel`) intact.
 fn sentences(body: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut start = 0;
     let mut chars = body.char_indices().peekable();
     while let Some((i, c)) = chars.next() {
+        let is_abbrev_dot = c == '.' && ends_with_abbreviation(&body[start..i]);
         let at_boundary = matches!(c, '.' | '?' | '!')
+            && !is_abbrev_dot
             && chars.peek().is_none_or(|(_, next)| next.is_whitespace());
         if at_boundary {
             let end = i + c.len_utf8();
@@ -1244,6 +1271,50 @@ mod tests {
             sentences("HbA1c 6.7% (prior 7.4%). Fasting glucose 134 mg/dL."),
             ["HbA1c 6.7% (prior 7.4%).", "Fasting glucose 134 mg/dL."]
         );
+    }
+
+    #[test]
+    fn negative_phrasing_without_matching_facts_cites_nothing() {
+        assert_no_match("pt-david-okafor", "No stroke history?");
+        assert_no_match("pt-carlos-mendez", "Does he have no statin?");
+        assert_no_match("pt-carlos-mendez", "Is he not on a statin?");
+    }
+
+    #[test]
+    fn sentences_do_not_split_on_honorifics_or_abbreviations() {
+        assert_eq!(
+            sentences("Hi Dr. Patel, my numbers stay flat overnight. Should I shift metformin?"),
+            [
+                "Hi Dr. Patel, my numbers stay flat overnight.",
+                "Should I shift metformin?",
+            ]
+        );
+        let nadia = find_patient("pt-nadia-kulkarni").expect("nadia");
+        let answer = answer_chart_question(&nadia, "Show patient portal messages");
+        assert!(answer.grounded);
+        assert_eq!(answer.citations[0].record_id, "nk-msg-03");
+        assert!(
+            answer
+                .answer
+                .contains("Hi Dr. Patel, my numbers stay flat overnight"),
+            "honorific must not truncate message excerpt: {}",
+            answer.answer
+        );
+        assert!(!answer.answer.trim_end().ends_with("Hi Dr."));
+    }
+
+    #[test]
+    fn clinical_shorthand_a1c_and_tir_match_nadia_records() {
+        let nadia = find_patient("pt-nadia-kulkarni").expect("nadia");
+        let a1c = answer_chart_question(&nadia, "What is her A1c?");
+        assert!(a1c.grounded);
+        assert_eq!(a1c.citations[0].record_id, "nk-lab-02");
+        assert!(a1c.answer.contains("6.7%"), "{}", a1c.answer);
+
+        let tir = answer_chart_question(&nadia, "What is her TIR?");
+        assert!(tir.grounded);
+        assert_eq!(tir.citations[0].record_id, "nk-cgm-01");
+        assert!(tir.answer.contains("78%"), "{}", tir.answer);
     }
 
     #[cfg(feature = "ssr")]
