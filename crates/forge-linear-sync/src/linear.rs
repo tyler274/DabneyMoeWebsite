@@ -23,6 +23,8 @@ pub enum LinearError {
     Rejected { status: u16, body: String },
     #[error("Linear returned GraphQL errors: {}", messages.join("; "))]
     GraphQl { messages: Vec<String> },
+    #[error("Linear mutation {operation} returned success=false")]
+    MutationFailed { operation: &'static str },
     #[error("Linear response did not have the expected shape")]
     Decode(#[source] serde_json::Error),
 }
@@ -74,6 +76,8 @@ pub struct CardMetadata {
     pub head: String,
     pub forge_updated_at: String,
     pub authority: String,
+    #[serde(default)]
+    pub target_is_default_branch: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +142,19 @@ fn reset_delay(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
 
 fn decode<T: DeserializeOwned>(value: Value) -> Result<T, LinearError> {
     serde_json::from_value(value).map_err(LinearError::Decode)
+}
+
+fn require_success(operation: &'static str, field: &Value) -> Result<(), LinearError> {
+    let ok: bool = decode(field["success"].clone())?;
+    if ok {
+        Ok(())
+    } else {
+        Err(LinearError::MutationFailed { operation })
+    }
+}
+
+fn is_not_found_msg(msg: &str) -> bool {
+    msg.to_ascii_lowercase().contains("not found")
 }
 
 #[derive(Deserialize)]
@@ -260,12 +277,17 @@ impl LinearClient {
             .await;
         let data = match data {
             Ok(data) => data,
-            // Linear reports an unknown identifier as an "Entity not found" error.
+            // Linear reports an unknown identifier as "Entity not found" on either
+            // HTTP 200 (GraphQL error) or HTTP 400/404.
             Err(LinearError::GraphQl { messages })
-                if messages.iter().any(|m| m.contains("not found")) =>
+                if messages.iter().any(|m| is_not_found_msg(m)) =>
             {
                 return Ok(None)
             }
+            Err(LinearError::Rejected {
+                status: 400 | 404,
+                body,
+            }) if is_not_found_msg(&body) => return Ok(None),
             Err(e) => return Err(e),
         };
         let issue = &data["issue"];
@@ -325,17 +347,19 @@ impl LinearClient {
                 }}),
             )
             .await?;
+        require_success("AttachmentCreate", &data["attachmentCreate"])?;
         decode(data["attachmentCreate"]["attachment"]["id"].clone())
     }
 
     pub async fn attachment_delete(&self, id: &str) -> Result<(), LinearError> {
-        self.run(
-            "AttachmentDelete",
-            "mutation AttachmentDelete($id: String!) { attachmentDelete(id: $id) { success } }",
-            json!({ "id": id }),
-        )
-        .await
-        .map(drop)
+        let data = self
+            .run(
+                "AttachmentDelete",
+                "mutation AttachmentDelete($id: String!) { attachmentDelete(id: $id) { success } }",
+                json!({ "id": id }),
+            )
+            .await?;
+        require_success("AttachmentDelete", &data["attachmentDelete"])
     }
 
     pub async fn workflow_states(&self, team_key: &str) -> Result<Vec<WorkflowState>, LinearError> {
@@ -354,13 +378,14 @@ impl LinearClient {
         issue_id: &str,
         state_id: &str,
     ) -> Result<(), LinearError> {
-        self.run(
-            "IssueUpdate",
-            "mutation IssueUpdate($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { stateId: $stateId }) { success } }",
-            json!({ "id": issue_id, "stateId": state_id }),
-        )
-        .await
-        .map(drop)
+        let data = self
+            .run(
+                "IssueUpdate",
+                "mutation IssueUpdate($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { stateId: $stateId }) { success } }",
+                json!({ "id": issue_id, "stateId": state_id }),
+            )
+            .await?;
+        require_success("IssueUpdate", &data["issueUpdate"])
     }
 
     pub async fn label_id(&self, name: &str) -> Result<Option<String>, LinearError> {
@@ -376,12 +401,13 @@ impl LinearClient {
     }
 
     pub async fn issue_add_label(&self, issue_id: &str, label_id: &str) -> Result<(), LinearError> {
-        self.run(
-            "IssueAddLabel",
-            "mutation IssueAddLabel($id: String!, $labelId: String!) { issueAddLabel(id: $id, labelId: $labelId) { success } }",
-            json!({ "id": issue_id, "labelId": label_id }),
-        )
-        .await
-        .map(drop)
+        let data = self
+            .run(
+                "IssueAddLabel",
+                "mutation IssueAddLabel($id: String!, $labelId: String!) { issueAddLabel(id: $id, labelId: $labelId) { success } }",
+                json!({ "id": issue_id, "labelId": label_id }),
+            )
+            .await?;
+        require_success("IssueAddLabel", &data["issueAddLabel"])
     }
 }

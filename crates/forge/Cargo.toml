@@ -32,7 +32,7 @@ url = { workspace = true, features = ["serde"] }
 base64 = { workspace = true }
 http = { workspace = true }
 bytes = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 argon2 = { version = "0.5", features = ["std"] }
 getrandom = { version = "0.3", features = ["std"] }
 hex = "0.4"

@@ -69,6 +69,13 @@ pub enum Action {
     PostStatus,
 }
 
+/// Whether `p` is a member of `repo` (admin scope, repo owner, or collaborator).
+pub fn is_member(db: &Db, p: &Principal, repo: &RepoRecord) -> Result<bool, ForgeError> {
+    Ok(p.scopes.contains(&Scope::Admin)
+        || p.user == repo.name.owner.as_str()
+        || db.is_collaborator(repo.id, &p.user)?)
+}
+
 /// The authorization rule. Anonymous callers may only read public repos.
 pub fn can(
     db: &Db,
@@ -79,14 +86,12 @@ pub fn can(
     let Some(p) = principal else {
         return Ok(action == Action::Read && !repo.private);
     };
-    let member = p.scopes.contains(&Scope::Admin)
-        || p.user == repo.name.owner.as_str()
-        || db.is_collaborator(repo.id, &p.user)?;
+    let member = is_member(db, p, repo)?;
     let writer = member && p.scopes.contains(&Scope::Write);
     Ok(match action {
         Action::Read => !repo.private || (member && (p.scopes.contains(&Scope::Read) || writer)),
         Action::Push | Action::Contribute | Action::Merge => writer,
-        Action::PostStatus => p.scopes.contains(&Scope::Status) && (member || !repo.private),
+        Action::PostStatus => member && p.scopes.contains(&Scope::Status),
     })
 }
 
@@ -206,9 +211,10 @@ mod tests {
         assert_eq!(p.user, "alice");
         assert!(p.scopes.contains(&Scope::Write));
         let mut forged = token.clone();
-        forged.pop();
-        forged.push('0');
-        assert!(verify_token(&db, &forged).unwrap().is_none() || forged == token);
+        let last = forged.pop().unwrap();
+        forged.push(if last == '0' { '1' } else { '0' });
+        assert_ne!(forged, token);
+        assert!(verify_token(&db, &forged).unwrap().is_none());
         assert!(verify_token(&db, "dfp_nope_nope").unwrap().is_none());
     }
 
@@ -232,7 +238,15 @@ mod tests {
             user: "ci".into(),
             scopes: parse_scopes("status").unwrap(),
         };
+        // Non-members cannot spoof statuses even on public repositories.
+        assert!(!can(&db, Some(&ci), &repo, Action::PostStatus).unwrap());
+        db.add_collaborator(id, "ci").unwrap();
         assert!(can(&db, Some(&ci), &repo, Action::PostStatus).unwrap());
         assert!(!can(&db, Some(&ci), &repo, Action::Push).unwrap());
+        let admin_ci = Principal {
+            user: "bot".into(),
+            scopes: parse_scopes("admin,status").unwrap(),
+        };
+        assert!(can(&db, Some(&admin_ci), &repo, Action::PostStatus).unwrap());
     }
 }

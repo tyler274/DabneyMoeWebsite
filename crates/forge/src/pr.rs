@@ -88,11 +88,20 @@ pub fn open(
         .ok_or_else(|| ForgeError::NotFound(format!("branch {}", new.head)))?;
     let target = repo::branch_tip(&repo, &base)?
         .ok_or_else(|| ForgeError::NotFound(format!("branch {base}")))?;
-    if diff::fork_point(&repo, target, head)? == head {
-        return Err(ForgeError::BadRequest(format!(
-            "{} has no commits that are not on {base}",
-            new.head
-        )));
+    match diff::fork_point(&repo, target, head)? {
+        None => {
+            return Err(ForgeError::Unprocessable(format!(
+                "{} and {base} have no common ancestor",
+                new.head
+            )));
+        }
+        Some(base_id) if base_id == head => {
+            return Err(ForgeError::BadRequest(format!(
+                "{} has no commits that are not on {base}",
+                new.head
+            )));
+        }
+        Some(_) => {}
     }
     let pr = forge.db.insert_pr(
         record.id,
@@ -133,7 +142,9 @@ pub fn after_push(
             if pr.head_oid == command.new {
                 continue;
             }
-            forge.db.set_pr_head(pr.id, command.new)?;
+            if !forge.db.set_pr_head(pr.id, command.new)? {
+                continue;
+            }
             set_pull_ref(&repo, pr.number, command.new)?;
             let pr = forge.db.pr_by_id(pr.id)?;
             tracing::info!(repo = %record.name, pr = pr.number, head = %command.new, "pull request head moved");
@@ -166,6 +177,8 @@ pub fn review(
     body: &str,
     seen: Option<ObjectId>,
 ) -> Result<Review, ForgeError> {
+    let lock = forge.repo_lock(record.id);
+    let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
     let pr = find(forge, record, number)?;
     require_open(&pr)?;
     if verdict != Verdict::Comment && reviewer.user == pr.author {
@@ -203,6 +216,8 @@ pub fn comment(
     author: &Principal,
     new: NewComment,
 ) -> Result<InlineComment, ForgeError> {
+    let lock = forge.repo_lock(record.id);
+    let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
     let pr = find(forge, record, number)?;
     require_open(&pr)?;
     if new.body.trim().is_empty() {
@@ -246,17 +261,30 @@ pub fn close(
     number: u64,
     by: &Principal,
 ) -> Result<PullRequest, ForgeError> {
+    let lock = forge.repo_lock(record.id);
+    let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
     let pr = find(forge, record, number)?;
     require_open(&pr)?;
-    if !forge.db.mark_closed(pr.id)? {
+    let Some((closed, deliveries)) = forge.db.commit_close(pr.id, |closed| {
+        webhooks::prepare(forge, record, closed, PrAction::Closed)
+    })?
+    else {
         return Err(ForgeError::Conflict(format!(
             "pull request #{number} is no longer open"
         )));
+    };
+    if deliveries > 0 {
+        forge.hooks_ready.notify_one();
     }
-    let pr = forge.db.pr_by_id(pr.id)?;
     tracing::info!(repo = %record.name, pr = number, by = %by.user, "closed pull request");
-    webhooks::emit(forge, record, &pr, PrAction::Closed)?;
-    Ok(pr)
+    Ok(closed)
+}
+
+/// The single rule for safe external URLs stored and linked from the UI:
+/// only `http://` or `https://` with a host.
+pub fn is_safe_http_url(raw: &str) -> bool {
+    url::Url::parse(raw)
+        .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host_str().is_some())
 }
 
 pub struct NewStatus {
@@ -280,13 +308,25 @@ pub fn post_status(
             "status context must be 1-255 characters".into(),
         ));
     }
+    let target_url = match new.target_url {
+        Some(raw) => {
+            let trimmed = raw.trim();
+            if !is_safe_http_url(trimmed) {
+                return Err(ForgeError::BadRequest(
+                    "target_url must be a valid http(s) URL with a host".into(),
+                ));
+            }
+            Some(trimmed.to_owned())
+        }
+        None => None,
+    };
     let repo = forge.repos.open(&record.name)?;
     crate::git::pack::require_commit(&repo, commit)
         .map_err(|_| ForgeError::NotFound(format!("commit {commit}")))?;
     let status = CheckStatus {
         context: context.to_owned(),
         state: new.state,
-        target_url: new.target_url,
+        target_url,
         description: new.description,
         creator: creator.user.clone(),
         created_at: crate::db::now(),
@@ -295,11 +335,12 @@ pub fn post_status(
     Ok(status)
 }
 
-/// The commit the pull request's diff starts from, and the diff.
+/// The commit the pull request's diff starts from (`None` if unrelated), and
+/// the diff.
 pub fn pr_diff(
     repo: &gix::Repository,
     pr: &PullRequest,
-) -> Result<(ObjectId, Vec<FileDiff>), ForgeError> {
+) -> Result<(Option<ObjectId>, Vec<FileDiff>), ForgeError> {
     let target = match &pr.state {
         PrState::Merged { commit } => repo
             .find_commit(*commit)
@@ -317,7 +358,7 @@ pub fn pr_diff(
 /// Everything a pull request page shows.
 pub struct PrView {
     pub pr: PullRequest,
-    pub base: ObjectId,
+    pub base: Option<ObjectId>,
     pub files: Vec<FileDiff>,
     pub reviews: Vec<Review>,
     pub comments: Vec<InlineComment>,

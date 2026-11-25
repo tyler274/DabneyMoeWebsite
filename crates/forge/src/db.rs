@@ -12,8 +12,24 @@ use serde::Serialize;
 use crate::error::ForgeError;
 use crate::repo::RepoName;
 
+/// Current UTC timestamp in milliseconds since the Unix epoch.
 pub fn now() -> i64 {
-    jiff::Timestamp::now().as_second()
+    jiff::Timestamp::now().as_millisecond()
+}
+
+/// Format a millisecond timestamp as RFC 3339 (e.g. `2026-11-25T10:00:00.001Z`).
+pub fn rfc3339(millis: i64) -> String {
+    jiff::Timestamp::from_millisecond(millis)
+        .unwrap_or(jiff::Timestamp::UNIX_EPOCH)
+        .to_string()
+}
+
+/// A pre-built webhook delivery ready to insert inside a SQLite transaction.
+pub struct PendingDelivery {
+    pub delivery_id: String,
+    pub action: String,
+    pub target: String,
+    pub payload: Vec<u8>,
 }
 
 /// Enums stored as their lowercase label.
@@ -337,10 +353,14 @@ fn pr_row(row: &Row<'_>) -> rusqlite::Result<PullRequest> {
             ))
         }
     };
+    let number_i64: i64 = row.get(2)?;
+    let number = u64::try_from(number_i64).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Integer, Box::new(e))
+    })?;
     Ok(PullRequest {
         id: row.get(0)?,
         repo_id: row.get(1)?,
-        number: row.get(2)?,
+        number,
         title: row.get(3)?,
         body: row.get(4)?,
         author: row.get(5)?,
@@ -552,7 +572,7 @@ impl Db {
     ) -> Result<PullRequest, ForgeError> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
-        let number: u64 = tx.query_row(
+        let number: i64 = tx.query_row(
             "SELECT COALESCE(MAX(number), 0) + 1 FROM pull_requests WHERE repo_id = ?1",
             params![repo_id],
             |r| r.get(0),
@@ -586,6 +606,9 @@ impl Db {
     }
 
     pub fn pr(&self, repo_id: i64, number: u64) -> Result<Option<PullRequest>, ForgeError> {
+        let Ok(number) = i64::try_from(number) else {
+            return Ok(None);
+        };
         Ok(self
             .conn()
             .query_row(
@@ -632,35 +655,101 @@ impl Db {
         Ok(rows)
     }
 
-    pub fn set_pr_head(&self, pr_id: i64, head: ObjectId) -> Result<(), ForgeError> {
-        self.conn().execute(
-            "UPDATE pull_requests SET head_oid = ?2, updated_at = ?3 WHERE id = ?1",
+    /// Advance `pr_id`'s head only if it is still open. Returns whether updated.
+    pub fn set_pr_head(&self, pr_id: i64, head: ObjectId) -> Result<bool, ForgeError> {
+        let changed = self.conn().execute(
+            "UPDATE pull_requests SET head_oid = ?2, updated_at = MAX(?3, updated_at + 1)
+             WHERE id = ?1 AND state = 'open'",
             params![pr_id, head.to_string(), now()],
         )?;
-        Ok(())
+        Ok(changed == 1)
     }
 
-    /// Record the merge, only if the PR is still open at the merged head.
-    pub fn mark_merged(
+    /// Atomically mark `pr_id` merged (only if still open at `head`), insert
+    /// its webhook deliveries, and optionally queue mirror jobs. Returns
+    /// `None` if the PR was no longer open at `head`.
+    pub fn commit_merge(
         &self,
         pr_id: i64,
+        repo_id: i64,
         head: ObjectId,
         commit: ObjectId,
-    ) -> Result<bool, ForgeError> {
-        let changed = self.conn().execute(
-            "UPDATE pull_requests SET state = 'merged', merged_oid = ?3, updated_at = ?4
+        mirror_trigger: Option<&str>,
+        build_deliveries: impl FnOnce(&PullRequest) -> Result<Vec<PendingDelivery>, ForgeError>,
+    ) -> Result<Option<(PullRequest, usize, usize)>, ForgeError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let ts = now();
+        let changed = tx.execute(
+            "UPDATE pull_requests
+             SET state = 'merged', merged_oid = ?3, updated_at = MAX(?4, updated_at + 1)
              WHERE id = ?1 AND state = 'open' AND head_oid = ?2",
-            params![pr_id, head.to_string(), commit.to_string(), now()],
+            params![pr_id, head.to_string(), commit.to_string(), ts],
         )?;
-        Ok(changed == 1)
+        if changed != 1 {
+            return Ok(None);
+        }
+        let pr = tx.query_row(
+            &format!("SELECT {PR_COLUMNS} FROM pull_requests WHERE id = ?1"),
+            params![pr_id],
+            pr_row,
+        )?;
+        let deliveries = build_deliveries(&pr)?;
+        let delivery_count = deliveries.len();
+        for d in deliveries {
+            tx.execute(
+                "INSERT INTO webhook_deliveries (pr_id, delivery_id, action, target, status, payload, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'pending', ?5, ?6, ?6)",
+                params![pr.id, d.delivery_id, d.action, d.target, d.payload, ts],
+            )?;
+        }
+        let mirror_count = if let Some(trigger) = mirror_trigger {
+            tx.execute(
+                "INSERT INTO mirror_jobs (repo_id, mirror_id, trigger, status, created_at, updated_at)
+                 SELECT repo_id, id, ?2, 'queued', ?3, ?3 FROM mirrors WHERE repo_id = ?1",
+                params![repo_id, trigger, ts],
+            )?
+        } else {
+            0
+        };
+        tx.commit()?;
+        Ok(Some((pr, delivery_count, mirror_count)))
     }
 
-    pub fn mark_closed(&self, pr_id: i64) -> Result<bool, ForgeError> {
-        let changed = self.conn().execute(
-            "UPDATE pull_requests SET state = 'closed', updated_at = ?2 WHERE id = ?1 AND state = 'open'",
-            params![pr_id, now()],
+    /// Atomically mark `pr_id` closed (only if still open) and insert its
+    /// webhook deliveries. Returns `None` if the PR was not open.
+    pub fn commit_close(
+        &self,
+        pr_id: i64,
+        build_deliveries: impl FnOnce(&PullRequest) -> Result<Vec<PendingDelivery>, ForgeError>,
+    ) -> Result<Option<(PullRequest, usize)>, ForgeError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let ts = now();
+        let changed = tx.execute(
+            "UPDATE pull_requests SET state = 'closed', updated_at = MAX(?2, updated_at + 1)
+             WHERE id = ?1 AND state = 'open'",
+            params![pr_id, ts],
         )?;
-        Ok(changed == 1)
+        if changed != 1 {
+            return Ok(None);
+        }
+        let pr = tx.query_row(
+            &format!("SELECT {PR_COLUMNS} FROM pull_requests WHERE id = ?1"),
+            params![pr_id],
+            pr_row,
+        )?;
+        let deliveries = build_deliveries(&pr)?;
+        let delivery_count = deliveries.len();
+        for d in deliveries {
+            tx.execute(
+                "INSERT INTO webhook_deliveries (pr_id, delivery_id, action, target, status, payload, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'pending', ?5, ?6, ?6)",
+                params![pr.id, d.delivery_id, d.action, d.target, d.payload, ts],
+            )?;
+        }
+        tx.commit()?;
+        Ok(Some((pr, delivery_count)))
     }
 
     // ---- reviews and comments ----------------------------------------
@@ -674,13 +763,14 @@ impl Db {
         body: &str,
     ) -> Result<i64, ForgeError> {
         let conn = self.conn();
+        let ts = now();
         conn.execute(
             "INSERT INTO reviews (pr_id, author, verdict, head_oid, body, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![pr_id, author, verdict, head.to_string(), body, now()],
+            params![pr_id, author, verdict, head.to_string(), body, ts],
         )?;
         conn.execute(
-            "UPDATE pull_requests SET updated_at = ?2 WHERE id = ?1",
-            params![pr_id, now()],
+            "UPDATE pull_requests SET updated_at = MAX(?2, updated_at + 1) WHERE id = ?1",
+            params![pr_id, ts],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -713,6 +803,7 @@ impl Db {
         body: &str,
     ) -> Result<i64, ForgeError> {
         let conn = self.conn();
+        let ts = now();
         conn.execute(
             "INSERT INTO comments (pr_id, author, head_oid, path, side, line, body, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -724,12 +815,12 @@ impl Db {
                 anchor.side,
                 anchor.line,
                 body,
-                now()
+                ts
             ],
         )?;
         conn.execute(
-            "UPDATE pull_requests SET updated_at = ?2 WHERE id = ?1",
-            params![pr_id, now()],
+            "UPDATE pull_requests SET updated_at = MAX(?2, updated_at + 1) WHERE id = ?1",
+            params![pr_id, ts],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -821,6 +912,18 @@ impl Db {
         username: Option<&str>,
         token_env: Option<&str>,
     ) -> Result<i64, ForgeError> {
+        let parsed = url::Url::parse(url)
+            .map_err(|_| ForgeError::BadRequest(format!("invalid mirror URL {url:?}")))?;
+        if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+            return Err(ForgeError::BadRequest(format!(
+                "mirror URL must be http(s) with a host: {url:?}"
+            )));
+        }
+        if !parsed.username().is_empty() || parsed.password().is_some() {
+            return Err(ForgeError::BadRequest(
+                "mirror URL must not embed credentials; use --username and --token-env".into(),
+            ));
+        }
         let conn = self.conn();
         conn.execute(
             "INSERT INTO mirrors (repo_id, name, url, username, token_env) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -872,7 +975,7 @@ impl Db {
             .optional()?;
         if let Some(job) = &job {
             tx.execute(
-                "UPDATE mirror_jobs SET status = 'running', attempts = attempts + 1, updated_at = ?2 WHERE id = ?1",
+                "UPDATE mirror_jobs SET status = 'running', updated_at = ?2 WHERE id = ?1",
                 params![job.id, now()],
             )?;
         }
@@ -884,11 +987,12 @@ impl Db {
         &self,
         id: i64,
         status: JobStatus,
+        attempts: u32,
         error: Option<&str>,
     ) -> Result<(), ForgeError> {
         self.conn().execute(
-            "UPDATE mirror_jobs SET status = ?2, last_error = ?3, updated_at = ?4 WHERE id = ?1",
-            params![id, status, error, now()],
+            "UPDATE mirror_jobs SET status = ?2, attempts = attempts + ?3, last_error = ?4, updated_at = ?5 WHERE id = ?1",
+            params![id, status, attempts, error, now()],
         )?;
         Ok(())
     }

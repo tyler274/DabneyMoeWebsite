@@ -30,6 +30,8 @@ pub enum ForgeError {
     Conflict(String),
     #[error("bad request: {0}")]
     BadRequest(String),
+    #[error("unprocessable: {0}")]
+    Unprocessable(String),
     #[error("background task failed")]
     Join(#[from] tokio::task::JoinError),
 }
@@ -40,6 +42,7 @@ impl ForgeError {
             ForgeError::InvalidName(_) | ForgeError::BadRequest(_) | ForgeError::Protocol(_) => {
                 StatusCode::BAD_REQUEST
             }
+            ForgeError::Unprocessable(_) => StatusCode::UNPROCESSABLE_ENTITY,
             ForgeError::NotFound(_) => StatusCode::NOT_FOUND,
             ForgeError::Unauthenticated => StatusCode::UNAUTHORIZED,
             ForgeError::Forbidden(_) => StatusCode::FORBIDDEN,

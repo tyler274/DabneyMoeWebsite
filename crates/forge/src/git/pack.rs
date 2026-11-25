@@ -196,13 +196,61 @@ fn declared_objects(pack: &[u8]) -> Result<u32, PackError> {
     Ok(u32::from_be_bytes([pack[8], pack[9], pack[10], pack[11]]))
 }
 
+/// A newly received pack written into `objects/pack/`, guarded until a ref
+/// transaction succeeds. Dropping without calling [`ReceivedPack::commit`]
+/// removes the pack, index, and `.keep` marker if this operation created them.
+pub struct ReceivedPack {
+    keep_path: Option<std::path::PathBuf>,
+    data_path: Option<std::path::PathBuf>,
+    index_path: Option<std::path::PathBuf>,
+    committed: bool,
+}
+
+impl ReceivedPack {
+    /// Mark the pack as referenced by committed refs and drop its `.keep`
+    /// marker.
+    pub fn commit(mut self) {
+        self.committed = true;
+        if let Some(keep) = self.keep_path.take() {
+            if let Err(e) = std::fs::remove_file(&keep) {
+                tracing::warn!(path = %keep.display(), error = %e, "could not remove pack .keep");
+            }
+        }
+    }
+}
+
+impl Drop for ReceivedPack {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        // Only remove data/index files when this call actually created a fresh
+        // pack (signaled by `keep_path.is_some()`). An existing identical pack
+        // returns `keep_path == None` and must not be deleted.
+        if let Some(keep) = self.keep_path.take() {
+            for path in [self.index_path.take(), self.data_path.take(), Some(keep)]
+                .into_iter()
+                .flatten()
+            {
+                if let Err(e) = std::fs::remove_file(&path) {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        tracing::warn!(path = %path.display(), error = %e, "could not remove rejected pack artifact");
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Decode `pack` (resolving thin-pack bases from the repository), write it
-/// and its index into `objects/pack`. Returns the `.keep` marker to remove
-/// once refs point into the pack.
+/// and its index into `objects/pack`. Call [`ReceivedPack::commit`] once
+/// refs point into the pack; dropping it without committing removes newly
+/// written files.
 pub fn receive_pack(
     repo: &gix::Repository,
     pack_bytes: &[u8],
-) -> Result<Option<std::path::PathBuf>, PackError> {
+    alloc_limit_bytes: usize,
+) -> Result<Option<ReceivedPack>, PackError> {
     if pack_bytes.is_empty() || declared_objects(pack_bytes)? == 0 {
         return Ok(None);
     }
@@ -215,40 +263,125 @@ pub fn receive_pack(
         &AtomicBool::new(false),
         Some(repo.objects.clone().into_inner()),
         repo.object_hash(),
-        pack::bundle::write::Options::default(),
+        pack::bundle::write::Options {
+            alloc_limit_bytes: Some(alloc_limit_bytes),
+            ..Default::default()
+        },
     )
     .map_err(odb)?;
-    Ok(outcome.keep_path)
+    Ok(Some(ReceivedPack {
+        keep_path: outcome.keep_path,
+        data_path: outcome.data_path,
+        index_path: outcome.index_path,
+        committed: false,
+    }))
 }
 
-/// Check that `tip` is a commit whose new history has its trees present.
-pub fn check_connected(
+fn check_tree_connected(
     repo: &gix::Repository,
-    tip: ObjectId,
-    known: &[ObjectId],
+    root: ObjectId,
+    checked_trees: &mut HashSet<ObjectId>,
+    checked_blobs: &mut HashSet<ObjectId>,
 ) -> Result<(), PackError> {
-    let object = repo
-        .try_find_object(tip)
-        .map_err(odb)?
-        .ok_or(PackError::Missing(tip))?;
-    if object.kind != gix::objs::Kind::Commit {
-        // Tags may point at any object; branch tips are checked by the caller.
-        return Ok(());
-    }
-    let walk = repo
-        .rev_walk([tip])
-        .with_hidden(known.iter().copied())
-        .all()
-        .map_err(odb)?;
-    for info in walk {
-        let info = info.map_err(odb)?;
-        let commit = repo.find_commit(info.id).map_err(odb)?;
-        let tree = commit.tree_id().map_err(odb)?.detach();
-        if !repo.has_object(tree) {
-            return Err(PackError::Missing(tree));
+    let mut stack = vec![root];
+    while let Some(tree_id) = stack.pop() {
+        if !checked_trees.insert(tree_id) {
+            continue;
+        }
+        let object = repo
+            .try_find_object(tree_id)
+            .map_err(odb)?
+            .ok_or(PackError::Missing(tree_id))?;
+        if object.kind != gix::objs::Kind::Tree {
+            return Err(PackError::Kind {
+                id: tree_id,
+                kind: object.kind,
+                expected: "tree",
+            });
+        }
+        let tree = object.into_tree();
+        for entry in tree.iter() {
+            let entry = entry.map_err(odb)?;
+            let mode = entry.mode();
+            let oid = entry.oid().to_owned();
+            if mode.is_tree() {
+                stack.push(oid);
+            } else if (mode.is_blob() || mode.is_link()) && checked_blobs.insert(oid) {
+                let header = repo
+                    .try_find_header(oid)
+                    .map_err(odb)?
+                    .ok_or(PackError::Missing(oid))?;
+                if header.kind() != gix::objs::Kind::Blob {
+                    return Err(PackError::Kind {
+                        id: oid,
+                        kind: header.kind(),
+                        expected: "blob",
+                    });
+                }
+            }
         }
     }
     Ok(())
+}
+
+/// Check that `tip` (commit, annotated tag chain, tree, or blob) and every
+/// newly reachable commit, subtree, and blob exist in the object database.
+pub fn check_connected(
+    repo: &gix::Repository,
+    tip: ObjectId,
+    known_commits: &[ObjectId],
+    checked_trees: &mut HashSet<ObjectId>,
+    checked_blobs: &mut HashSet<ObjectId>,
+) -> Result<(), PackError> {
+    let mut id = tip;
+    let mut seen_tags = HashSet::new();
+    let object = loop {
+        let obj = repo
+            .try_find_object(id)
+            .map_err(odb)?
+            .ok_or(PackError::Missing(id))?;
+        if obj.kind == gix::objs::Kind::Tag {
+            if !seen_tags.insert(id) {
+                return Err(PackError::Malformed);
+            }
+            id = obj.into_tag().target_id().map_err(odb)?.detach();
+        } else {
+            break obj;
+        }
+    };
+    match object.kind {
+        gix::objs::Kind::Commit => {
+            let walk = repo
+                .rev_walk([id])
+                .with_hidden(known_commits.iter().copied())
+                .all()
+                .map_err(odb)?;
+            for info in walk {
+                let info = info.map_err(odb)?;
+                let commit = repo.find_commit(info.id).map_err(odb)?;
+                for parent in commit.parent_ids() {
+                    let parent_id = parent.detach();
+                    let header = repo
+                        .try_find_header(parent_id)
+                        .map_err(odb)?
+                        .ok_or(PackError::Missing(parent_id))?;
+                    if header.kind() != gix::objs::Kind::Commit {
+                        return Err(PackError::Kind {
+                            id: parent_id,
+                            kind: header.kind(),
+                            expected: "commit",
+                        });
+                    }
+                }
+                let tree = commit.tree_id().map_err(odb)?.detach();
+                check_tree_connected(repo, tree, checked_trees, checked_blobs)?;
+            }
+            Ok(())
+        }
+        gix::objs::Kind::Tree => check_tree_connected(repo, id, checked_trees, checked_blobs),
+        gix::objs::Kind::Blob => Ok(()),
+        gix::objs::Kind::Tag => unreachable!("peeled above"),
+    }
 }
 
 /// Require `id` to be a commit.

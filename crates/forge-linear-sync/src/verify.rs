@@ -83,13 +83,13 @@ impl EventKind {
     }
 }
 
-/// A body whose signature verified against the secret of `repo`. Only
-/// [`verify`] constructs one from untrusted input, so parsing an unverified
-/// body is not expressible.
+/// A body whose signature verified against the secret of at least one
+/// configured repository. Only [`verify`] constructs one from untrusted
+/// input, so parsing an unverified body is not expressible.
 #[derive(Debug, Clone)]
 pub struct VerifiedPayload<T> {
     forge: Forge,
-    repo: RepoPath,
+    verified_repos: Vec<RepoPath>,
     delivery_id: String,
     body: T,
 }
@@ -99,9 +99,14 @@ impl<T> VerifiedPayload<T> {
         self.forge
     }
 
-    /// The configured repository whose secret verified this body.
-    pub fn repo(&self) -> &RepoPath {
-        &self.repo
+    /// Every configured repository whose secret verified this body.
+    pub fn verified_repos(&self) -> &[RepoPath] {
+        &self.verified_repos
+    }
+
+    /// Whether `repo`'s configured secret verified this body.
+    pub fn matches_repo(&self, repo: &RepoPath) -> bool {
+        self.verified_repos.contains(repo)
     }
 
     pub fn delivery_id(&self) -> &str {
@@ -115,7 +120,7 @@ impl<T> VerifiedPayload<T> {
     pub fn map<U>(self, f: impl FnOnce(T) -> U) -> VerifiedPayload<U> {
         VerifiedPayload {
             forge: self.forge,
-            repo: self.repo,
+            verified_repos: self.verified_repos,
             delivery_id: self.delivery_id,
             body: f(self.body),
         }
@@ -124,13 +129,13 @@ impl<T> VerifiedPayload<T> {
     /// Rebuild a payload this process verified earlier and stored durably.
     pub(crate) fn from_trusted_store(
         forge: Forge,
-        repo: RepoPath,
+        verified_repos: Vec<RepoPath>,
         delivery_id: String,
         body: T,
     ) -> Self {
         VerifiedPayload {
             forge,
-            repo,
+            verified_repos,
             delivery_id,
             body,
         }
@@ -152,7 +157,8 @@ fn delivery_id(forge: Forge, headers: &HeaderMap, body: &[u8]) -> String {
 }
 
 /// Verify `body` against every `(repo, secrets)` candidate configured for
-/// `forge`. Comparison is constant-time per secret; nothing is parsed.
+/// `forge`, collecting every repository whose secret matches. Comparison is
+/// constant-time per secret; nothing in `body` is parsed.
 pub fn verify<'a>(
     forge: Forge,
     headers: &HeaderMap,
@@ -164,36 +170,44 @@ pub fn verify<'a>(
         .get(header)
         .map(|v| v.as_bytes())
         .ok_or(VerifyError::Missing { header })?;
-    let matches = |secret: &Secret| -> Result<bool, VerifyError> {
-        match forge {
-            Forge::GitLab => Ok(bool::from(secret.expose().ct_eq(presented))),
-            Forge::Forgejo | Forge::Gitea | Forge::Dabney => {
-                let text = std::str::from_utf8(presented)
-                    .map_err(|_| VerifyError::Malformed { header })?;
-                let text = text.strip_prefix("sha256=").unwrap_or(text);
-                let expected =
-                    hex::decode(text.trim()).map_err(|_| VerifyError::Malformed { header })?;
+    let expected_mac = match forge {
+        Forge::GitLab => None,
+        Forge::Forgejo | Forge::Gitea | Forge::Dabney => {
+            let text =
+                std::str::from_utf8(presented).map_err(|_| VerifyError::Malformed { header })?;
+            let text = text.strip_prefix("sha256=").unwrap_or(text);
+            let expected =
+                hex::decode(text.trim()).map_err(|_| VerifyError::Malformed { header })?;
+            Some(expected)
+        }
+    };
+    let matches = |secret: &Secret| -> bool {
+        match &expected_mac {
+            None => bool::from(secret.expose().ct_eq(presented)),
+            Some(expected) => {
                 let mut mac = Hmac::<Sha256>::new_from_slice(secret.expose())
                     .expect("HMAC accepts any key length");
                 mac.update(&body);
                 // `verify_slice` compares in constant time.
-                Ok(mac.verify_slice(&expected).is_ok())
+                mac.verify_slice(expected).is_ok()
             }
         }
     };
+    let mut verified_repos = Vec::new();
     for (repo, secrets) in candidates {
-        for secret in secrets {
-            if matches(secret)? {
-                return Ok(VerifiedPayload {
-                    forge,
-                    repo: repo.clone(),
-                    delivery_id: delivery_id(forge, headers, &body),
-                    body,
-                });
-            }
+        if secrets.iter().any(matches) && !verified_repos.contains(repo) {
+            verified_repos.push(repo.clone());
         }
     }
-    Err(VerifyError::Mismatch)
+    if verified_repos.is_empty() {
+        return Err(VerifyError::Mismatch);
+    }
+    Ok(VerifiedPayload {
+        forge,
+        verified_repos,
+        delivery_id: delivery_id(forge, headers, &body),
+        body,
+    })
 }
 
 #[cfg(test)]
@@ -240,8 +254,31 @@ mod tests {
             ]);
             let v = verify(forge, &h, body.clone(), [(&r, &secrets[..])]).unwrap();
             assert_eq!(v.delivery_id(), "d-1");
-            assert_eq!(v.repo(), &r);
+            assert_eq!(v.verified_repos(), std::slice::from_ref(&r));
+            assert!(v.matches_repo(&r));
         }
+    }
+
+    #[test]
+    fn shared_secret_collects_all_matching_repos_while_distinct_secret_isolates() {
+        let body = Bytes::from_static(b"what do ya want for nothing?");
+        let shared = [Secret::new("Jefe")];
+        let other = [Secret::new("other-secret")];
+        let r1 = RepoPath::parse("tyler/site").unwrap();
+        let r2 = RepoPath::parse("tyler/coda-rust").unwrap();
+        let r3 = RepoPath::parse("tyler/isolated").unwrap();
+        let h = headers(&[("x-forgejo-signature", RFC4231_SIG)]);
+        let v = verify(
+            Forge::Dabney,
+            &h,
+            body,
+            [(&r1, &shared[..]), (&r2, &shared[..]), (&r3, &other[..])],
+        )
+        .unwrap();
+        assert!(v.matches_repo(&r1));
+        assert!(v.matches_repo(&r2));
+        assert!(!v.matches_repo(&r3));
+        assert_eq!(v.verified_repos().len(), 2);
     }
 
     #[test]

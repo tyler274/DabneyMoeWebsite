@@ -2,6 +2,8 @@
 //! requests and one pull request with diff, reviews, checks and the merge
 //! gate. Pages are read-only; changes go through Git and the API.
 
+use std::collections::HashSet;
+
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::routing::get;
@@ -10,7 +12,7 @@ use maud::{html, Markup, PreEscaped, DOCTYPE};
 
 use crate::app::{blocking, App, Forge};
 use crate::auth::{self, Action};
-use crate::db::{InlineComment, PrState, RepoRecord, Side, Verdict};
+use crate::db::{InlineComment, PrState, RepoRecord, Verdict};
 use crate::diff::{ChangeKind, FileBody, FileDiff, LineKind};
 use crate::error::ForgeError;
 use crate::pr::{self, PrView};
@@ -219,19 +221,53 @@ async fn pulls(
     .await
 }
 
-fn comments_at<'a>(
-    comments: &'a [InlineComment],
-    file: &'a FileDiff,
-    side: Side,
-    line: Option<u32>,
-) -> impl Iterator<Item = &'a InlineComment> {
-    comments.iter().filter(move |c| {
-        c.anchor.path == file.path && c.anchor.side == side && Some(c.anchor.line) == line
-    })
-}
-
-fn file_diff(view: &PrView, file: &FileDiff) -> Markup {
+fn file_diff(view: &PrView, file: &FileDiff, rendered: &mut HashSet<i64>) -> Markup {
     let head = view.pr.head_oid;
+    let body = match &file.body {
+        FileBody::Binary => html! { p class="muted" { "Binary file" } },
+        FileBody::TooLarge => html! { p class="muted" { "File too large to display" } },
+        FileBody::Submodule => html! { p class="muted" { "Submodule change" } },
+        FileBody::Text { hunks } => {
+            let mut rows = Vec::new();
+            for h in hunks {
+                rows.push(html! {
+                    tr class="hunk" { td class="n" {} td class="n" {} td { (h.header()) } }
+                });
+                for l in &h.lines {
+                    let (class, mark) = match l.kind {
+                        LineKind::Added => ("add", "+"),
+                        LineKind::Removed => ("del", "-"),
+                        LineKind::Context => ("ctx", " "),
+                    };
+                    rows.push(html! {
+                        tr class=(class) {
+                            td class="n" { @if let Some(n) = l.old { (n) } }
+                            td class="n" { @if let Some(n) = l.new { (n) } }
+                            td { (mark) (l.text) }
+                        }
+                    });
+                    let notes: Vec<&InlineComment> = view
+                        .comments
+                        .iter()
+                        .filter(|c| {
+                            c.anchor.path == file.path
+                                && l.matches_anchor(c.anchor.side, c.anchor.line)
+                        })
+                        .collect();
+                    for c in notes {
+                        rendered.insert(c.id);
+                        rows.push(html! {
+                            tr class="note" { td colspan="3" {
+                                strong { (c.author) } ": " (c.body)
+                                @if c.anchor.head_oid != head { " " span class="muted" { "(outdated: on " (c.anchor.head_oid.to_hex_with_len(10)) ")" } }
+                            } }
+                        });
+                    }
+                }
+            }
+            html! { table class="diff" { @for row in rows { (row) } } }
+        }
+    };
     html! {
         div class="box" id={ "file-" (file.path) } {
             div class="head" {
@@ -244,34 +280,7 @@ fn file_diff(view: &PrView, file: &FileDiff) -> Markup {
                 }
                 " " span class="ready" { "+" (file.added()) } " " span class="blocked" { "−" (file.removed()) }
             }
-            @match &file.body {
-                FileBody::Binary => { p class="muted" { "Binary file" } },
-                FileBody::TooLarge => { p class="muted" { "File too large to display" } },
-                FileBody::Submodule => { p class="muted" { "Submodule change" } },
-                FileBody::Text { hunks } => {
-                    table class="diff" {
-                        @for h in hunks {
-                            tr class="hunk" { td class="n" {} td class="n" {} td { (h.header()) } }
-                            @for l in &h.lines {
-                                @let (class, mark) = match l.kind { LineKind::Added => ("add", "+"), LineKind::Removed => ("del", "-"), LineKind::Context => ("ctx", " ") };
-                                tr class=(class) {
-                                    td class="n" { @if let Some(n) = l.old { (n) } }
-                                    td class="n" { @if let Some(n) = l.new { (n) } }
-                                    td { (mark) (l.text) }
-                                }
-                                @let notes = comments_at(&view.comments, file, Side::Old, l.old.filter(|_| l.kind == LineKind::Removed))
-                                    .chain(comments_at(&view.comments, file, Side::New, l.new.filter(|_| l.kind != LineKind::Removed)));
-                                @for c in notes {
-                                    tr class="note" { td colspan="3" {
-                                        strong { (c.author) } ": " (c.body)
-                                        @if c.anchor.head_oid != head { " " span class="muted" { "(outdated: on " (c.anchor.head_oid.to_hex_with_len(10)) ")" } }
-                                    } }
-                                }
-                            }
-                        }
-                    }
-                },
-            }
+            (body)
         }
     }
 }
@@ -286,6 +295,17 @@ async fn pull(
         let view = pr::view(forge, &record, number)?;
         let p = &view.pr;
         let r = &view.readiness;
+        let mut rendered_comments = HashSet::new();
+        let file_sections: Vec<Markup> = view
+            .files
+            .iter()
+            .map(|f| file_diff(&view, f, &mut rendered_comments))
+            .collect();
+        let outdated_comments: Vec<&InlineComment> = view
+            .comments
+            .iter()
+            .filter(|c| !rendered_comments.contains(&c.id))
+            .collect();
         Ok(page(
             &format!("{} · #{}", p.title, p.number),
             html! {
@@ -313,7 +333,10 @@ async fn pull(
                         @for s in &view.statuses {
                             li { strong { (s.context) } " " (s.state.as_str())
                                 @if let Some(d) = &s.description { " — " (d) }
-                                @if let Some(u) = &s.target_url { " " a href=(u) { "details" } } }
+                                @if let Some(u) = s.target_url.as_deref().filter(|u| pr::is_safe_http_url(u)) {
+                                    " " a href=(u) rel="noopener noreferrer" { "details" }
+                                }
+                            }
                         }
                         @if view.statuses.is_empty() { li class="muted" { "No checks reported." } }
                     }
@@ -331,8 +354,28 @@ async fn pull(
                         @if view.reviews.is_empty() { li class="muted" { "No reviews yet." } }
                     }
                 }
-                h2 { "Files changed (" (view.files.len()) ") " span class="muted" { "from " code { (view.base.to_hex_with_len(10)) } } }
-                @for f in &view.files { (file_diff(&view, f)) }
+                @if !outdated_comments.is_empty() {
+                    div class="box" {
+                        div class="head" { "Outdated comments" }
+                        ul class="rows" {
+                            @for c in &outdated_comments {
+                                li {
+                                    strong { (c.author) } " on " code { (c.anchor.path) ":" (c.anchor.line) }
+                                    " (" (c.anchor.side.as_str()) ", " code { (c.anchor.head_oid.to_hex_with_len(10)) } "): "
+                                    (c.body)
+                                }
+                            }
+                        }
+                    }
+                }
+                h2 {
+                    "Files changed (" (view.files.len()) ") "
+                    span class="muted" {
+                        @if let Some(base) = view.base { "from " code { (base.to_hex_with_len(10)) } }
+                        @else { "unrelated history" }
+                    }
+                }
+                @for section in file_sections { (section) }
             },
         ))
     })

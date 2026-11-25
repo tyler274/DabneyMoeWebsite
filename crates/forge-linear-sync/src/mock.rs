@@ -23,6 +23,10 @@ pub enum Failure {
     ServerError,
     /// HTTP 400 with a GraphQL validation error (permanent).
     BadRequest,
+    /// HTTP 400 with an "Entity not found" error (simulates Linear 400 not-found).
+    NotFoundHttp400,
+    /// HTTP 200 where the mutation answers `{ "success": false }`.
+    MutationRejected,
 }
 
 #[derive(Debug, Clone)]
@@ -226,6 +230,7 @@ async fn handle(
         return (StatusCode::UNAUTHORIZED, "missing api key").into_response();
     }
     if let Some(failure) = g.failures.pop_front() {
+        let op = req["operationName"].as_str().unwrap_or_default().to_owned();
         return match failure {
             Failure::RateLimited { reset_in_ms } => {
                 let reset = u64::try_from(jiff::Timestamp::now().as_millisecond()).unwrap_or(0)
@@ -243,6 +248,21 @@ async fn handle(
                 Json(json!({ "errors": [{ "message": "Argument Validation Error" }] })),
             )
                 .into_response(),
+            Failure::NotFoundHttp400 => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "errors": [{ "message": "Entity not found: Issue" }] })),
+            )
+                .into_response(),
+            Failure::MutationRejected => {
+                let field = match op.as_str() {
+                    "AttachmentCreate" => "attachmentCreate",
+                    "AttachmentDelete" => "attachmentDelete",
+                    "IssueUpdate" => "issueUpdate",
+                    "IssueAddLabel" => "issueAddLabel",
+                    _ => "mutation",
+                };
+                Json(json!({ "data": { field: { "success": false } } })).into_response()
+            }
         };
     }
     let op = req["operationName"].as_str().unwrap_or_default().to_owned();

@@ -33,7 +33,7 @@ subtle = "2.6"
 hex = "0.4"
 jiff = { version = "0.2", features = ["serde"] }
 thiserror = "2"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 clap = { version = "4", features = ["derive", "env"] }
 
 [dev-dependencies]

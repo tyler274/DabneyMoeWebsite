@@ -29,6 +29,8 @@ pub enum Blocker {
     CheckMissing { context: String },
     CheckNotPassing { context: String, state: CheckState },
     Conflicts { paths: Vec<String> },
+    NoCommonAncestor,
+    NothingToMerge,
 }
 
 impl std::fmt::Display for Blocker {
@@ -47,6 +49,12 @@ impl std::fmt::Display for Blocker {
                 write!(f, "check {context} is {}", state.as_str())
             }
             Blocker::Conflicts { paths } => write!(f, "merge conflicts in {}", paths.join(", ")),
+            Blocker::NoCommonAncestor => {
+                write!(f, "source and target branches have no common ancestor")
+            }
+            Blocker::NothingToMerge => {
+                write!(f, "head commit is already included in the target branch")
+            }
         }
     }
 }
@@ -56,6 +64,10 @@ impl std::fmt::Display for Blocker {
 pub enum MergeProbe {
     Clean,
     Conflicted(Vec<String>),
+    /// Source and target branches share no common ancestor.
+    UnrelatedHistories,
+    /// The head commit is equal to or already an ancestor of the target tip.
+    AlreadyInTarget,
     /// No trial was possible (not open, or no target branch).
     NotAttempted,
 }
@@ -174,10 +186,13 @@ impl MergeReadiness {
                 });
             }
         }
-        if let MergeProbe::Conflicted(paths) = probe {
-            blockers.push(Blocker::Conflicts {
+        match probe {
+            MergeProbe::Conflicted(paths) => blockers.push(Blocker::Conflicts {
                 paths: paths.clone(),
-            });
+            }),
+            MergeProbe::UnrelatedHistories => blockers.push(Blocker::NoCommonAncestor),
+            MergeProbe::AlreadyInTarget => blockers.push(Blocker::NothingToMerge),
+            MergeProbe::Clean | MergeProbe::NotAttempted => {}
         }
         MergeReadiness {
             head: pr.head_oid,
@@ -228,6 +243,11 @@ pub fn probe_merge(
     target: ObjectId,
     head: ObjectId,
 ) -> Result<MergeProbe, ForgeError> {
+    match repo.merge_base(target, head).map_err(git)? {
+        None => return Ok(MergeProbe::UnrelatedHistories),
+        Some(base) if base.detach() == head => return Ok(MergeProbe::AlreadyInTarget),
+        Some(_) => {}
+    }
     let repo = repo.clone().with_object_memory();
     let options = repo.tree_merge_options().map_err(git)?;
     let outcome = repo
@@ -348,16 +368,36 @@ pub fn merge(
             e.chain()
         ))
     })?;
-    if !forge.db.mark_merged(pr.id, pr.head_oid, merged)? {
-        // The repository lock makes this unreachable short of a direct DB edit.
-        tracing::error!(pr = pr.number, %merged, "target moved but the pull request was not open at its head");
+    let mirror_trigger =
+        (pr.target_branch == record.default_branch).then(|| format!("merge #{}", pr.number));
+    let Some((merged_pr, deliveries, mirrors)) = forge.db.commit_merge(
+        pr.id,
+        record.id,
+        pr.head_oid,
+        merged,
+        mirror_trigger.as_deref(),
+        |merged_pr| {
+            crate::webhooks::prepare(forge, record, merged_pr, crate::webhooks::PrAction::Closed)
+        },
+    )?
+    else {
+        tracing::error!(
+            pr = pr.number,
+            %merged,
+            "target ref updated but pull request was no longer open at its head"
+        );
+        return Err(ForgeError::Conflict(format!(
+            "pull request #{} changed state before merge could be recorded",
+            pr.number
+        )));
+    };
+    if deliveries > 0 {
+        forge.hooks_ready.notify_one();
     }
-    let merged_pr = forge.db.pr_by_id(pr.id)?;
+    if mirrors > 0 {
+        forge.mirrors_ready.notify_one();
+    }
     tracing::info!(repo = %record.name, pr = pr.number, %merged, by = %merger.user, "merged pull request");
-    crate::webhooks::emit(forge, record, &merged_pr, crate::webhooks::PrAction::Closed)?;
-    if pr.target_branch == record.default_branch {
-        crate::mirror::queue(forge, record, &format!("merge #{}", pr.number))?;
-    }
     Ok(merged_pr)
 }
 

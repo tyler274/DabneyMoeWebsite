@@ -93,8 +93,11 @@ struct GitLabMergeRequestEvent {
 pub enum PayloadError {
     #[error("payload is not the expected JSON")]
     Json(#[from] serde_json::Error),
-    #[error("payload repository {payload} does not match the verifying repository {verified}")]
-    RepoMismatch { payload: String, verified: RepoPath },
+    #[error("payload repository {payload} does not match any verifying repository ({})", verified.iter().map(RepoPath::as_str).collect::<Vec<_>>().join(", "))]
+    RepoMismatch {
+        payload: String,
+        verified: Vec<RepoPath>,
+    },
     #[error("repository {0} is not configured")]
     UnknownRepo(RepoPath),
     #[error("invalid repository path")]
@@ -180,38 +183,41 @@ pub fn snapshot_from_forgejo_api(
     snapshot_from_forgejo(forge, &pr, repo, matcher)
 }
 
-fn check_repo(payload: &str, verified: &RepoPath) -> Result<(), PayloadError> {
-    if &RepoPath::parse(payload)? == verified {
-        Ok(())
-    } else {
-        Err(PayloadError::RepoMismatch {
-            payload: payload.to_owned(),
-            verified: verified.clone(),
-        })
+fn check_repo<'a>(
+    forge: Forge,
+    raw: &str,
+    payload: &VerifiedPayload<bytes::Bytes>,
+    config: &'a SyncConfig,
+) -> Result<&'a RepoConfig, PayloadError> {
+    let path = RepoPath::parse(raw)?;
+    if !payload.matches_repo(&path) {
+        return Err(PayloadError::RepoMismatch {
+            payload: raw.to_owned(),
+            verified: payload.verified_repos().to_vec(),
+        });
     }
+    config
+        .repo(forge, &path)
+        .ok_or(PayloadError::UnknownRepo(path))
 }
 
 /// Parse a verified pull-request event into a snapshot. The payload's
-/// repository must be the one whose secret verified it.
+/// repository must be one whose secret verified the raw body.
 pub fn parse_pull_request(
     payload: &VerifiedPayload<bytes::Bytes>,
     config: &SyncConfig,
 ) -> Result<PrSnapshot, PayloadError> {
     let forge = payload.forge();
-    let verified = payload.repo();
-    let repo = config
-        .repo(forge, verified)
-        .ok_or_else(|| PayloadError::UnknownRepo(verified.clone()))?;
     let matcher = config.matcher();
     match forge {
         Forge::Forgejo | Forge::Gitea | Forge::Dabney => {
             let event: ForgejoPullRequestEvent = serde_json::from_slice(payload.body())?;
-            check_repo(&event.repository.full_name, verified)?;
+            let repo = check_repo(forge, &event.repository.full_name, payload, config)?;
             snapshot_from_forgejo(forge, &event.pull_request, repo, &matcher)
         }
         Forge::GitLab => {
             let event: GitLabMergeRequestEvent = serde_json::from_slice(payload.body())?;
-            check_repo(&event.project.path_with_namespace, verified)?;
+            let repo = check_repo(forge, &event.project.path_with_namespace, payload, config)?;
             let a = &event.object_attributes;
             let state = match a.state.as_str() {
                 "merged" => PrState::Merged {

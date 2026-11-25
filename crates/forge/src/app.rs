@@ -39,6 +39,8 @@ pub struct ForgeConfig {
     pub webhooks: Vec<WebhookTarget>,
     /// Largest Git request body accepted (pushes carry whole packs).
     pub max_git_body: usize,
+    /// Per-buffer allocation cap passed to `gix-pack` when indexing received packs.
+    pub max_pack_alloc: usize,
     pub secrets: SecretSource,
 }
 
@@ -47,7 +49,8 @@ impl ForgeConfig {
         ForgeConfig {
             base_url,
             webhooks: Vec::new(),
-            max_git_body: 1024 * 1024 * 1024,
+            max_git_body: 64 * 1024 * 1024,
+            max_pack_alloc: 16 * 1024 * 1024,
             secrets: env_secrets(),
         }
     }
@@ -113,8 +116,7 @@ impl Forge {
         private: bool,
         default_branch: &str,
     ) -> Result<RepoRecord, ForgeError> {
-        gix::refs::FullName::try_from(format!("refs/heads/{default_branch}"))
-            .map_err(|_| ForgeError::InvalidName(default_branch.to_owned()))?;
+        crate::repo::validate_branch_name(default_branch)?;
         if self.db.repo(name)?.is_some() {
             return Err(ForgeError::Conflict(format!(
                 "repository {name} already exists"
@@ -140,7 +142,8 @@ impl Forge {
 
     /// Look up a repository and require `action` on it. Private
     /// repositories an anonymous caller may not read are 401, so Git
-    /// clients prompt for credentials.
+    /// clients prompt for credentials; authenticated non-members always see
+    /// 404 so repository existence is never disclosed.
     pub fn authorize(
         &self,
         owner: &str,
@@ -150,14 +153,14 @@ impl Forge {
     ) -> Result<RepoRecord, ForgeError> {
         let name = RepoName::new(owner, repo)?;
         let record = self.repo_record(&name)?;
-        if action != auth::Action::Read
-            && !auth::can(&self.db, principal, &record, auth::Action::Read)?
-        {
-            // Do not reveal private repositories to callers who cannot read them.
-            return match principal {
-                None => Err(ForgeError::Unauthenticated),
-                Some(_) => Err(ForgeError::NotFound(format!("repository {name}"))),
-            };
+        if record.private {
+            match principal {
+                None => return Err(ForgeError::Unauthenticated),
+                Some(p) if !auth::is_member(&self.db, p, &record)? => {
+                    return Err(ForgeError::NotFound(format!("repository {name}")));
+                }
+                Some(_) => {}
+            }
         }
         auth::require(&self.db, principal, &record, action)?;
         Ok(record)

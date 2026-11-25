@@ -200,8 +200,21 @@ pub fn resolve_ref(repo: &gix::Repository, name: &str) -> Result<Option<ObjectId
     Ok(Some(reference.peel_to_id().map_err(git)?.detach()))
 }
 
+/// Validate a Git branch name (e.g. `main` or `feature/cod-103`) before
+/// constructing `refs/heads/<branch>`.
+pub fn validate_branch_name(branch: &str) -> Result<String, ForgeError> {
+    if branch.is_empty() || branch.starts_with('/') || branch.ends_with('/') {
+        return Err(ForgeError::InvalidName(branch.to_owned()));
+    }
+    let full = format!("refs/heads/{branch}");
+    gix::refs::FullName::try_from(full.as_str())
+        .map_err(|_| ForgeError::InvalidName(branch.to_owned()))?;
+    Ok(full)
+}
+
 pub fn branch_tip(repo: &gix::Repository, branch: &str) -> Result<Option<ObjectId>, ForgeError> {
-    resolve_ref(repo, &format!("refs/heads/{branch}"))
+    let full = validate_branch_name(branch)?;
+    resolve_ref(repo, &full)
 }
 
 fn summarize(commit: &gix::Commit<'_>) -> Result<CommitSummary, ForgeError> {

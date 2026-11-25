@@ -69,7 +69,9 @@ fn chain(e: &dyn std::error::Error) -> String {
 
 async fn process(app: &App, job: MirrorJob) {
     let mut outcome = Err(String::new());
+    let mut tried = 0;
     for attempt in 1..=ATTEMPTS {
+        tried = attempt;
         match push_mirror(app, &job).await {
             Ok(summary) => {
                 tracing::info!(mirror = %job.mirror.name, %summary, "mirror push succeeded");
@@ -88,8 +90,12 @@ async fn process(app: &App, job: MirrorJob) {
     }
     let id = job.id;
     let recorded = blocking(app, move |forge| match outcome {
-        Ok(()) => forge.db.finish_mirror_job(id, JobStatus::Succeeded, None),
-        Err(e) => forge.db.finish_mirror_job(id, JobStatus::Failed, Some(&e)),
+        Ok(()) => forge
+            .db
+            .finish_mirror_job(id, JobStatus::Succeeded, tried, None),
+        Err(e) => forge
+            .db
+            .finish_mirror_job(id, JobStatus::Failed, tried, Some(&e)),
     })
     .await;
     if let Err(e) = recorded {

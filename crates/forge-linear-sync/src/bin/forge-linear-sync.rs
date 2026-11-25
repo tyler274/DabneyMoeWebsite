@@ -9,7 +9,6 @@ use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use forge_linear_sync::config::SyncConfig;
 use forge_linear_sync::domain::{Forge, RepoPath};
-use forge_linear_sync::event::snapshot_from_forgejo_api;
 use forge_linear_sync::linear::LinearClient;
 use forge_linear_sync::queue::EventStore;
 use forge_linear_sync::verify::{auth_header, verify, Secret};
@@ -80,8 +79,8 @@ enum CliError {
     Store(#[from] forge_linear_sync::queue::StoreError),
     #[error("I/O error")]
     Io(#[from] std::io::Error),
-    #[error("forge API request failed")]
-    Http(#[from] reqwest::Error),
+    #[error(transparent)]
+    Backfill(#[from] forge_linear_sync::sync::BackfillError),
     #[error("repository {0} is not configured for that forge")]
     UnknownRepo(String),
     #[error("invalid repository path")]
@@ -127,39 +126,24 @@ async fn run(cli: Cli) -> Result<(), CliError> {
             let repo_config = config
                 .repo(forge, &path)
                 .ok_or_else(|| CliError::UnknownRepo(repo.clone()))?;
-            let http = reqwest::Client::new();
             let client = LinearClient::new(config.linear.clone());
             let matcher = config.matcher();
             let token = match token_env {
                 Some(name) => Some(std::env::var(&name).map_err(|_| CliError::MissingEnv(name))?),
                 None => None,
             };
-            let mut page = 1;
-            loop {
-                let url = format!(
-                    "{}/repos/{}/pulls?state=all&limit=50&page={page}",
-                    api_base.as_str().trim_end_matches('/'),
-                    path
-                );
-                let mut request = http.get(&url);
-                if let Some(token) = &token {
-                    request = request.header("authorization", format!("token {token}"));
-                }
-                let prs: Vec<serde_json::Value> =
-                    request.send().await?.error_for_status()?.json().await?;
-                if prs.is_empty() {
-                    break;
-                }
-                for pr in &prs {
-                    match snapshot_from_forgejo_api(forge, pr, repo_config, &matcher) {
-                        Ok(snapshot) => match sync::apply(&client, &snapshot).await {
-                            Ok(outcome) => println!("#{} {:?}", snapshot.key.number, outcome),
-                            Err(e) => report(&e),
-                        },
-                        Err(e) => report(&e),
-                    }
-                }
-                page += 1;
+            let report = sync::backfill_forgejo(
+                &client,
+                forge,
+                repo_config,
+                &matcher,
+                &api_base,
+                token.as_deref(),
+                50,
+            )
+            .await?;
+            for (number, outcome) in report.outcomes {
+                println!("#{number} {outcome:?}");
             }
             Ok(())
         }

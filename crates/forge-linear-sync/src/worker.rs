@@ -99,11 +99,19 @@ impl Worker {
         }
     }
 
+    /// Process at most one event that is due now.
+    pub async fn process_one_due(&self) -> Result<Option<Processed>, StoreError> {
+        let Some(event) = self.store.next_due()? else {
+            return Ok(None);
+        };
+        Ok(Some(self.process(event).await?))
+    }
+
     /// Process every event that is due now. Returns what happened to each.
     pub async fn drain_due(&self) -> Result<Vec<Processed>, StoreError> {
         let mut out = Vec::new();
-        while let Some(event) = self.store.next_due()? {
-            out.push(self.process(event).await?);
+        while let Some(processed) = self.process_one_due().await? {
+            out.push(processed);
         }
         Ok(out)
     }

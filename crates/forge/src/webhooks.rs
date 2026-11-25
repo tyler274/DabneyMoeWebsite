@@ -36,12 +36,6 @@ impl PrAction {
     }
 }
 
-fn rfc3339(seconds: i64) -> String {
-    jiff::Timestamp::from_second(seconds)
-        .unwrap_or(jiff::Timestamp::UNIX_EPOCH)
-        .to_string()
-}
-
 /// The Forgejo `pull_request` event for `pr`.
 pub fn payload(
     forge: &Forge,
@@ -68,7 +62,7 @@ pub fn payload(
             draft: false,
             merged,
             merge_commit_sha,
-            updated_at: rfc3339(pr.updated_at),
+            updated_at: crate::db::rfc3339(pr.updated_at),
             head: ForgejoBranch {
                 branch: pr.source_branch.clone(),
                 sha: pr.head_oid.to_string(),
@@ -91,6 +85,30 @@ fn delivery_id() -> Result<String, ForgeError> {
     Ok(hex::encode(buf))
 }
 
+/// Prepare one delivery record per configured target for transactional insert.
+pub fn prepare(
+    forge: &Forge,
+    record: &RepoRecord,
+    pr: &PullRequest,
+    action: PrAction,
+) -> Result<Vec<crate::db::PendingDelivery>, ForgeError> {
+    if forge.config.webhooks.is_empty() {
+        return Ok(Vec::new());
+    }
+    let body = serde_json::to_vec(&payload(forge, record, pr, action))
+        .map_err(|e| ForgeError::Io(std::io::Error::other(e)))?;
+    let mut out = Vec::with_capacity(forge.config.webhooks.len());
+    for target in &forge.config.webhooks {
+        out.push(crate::db::PendingDelivery {
+            delivery_id: delivery_id()?,
+            action: action.as_str().to_owned(),
+            target: target.url.as_str().to_owned(),
+            payload: body.clone(),
+        });
+    }
+    Ok(out)
+}
+
 /// Record one delivery per configured target and wake the deliverer.
 pub fn emit(
     forge: &Forge,
@@ -98,19 +116,14 @@ pub fn emit(
     pr: &PullRequest,
     action: PrAction,
 ) -> Result<(), ForgeError> {
-    if forge.config.webhooks.is_empty() {
+    let deliveries = prepare(forge, record, pr, action)?;
+    if deliveries.is_empty() {
         return Ok(());
     }
-    let body = serde_json::to_vec(&payload(forge, record, pr, action))
-        .map_err(|e| ForgeError::Io(std::io::Error::other(e)))?;
-    for target in &forge.config.webhooks {
-        forge.db.insert_delivery(
-            pr.id,
-            &delivery_id()?,
-            action.as_str(),
-            target.url.as_str(),
-            &body,
-        )?;
+    for d in deliveries {
+        forge
+            .db
+            .insert_delivery(pr.id, &d.delivery_id, &d.action, &d.target, &d.payload)?;
     }
     forge.hooks_ready.notify_one();
     Ok(())

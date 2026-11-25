@@ -498,7 +498,15 @@ pub async fn receive_pack(
         let updated: Vec<PushCommand> = report.updated().cloned().collect();
         if !updated.is_empty() {
             tracing::info!(repo = %record.name, %pusher, refs = updated.len(), "push accepted");
-            crate::pr::after_push(forge, &record, &updated)?;
+            // Refs have already moved; do not replace the client's report-status
+            // packet with HTTP 500 if follow-up metadata work fails.
+            if let Err(e) = crate::pr::after_push(forge, &record, &updated) {
+                tracing::error!(
+                    repo = %record.name,
+                    error = %e.chain(),
+                    "post-push hook failed after refs were updated"
+                );
+            }
         }
         let mut response = git_response(
             "application/x-git-receive-pack-result",
@@ -520,8 +528,8 @@ pub fn apply_push(
     atomic: bool,
 ) -> Result<PushReport, ForgeError> {
     let repo = forge.repos.open(&record.name)?;
-    let keep = match pack::receive_pack(&repo, pack_bytes) {
-        Ok(keep) => keep,
+    let received = match pack::receive_pack(&repo, pack_bytes, forge.config.max_pack_alloc) {
+        Ok(received) => received,
         Err(e) => {
             let reason = format!("unpacker error: {e}");
             tracing::warn!(repo = %record.name, error = %reason, "push unpack failed");
@@ -534,15 +542,30 @@ pub fn apply_push(
             });
         }
     };
-    let known: Vec<ObjectId> = repo::list_refs(&repo)?
-        .into_iter()
-        .map(|r| r.target)
-        .collect();
+    let mut known_commits = Vec::new();
+    let mut checked_trees = HashSet::new();
+    let mut checked_blobs = HashSet::new();
+    for tip in repo::list_refs(&repo)? {
+        let id = tip.peeled.unwrap_or(tip.target);
+        if let Ok(commit) = repo.find_commit(id) {
+            known_commits.push(id);
+            if let Ok(tree_id) = commit.tree_id() {
+                checked_trees.insert(tree_id.detach());
+            }
+        }
+    }
     let default_ref = format!("refs/heads/{}", record.default_branch);
     let mut results: Vec<(PushCommand, Option<Rejection>)> = commands
         .into_iter()
         .map(|c| {
-            let verdict = check_command(&repo, &c, &known, &default_ref);
+            let verdict = check_command(
+                &repo,
+                &c,
+                &known_commits,
+                &mut checked_trees,
+                &mut checked_blobs,
+                &default_ref,
+            );
             (c, verdict.err())
         })
         .collect();
@@ -556,21 +579,28 @@ pub fn apply_push(
         .filter(|(_, r)| r.is_none())
         .map(|(c, _)| push_edit(c))
         .collect::<Result<_, _>>()?;
+    let mut refs_moved = false;
     if !edits.is_empty() {
-        if let Err(e) = edit_refs(&repo, edits) {
-            let reason = format!("failed to update ref: {}", e.chain());
-            tracing::warn!(repo = %record.name, error = %reason, "push ref transaction failed");
-            for (_, r) in results.iter_mut() {
-                r.get_or_insert_with(|| "failed to update ref".to_owned());
+        match edit_refs(&repo, edits) {
+            Ok(()) => refs_moved = true,
+            Err(e) => {
+                let reason = format!("failed to update ref: {}", e.chain());
+                tracing::warn!(repo = %record.name, error = %reason, "push ref transaction failed");
+                for (_, r) in results.iter_mut() {
+                    r.get_or_insert_with(|| "failed to update ref".to_owned());
+                }
             }
         }
     }
-    if let Some(keep) = keep {
-        // Refs now point into the pack (or it holds nothing referenced).
-        if let Err(e) = std::fs::remove_file(&keep) {
-            tracing::warn!(path = %keep.display(), error = %e, "could not remove pack .keep");
+    // Release the repository handle before unlinking any rejected packfiles.
+    drop(repo);
+    let has_new_objects = refs_moved && results.iter().any(|(c, r)| r.is_none() && !c.is_delete());
+    if has_new_objects {
+        if let Some(pack) = received {
+            pack.commit();
         }
     }
+    // Otherwise `received` drops here and removes any newly written pack/idx/.keep.
     Ok(PushReport {
         unpack: Ok(()),
         results,
@@ -580,7 +610,9 @@ pub fn apply_push(
 fn check_command(
     repo: &gix::Repository,
     command: &PushCommand,
-    known: &[ObjectId],
+    known_commits: &[ObjectId],
+    checked_trees: &mut HashSet<ObjectId>,
+    checked_blobs: &mut HashSet<ObjectId>,
     default_ref: &str,
 ) -> Result<(), Rejection> {
     if !is_pushable(&command.name) || gix::refs::FullName::try_from(command.name.as_str()).is_err()
@@ -600,11 +632,15 @@ fn check_command(
     }
     if command.name.starts_with("refs/heads/") {
         pack::require_commit(repo, command.new).map_err(|e| e.to_string())?;
-        pack::check_connected(repo, command.new, known)
-            .map_err(|e| format!("missing objects: {e}"))?;
-    } else if !repo.has_object(command.new) {
-        return Err(format!("missing object {}", command.new));
     }
+    pack::check_connected(
+        repo,
+        command.new,
+        known_commits,
+        checked_trees,
+        checked_blobs,
+    )
+    .map_err(|e| format!("missing objects: {e}"))?;
     if command.name == default_ref && !command.old.is_null() {
         let base = repo
             .merge_base(command.old, command.new)

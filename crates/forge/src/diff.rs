@@ -43,6 +43,18 @@ pub struct DiffLine {
     pub text: String,
 }
 
+impl DiffLine {
+    /// The single rule deciding whether an inline comment on `(side, line)`
+    /// attaches to this diff line. Both comment validation and UI rendering
+    /// ask this function.
+    pub fn matches_anchor(&self, side: Side, line: u32) -> bool {
+        match side {
+            Side::Old => self.kind != LineKind::Added && self.old == Some(line),
+            Side::New => self.kind != LineKind::Removed && self.new == Some(line),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Hunk {
     pub old_start: u32,
@@ -84,10 +96,10 @@ impl FileDiff {
         let FileBody::Text { hunks } = &self.body else {
             return false;
         };
-        hunks.iter().flat_map(|h| &h.lines).any(|l| match side {
-            Side::Old => l.kind != LineKind::Added && l.old == Some(line),
-            Side::New => l.kind != LineKind::Removed && l.new == Some(line),
-        })
+        hunks
+            .iter()
+            .flat_map(|h| &h.lines)
+            .any(|l| l.matches_anchor(side, line))
     }
 
     pub fn added(&self) -> usize {
@@ -215,16 +227,20 @@ fn blob(repo: &gix::Repository, id: Option<&gix::oid>) -> Result<Vec<u8>, ForgeE
     }
 }
 
-/// Every file changed between the trees of `base` and `head`.
+/// Every file changed between the trees of `base` (empty tree if `None`,
+/// e.g. an unrelated-history branch) and `head`.
 pub fn diff_commits(
     repo: &gix::Repository,
-    base: ObjectId,
+    base: Option<ObjectId>,
     head: ObjectId,
 ) -> Result<Vec<FileDiff>, ForgeError> {
-    let old_tree = repo.find_commit(base).map_err(git)?.tree().map_err(git)?;
+    let old_tree = match base {
+        Some(base) => Some(repo.find_commit(base).map_err(git)?.tree().map_err(git)?),
+        None => None,
+    };
     let new_tree = repo.find_commit(head).map_err(git)?.tree().map_err(git)?;
     let changes = repo
-        .diff_tree_to_tree(Some(&old_tree), Some(&new_tree), None)
+        .diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), None)
         .map_err(git)?;
     let mut out = Vec::new();
     for change in changes {
@@ -286,17 +302,17 @@ pub fn diff_commits(
 }
 
 /// The commit a pull request's diff starts from: where its head forked from
-/// `target` (the target tip while open, the merge's first parent after).
+/// `target` (the target tip while open, the merge's first parent after), or
+/// `None` if they share no common ancestor.
 pub fn fork_point(
     repo: &gix::Repository,
     target: ObjectId,
     head: ObjectId,
-) -> Result<ObjectId, ForgeError> {
+) -> Result<Option<ObjectId>, ForgeError> {
     Ok(repo
         .merge_base(target, head)
         .map_err(git)?
-        .map(|id| id.detach())
-        .unwrap_or(target))
+        .map(|id| id.detach()))
 }
 
 #[cfg(test)]

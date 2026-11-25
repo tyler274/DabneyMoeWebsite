@@ -1,8 +1,13 @@
 //! The upsert planner: one verified snapshot in, idempotent Linear writes out.
 
-use jiff::Timestamp;
+use std::collections::BTreeSet;
 
-use crate::domain::{Authority, IssueKey, PrSnapshot, PrState};
+use jiff::Timestamp;
+use url::Url;
+
+use crate::config::RepoConfig;
+use crate::domain::{Authority, Forge, IssueKey, IssueKeyMatcher, PrSnapshot, PrState};
+use crate::event::snapshot_from_forgejo_api;
 use crate::linear::{
     CardMetadata, LinearClient, LinearError, LinearIssue, NewAttachment, BRIDGE_ID,
 };
@@ -57,6 +62,7 @@ fn metadata(snapshot: &PrSnapshot) -> CardMetadata {
         head: snapshot.head.as_str().to_owned(),
         forge_updated_at: snapshot.forge_updated_at.to_string(),
         authority: snapshot.authority.as_str().to_owned(),
+        target_is_default_branch: snapshot.target_is_default_branch,
     }
 }
 
@@ -86,9 +92,12 @@ pub async fn apply(client: &LinearClient, snapshot: &PrSnapshot) -> Result<SyncO
         .filter_map(|a| a.metadata.as_ref().map(|m| (a, m)))
         .collect();
     let newer_exists = owned.iter().any(|(_, m)| {
-        m.forge_updated_at
-            .parse::<Timestamp>()
-            .is_ok_and(|stored| stored > snapshot.forge_updated_at)
+        m.forge_updated_at.parse::<Timestamp>().is_ok_and(|stored| {
+            stored > snapshot.forge_updated_at
+                || (stored == snapshot.forge_updated_at
+                    && ((m.state == "merged" && !matches!(snapshot.state, PrState::Merged { .. }))
+                        || (m.state == "closed" && !snapshot.state.is_finished())))
+        })
     });
     if newer_exists {
         outcome.stale = true;
@@ -134,9 +143,7 @@ pub async fn apply(client: &LinearClient, snapshot: &PrSnapshot) -> Result<SyncO
         }
     }
 
-    let lands_on_default =
-        matches!(snapshot.state, PrState::Merged { .. }) && snapshot.target_is_default_branch;
-    if snapshot.authority != Authority::Canonical || !lands_on_default {
+    if snapshot.authority != Authority::Canonical || !snapshot.state.is_finished() {
         return Ok(outcome);
     }
     for (key, issue) in &issues {
@@ -144,12 +151,19 @@ pub async fn apply(client: &LinearClient, snapshot: &PrSnapshot) -> Result<SyncO
             continue;
         }
         let cards = client.issue_attachments(&issue.id).await?;
-        let all_finished = cards
+        let canonical: Vec<&CardMetadata> = cards
             .iter()
             .filter_map(|a| a.metadata.as_ref())
             .filter(|m| m.authority == Authority::Canonical.as_str())
-            .all(|m| matches!(m.state.as_str(), "merged" | "closed"));
-        if !all_finished {
+            .collect();
+        let all_finished = !canonical.is_empty()
+            && canonical
+                .iter()
+                .all(|m| matches!(m.state.as_str(), "merged" | "closed"));
+        let any_merged_default = canonical
+            .iter()
+            .any(|m| m.state == "merged" && m.target_is_default_branch);
+        if !all_finished || !any_merged_default {
             continue;
         }
         let states = client.workflow_states(&issue.team_key).await?;
@@ -162,6 +176,109 @@ pub async fn apply(client: &LinearClient, snapshot: &PrSnapshot) -> Result<SyncO
         outcome.completed.push(key.to_string());
     }
     Ok(outcome)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BackfillError {
+    #[error("forge API request failed")]
+    Http(#[from] reqwest::Error),
+    #[error("forge API repeated PR #{number} on page {page} (pagination did not advance)")]
+    RepeatedPage { number: u64, page: u32 },
+    #[error("backfill failed for {failed} of {total} pull request(s): {}", errors.join("; "))]
+    PartialFailure {
+        failed: usize,
+        total: usize,
+        errors: Vec<String>,
+    },
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct BackfillReport {
+    pub pages: u32,
+    pub total: usize,
+    pub outcomes: Vec<(u64, SyncOutcome)>,
+}
+
+/// Paginate a Forgejo-compatible `/repos/{path}/pulls` endpoint and apply
+/// every pull request to Linear idempotently. Returns an error if pagination
+/// stalls or any pull request fails to parse or sync.
+pub async fn backfill_forgejo(
+    client: &LinearClient,
+    forge: Forge,
+    repo_config: &RepoConfig,
+    matcher: &IssueKeyMatcher,
+    api_base: &Url,
+    token: Option<&str>,
+    limit: usize,
+) -> Result<BackfillReport, BackfillError> {
+    let limit = limit.max(1);
+    let http = reqwest::Client::new();
+    let mut report = BackfillReport::default();
+    let mut seen: BTreeSet<u64> = BTreeSet::new();
+    let mut prev_page: Option<Vec<serde_json::Value>> = None;
+    let mut errors: Vec<String> = Vec::new();
+    let mut page: u32 = 1;
+    loop {
+        let url = format!(
+            "{}/repos/{}/pulls?state=all&limit={limit}&page={page}",
+            api_base.as_str().trim_end_matches('/'),
+            repo_config.path
+        );
+        let mut request = http.get(&url);
+        if let Some(token) = token {
+            request = request.header("authorization", format!("token {token}"));
+        }
+        let prs: Vec<serde_json::Value> = request.send().await?.error_for_status()?.json().await?;
+        if prs.is_empty() {
+            break;
+        }
+        if prev_page.as_ref().is_some_and(|prev| prev == &prs) {
+            let number = prs[0]
+                .get("number")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            return Err(BackfillError::RepeatedPage { number, page });
+        }
+        report.pages += 1;
+        let page_len = prs.len();
+        let mut new_numbered = 0usize;
+        let mut first_repeat = None;
+        for pr in &prs {
+            if let Some(number) = pr.get("number").and_then(serde_json::Value::as_u64) {
+                if !seen.insert(number) {
+                    first_repeat.get_or_insert(number);
+                    continue;
+                }
+                new_numbered += 1;
+            }
+            report.total += 1;
+            match snapshot_from_forgejo_api(forge, pr, repo_config, matcher) {
+                Ok(snapshot) => match apply(client, &snapshot).await {
+                    Ok(outcome) => report.outcomes.push((snapshot.key.number, outcome)),
+                    Err(e) => errors.push(format!("#{}: {e}", snapshot.key.number)),
+                },
+                Err(e) => errors.push(e.to_string()),
+            }
+        }
+        if let Some(number) = first_repeat {
+            if page > 1 && new_numbered == 0 {
+                return Err(BackfillError::RepeatedPage { number, page });
+            }
+        }
+        prev_page = Some(prs);
+        if page_len < limit {
+            break;
+        }
+        page += 1;
+    }
+    if !errors.is_empty() {
+        return Err(BackfillError::PartialFailure {
+            failed: errors.len(),
+            total: report.total,
+            errors,
+        });
+    }
+    Ok(report)
 }
 
 /// Best-effort: tag each resolvable issue of a dead-lettered event.

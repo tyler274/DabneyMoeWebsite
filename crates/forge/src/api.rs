@@ -1,7 +1,7 @@
 //! The JSON API under `/api/v1`, authenticated with personal access tokens.
 //! Its pull-request and status shapes follow Forgejo/Gitea where they overlap.
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -38,11 +38,11 @@ pub fn routes() -> Router<App> {
         )
         .route(
             "/api/v1/repos/{owner}/{repo}/pulls/{number}/reviews",
-            post(post_review),
+            get(list_reviews).post(post_review),
         )
         .route(
             "/api/v1/repos/{owner}/{repo}/pulls/{number}/comments",
-            post(post_comment),
+            get(list_comments).post(post_comment),
         )
         .route(
             "/api/v1/repos/{owner}/{repo}/pulls/{number}/merge",
@@ -158,8 +158,8 @@ pub struct PullJson {
     pub head: BranchJson,
     pub base: BranchJson,
     pub html_url: String,
-    pub created_at: i64,
-    pub updated_at: i64,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 fn pull_json(app: &crate::app::Forge, record: &RepoRecord, pr: &PullRequest) -> PullJson {
@@ -186,23 +186,58 @@ fn pull_json(app: &crate::app::Forge, record: &RepoRecord, pr: &PullRequest) -> 
         html_url: app
             .config
             .link(&format!("{}/pull/{}", record.name, pr.number)),
-        created_at: pr.created_at,
-        updated_at: pr.updated_at,
+        created_at: crate::db::rfc3339(pr.created_at),
+        updated_at: crate::db::rfc3339(pr.updated_at),
     }
+}
+
+#[derive(Deserialize, Default)]
+pub struct ListPullsQuery {
+    pub state: Option<String>,
+    pub page: Option<usize>,
+    pub limit: Option<usize>,
 }
 
 async fn list_pulls(
     State(app): State<App>,
     Path((owner, repo)): Path<(String, String)>,
+    Query(query): Query<ListPullsQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<PullJson>>, ForgeError> {
     blocking(&app, move |forge| {
         let principal = auth::authenticate(&forge.db, &headers)?;
         let record = forge.authorize(&owner, &repo, principal.as_ref(), Action::Read)?;
+        let page = query.page.unwrap_or(1);
+        if page == 0 {
+            return Err(ForgeError::BadRequest("page must be >= 1".into()));
+        }
+        let limit = query.limit.unwrap_or(50);
+        if limit == 0 {
+            return Err(ForgeError::BadRequest("limit must be >= 1".into()));
+        }
+        let limit = limit.min(100);
+        let state_filter = query.state.as_deref().unwrap_or("all");
+        if !matches!(state_filter, "all" | "open" | "closed" | "merged") {
+            return Err(ForgeError::BadRequest(format!(
+                "unknown pull request state filter {state_filter:?}"
+            )));
+        }
         let prs = forge.db.prs(record.id)?;
-        Ok(Json(
-            prs.iter().map(|p| pull_json(forge, &record, p)).collect(),
-        ))
+        let skip = (page - 1).saturating_mul(limit);
+        let page_items: Vec<PullJson> = prs
+            .iter()
+            .filter(|p| match state_filter {
+                "all" => true,
+                "open" => p.state == PrState::Open,
+                "closed" => p.state != PrState::Open,
+                "merged" => matches!(p.state, PrState::Merged { .. }),
+                _ => false,
+            })
+            .skip(skip)
+            .take(limit)
+            .map(|p| pull_json(forge, &record, p))
+            .collect();
+        Ok(Json(page_items))
     })
     .await
 }
@@ -331,6 +366,21 @@ fn review_json(r: &Review) -> ReviewJson {
     }
 }
 
+async fn list_reviews(
+    State(app): State<App>,
+    Path((owner, repo, number)): Path<(String, String, u64)>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ReviewJson>>, ForgeError> {
+    blocking(&app, move |forge| {
+        let principal = auth::authenticate(&forge.db, &headers)?;
+        let record = forge.authorize(&owner, &repo, principal.as_ref(), Action::Read)?;
+        let pr = pr::find(forge, &record, number)?;
+        let reviews = forge.db.reviews(pr.id)?;
+        Ok(Json(reviews.iter().map(review_json).collect()))
+    })
+    .await
+}
+
 async fn post_review(
     State(app): State<App>,
     Path((owner, repo, number)): Path<(String, String, u64)>,
@@ -388,6 +438,21 @@ fn comment_json(c: &InlineComment) -> CommentJson {
         commit_id: c.anchor.head_oid.to_string(),
         body: c.body.clone(),
     }
+}
+
+async fn list_comments(
+    State(app): State<App>,
+    Path((owner, repo, number)): Path<(String, String, u64)>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<CommentJson>>, ForgeError> {
+    blocking(&app, move |forge| {
+        let principal = auth::authenticate(&forge.db, &headers)?;
+        let record = forge.authorize(&owner, &repo, principal.as_ref(), Action::Read)?;
+        let pr = pr::find(forge, &record, number)?;
+        let comments = forge.db.comments(pr.id)?;
+        Ok(Json(comments.iter().map(comment_json).collect()))
+    })
+    .await
 }
 
 async fn post_comment(
