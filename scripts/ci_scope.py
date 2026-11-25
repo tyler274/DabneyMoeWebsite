@@ -47,6 +47,7 @@ TAURI_FILES = {
     "rust-toolchain.toml",
     "scripts/android-personal.sh",
     "scripts/android-release.sh",
+    "scripts/ios-personal.sh",
     "tailwind.config.js",
     ".github/workflows/ci.yml",
     "scripts/ci_scope.py",

@@ -7,7 +7,10 @@ pub mod health_connect;
 pub fn run() {
     let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
 
-    #[cfg(all(feature = "health-connect", target_os = "android"))]
+    #[cfg(all(
+        feature = "health-connect",
+        any(target_os = "android", target_os = "ios")
+    ))]
     let builder = builder.plugin(health_connect::init_plugin());
 
     #[cfg(feature = "health-connect")]

@@ -18,6 +18,7 @@ pub mod community_policy;
 pub mod consent;
 pub mod creators;
 pub mod data;
+pub mod health_bridge;
 pub mod mental_health;
 pub mod mental_health_3d;
 pub mod mental_health_cgm;

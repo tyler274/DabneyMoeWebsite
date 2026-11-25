@@ -16,6 +16,7 @@ import app.tauri.plugin.JSArray
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import java.time.Instant
+import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -196,7 +197,8 @@ class HealthConnectPlugin(private val activity: Activity) : Plugin(activity) {
                         if (count >= MAX_RECORDS) break
                         val item = JSONObject()
                         item.put("time", rec.time.toString())
-                        rec.zoneOffset?.id?.let { item.put("zoneOffset", it) }
+                        val resolvedOffset = rec.zoneOffset ?: ZoneId.systemDefault().rules.getOffset(rec.time)
+                        item.put("zoneOffset", resolvedOffset.id)
                         item.put("levelMgDl", rec.level.inMilligramsPerDeciliter)
                         mealRelationLabel(rec.relationToMeal)?.let { item.put("relationToMeal", it) }
                         item.put("specimenSource", specimenSourceLabel(rec.specimenSource))
