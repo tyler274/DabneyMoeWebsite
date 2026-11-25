@@ -1,0 +1,187 @@
+# Tier 1: the sovereign dabney.moe stack on one EU VPS (Hetzner CX23 from
+# terraform/eu). Docker Compose or Podman Compose.
+#
+#   Caddy          HTTPS for dabney.moe, www, git, coda, cache, auth, app, api
+#   dabney-web     Leptos SSR site
+#   dabney-forge   Rust Git forge (HTTP behind Caddy, SSH on FORGE_SSH_PORT)
+#   radicle        Radicle seed node (profile "radicle")
+#   postgres       Postgres 16, one database and role per service
+#   valkey         Valkey 8, in-memory only
+#   attic          Nix binary cache
+#   pocket-id      OIDC provider with passkeys
+#   physician-sample, physician-worker, duet-api   Coda demo (profile "coda")
+#
+# Public, demo and non-PHI only: nothing in this stack may receive protected
+# health information.
+#
+# Deploy from a workstation or CI:
+#   ./scripts/deploy.sh --target ssh --compose-dir selfhost/eu --ssh-host deploy@host --push
+#
+# Configuration: .env (non-secret, interpolated here; from .env.example) and
+# secrets.env (passed to containers; decrypted on the host from
+# secrets.sops.env with sops and an age key, never committed in plaintext).
+# Images default to their upstream registries; set the *_IMAGE variables to
+# copies in an EU registry (rg.fr-par.scw.cloud or codeberg.org) to avoid
+# US-hosted registries at runtime.
+
+name: dabney-eu
+
+x-secrets: &secrets
+  env_file:
+    - path: ./secrets.env
+      required: false
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  caddy:
+    <<: *restart
+    image: ${CADDY_IMAGE:-docker.io/library/caddy:2}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+      SITE_DOMAIN: ${SITE_DOMAIN:-dabney.moe}
+      FORGE_UPSTREAM: ${FORGE_UPSTREAM:-dabney-forge:8080}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./coda-site:/srv/coda-site:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - dabney-web
+
+  dabney-web:
+    <<: *restart
+    image: ${WEB_IMAGE:-dabney-web:latest}
+    expose:
+      - "8080"
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      CLINICAL_API_URL: ${CLINICAL_API_URL:-}
+
+  dabney-forge:
+    <<: [*restart, *secrets]
+    image: ${FORGE_IMAGE:-dabney-forge:latest}
+    expose:
+      - "8080"
+    ports:
+      - "${FORGE_SSH_PORT:-2222}:2222"
+    environment:
+      FORGE_PUBLIC_URL: https://git.${SITE_DOMAIN:-dabney.moe}
+      FORGE_LISTEN_ADDR: 0.0.0.0:8080
+      FORGE_SSH_LISTEN_ADDR: 0.0.0.0:2222
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - forge_data:/var/lib/forge
+    depends_on:
+      - postgres
+
+  radicle:
+    <<: *restart
+    profiles: ["radicle"]
+    image: ${RADICLE_IMAGE:-radicle-node:latest}
+    ports:
+      - "${RADICLE_PORT:-8776}:8776"
+    environment:
+      RAD_HOME: /var/lib/radicle
+    volumes:
+      - radicle_data:/var/lib/radicle
+
+  postgres:
+    <<: [*restart, *secrets]
+    image: ${POSTGRES_IMAGE:-docker.io/library/postgres:16}
+    environment:
+      # POSTGRES_PASSWORD and the per-service *_DB_PASSWORD values come from
+      # secrets.env; postgres-init creates one database and role per service.
+      POSTGRES_SERVICE_DATABASES: forge attic pocketid physician duet
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  valkey:
+    <<: *restart
+    image: ${VALKEY_IMAGE:-docker.io/valkey/valkey:8}
+    command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+
+  attic:
+    <<: [*restart, *secrets]
+    # Upstream publishes to GHCR (US); mirror it or build nixpkgs#attic-server.
+    image: ${ATTIC_IMAGE:-ghcr.io/zhaofengli/attic:latest}
+    command: ["-f", "/attic/server.toml", "--mode", "monolithic"]
+    expose:
+      - "8080"
+    volumes:
+      - ./attic:/attic:ro
+      - attic_data:/var/lib/attic
+    depends_on:
+      - postgres
+
+  pocket-id:
+    <<: [*restart, *secrets]
+    # Upstream publishes to GHCR (US); mirror it to an EU registry.
+    image: ${POCKET_ID_IMAGE:-ghcr.io/pocket-id/pocket-id:v1}
+    expose:
+      - "1411"
+    environment:
+      APP_URL: https://auth.${SITE_DOMAIN:-dabney.moe}
+      TRUST_PROXY: "true"
+      DB_PROVIDER: postgres
+    volumes:
+      - pocket_id_data:/app/data
+    depends_on:
+      - postgres
+
+  physician-sample:
+    <<: [*restart, *secrets]
+    profiles: ["coda"]
+    image: ${PHYSICIAN_IMAGE:-physician-sample:latest}
+    expose:
+      - "8080"
+    environment:
+      PHYSICIAN_LISTEN_ADDR: 0.0.0.0:8080
+      PHYSICIAN_PUBLIC_ORIGIN: https://app.${SITE_DOMAIN:-dabney.moe}
+      PHYSICIAN_REDIS_URL: redis://valkey:6379
+    depends_on:
+      - postgres
+      - valkey
+
+  physician-worker:
+    <<: [*restart, *secrets]
+    profiles: ["coda"]
+    image: ${PHYSICIAN_IMAGE:-physician-sample:latest}
+    entrypoint: ["/bin/physician-worker"]
+    environment:
+      PHYSICIAN_WORKER_LISTEN_ADDR: 0.0.0.0:8081
+      PHYSICIAN_REDIS_URL: redis://valkey:6379
+    depends_on:
+      - postgres
+      - valkey
+
+  duet-api:
+    <<: [*restart, *secrets]
+    profiles: ["coda"]
+    image: ${DUET_IMAGE:-duet-api:latest}
+    expose:
+      - "8080"
+    environment:
+      DUET_LISTEN_ADDR: 0.0.0.0:8080
+    depends_on:
+      - postgres
+
+volumes:
+  caddy_data:
+  caddy_config:
+  forge_data:
+  radicle_data:
+  pg_data:
+  attic_data:
+  pocket_id_data:

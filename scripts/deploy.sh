@@ -4,8 +4,9 @@
 # Dry-run by default: pass --push to build, push, and roll out the target.
 # Supports both Nix (`nix build .#serverImage`) and Dockerfile (`docker`/`podman`)
 # builds, and targets any OCI registry, any Linux VPS over SSH (Docker or Podman
-# + Caddy automatic Let's Encrypt HTTPS), GCP Cloud Run, AWS App Runner, Azure
-# Container Apps, or Fly.io.
+# + Caddy automatic Let's Encrypt HTTPS; selfhost/ or the full EU stack in
+# selfhost/eu), Scaleway Serverless Containers, GCP Cloud Run, AWS App Runner,
+# Azure Container Apps, or Fly.io.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,6 +28,9 @@ GCP_PROJECT="${GCP_PROJECT_ID:-}"
 REGISTRY_USER="${OCI_REGISTRY_USER:-}"
 REGISTRY_PASS="${OCI_REGISTRY_PASS:-}"
 PUSH=0
+COMPOSE_DIR="${DEPLOY_COMPOSE_DIR:-selfhost}"
+SCW_NAMESPACE="${SCW_REGISTRY_NAMESPACE:-dabney-moe}"
+SCW_CONTAINER_ID="${SCW_CONTAINER_ID:-}"
 
 TMP_DIR=""
 cleanup() {
@@ -38,7 +42,7 @@ trap cleanup EXIT
 
 usage() {
   cat <<'EOF'
-Usage: scripts/deploy.sh --target <oci|ssh|cloudrun|aws|azure|fly> [options]
+Usage: scripts/deploy.sh --target <oci|ssh|scaleway|cloudrun|aws|azure|fly> [options]
 
 Dry-run by default: prints planned commands without mutating remote targets.
 Pass --push to execute the build, upload/push, and service rollout.
@@ -48,6 +52,8 @@ Options:
   --target <target>           Deployment target (required):
                                 oci      Push image to any OCI registry
                                 ssh      Deploy to any Linux VPS (Docker/Podman + Caddy)
+                                scaleway Push to Scaleway Container Registry + roll a
+                                         Serverless Container (scw CLI)
                                 cloudrun Push to Artifact Registry + gcloud run deploy
                                 aws      Push to ECR + tofu -chdir=terraform/aws apply
                                 azure    Push to ACR + tofu -chdir=terraform/azure apply
@@ -58,9 +64,16 @@ Options:
   --ssh-host <user@host>      SSH destination for --target ssh (env: DEPLOY_SSH_HOST)
   --ssh-dir <dir>             Remote directory for --target ssh (default: /opt/dabney-moe)
   --ssh-key <path>            Optional SSH private key for --target ssh (env: DEPLOY_SSH_KEY_FILE)
+  --compose-dir <dir>         Compose stack for --target ssh, relative to the repo
+                              (default: selfhost; selfhost/eu is the full EU stack;
+                              env: DEPLOY_COMPOSE_DIR)
+  --scw-namespace <name>      Scaleway registry namespace (default: dabney-moe;
+                              env: SCW_REGISTRY_NAMESPACE)
+  --scw-container-id <id>     Serverless Container ID (default: terraform/eu output
+                              serverless_container_id; env: SCW_CONTAINER_ID)
   --domain <host>             Site domain (default: dabney.moe; env: SITE_DOMAIN)
   --acme-email <email>        Let's Encrypt email for initial SSH .env (env: ACME_EMAIL)
-  --region <region>           Cloud/Fly region (e.g. us-central1, us-east-1, eastus, iad)
+  --region <region>           Cloud/Fly region (e.g. fr-par, us-central1, us-east-1, eastus, iad)
   --project <id>              GCP project ID for --target cloudrun (env: GCP_PROJECT_ID)
   --service <name>            Service/app name for cloudrun/fly (default: dabney-web)
   --registry-user <user>      OCI registry username (env: OCI_REGISTRY_USER)
@@ -74,6 +87,14 @@ Examples:
 
   # Deploy directly to a Linux VPS with Docker or Podman + Caddy HTTPS:
   ./scripts/deploy.sh --target ssh --ssh-host deploy@vps.example.com --domain dabney.moe --push
+
+  # Deploy the full EU stack (selfhost/eu) to the Hetzner VPS from terraform/eu:
+  ./scripts/deploy.sh --target ssh --compose-dir selfhost/eu \
+    --ssh-host deploy@eu-vps.example --domain dabney.moe --push
+
+  # Tier 0: push to Scaleway Container Registry and roll the Serverless Container
+  # (SCW_SECRET_KEY authenticates the registry push; scw reads its own config):
+  ./scripts/deploy.sh --target scaleway --region fr-par --push
 
   # Roll out an already-built archive to Cloud Run:
   ./scripts/deploy.sh --build none --target cloudrun --image-archive server-image.tar.gz \
@@ -253,7 +274,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --target)
-      [[ $# -ge 2 ]] || die "--target requires a value (oci|ssh|cloudrun|aws|azure|fly)"
+      [[ $# -ge 2 ]] || die "--target requires a value (oci|ssh|scaleway|cloudrun|aws|azure|fly)"
       TARGET="$2"
       shift 2
       ;;
@@ -285,6 +306,21 @@ while [[ $# -gt 0 ]]; do
     --ssh-key)
       [[ $# -ge 2 ]] || die "--ssh-key requires a key path"
       SSH_KEY="$2"
+      shift 2
+      ;;
+    --compose-dir)
+      [[ $# -ge 2 ]] || die "--compose-dir requires a directory"
+      COMPOSE_DIR="$2"
+      shift 2
+      ;;
+    --scw-namespace)
+      [[ $# -ge 2 ]] || die "--scw-namespace requires a registry namespace"
+      SCW_NAMESPACE="$2"
+      shift 2
+      ;;
+    --scw-container-id)
+      [[ $# -ge 2 ]] || die "--scw-container-id requires a container ID"
+      SCW_CONTAINER_ID="$2"
       shift 2
       ;;
     --domain)
@@ -337,10 +373,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "$TARGET" ]] || die "--target is required (oci|ssh|cloudrun|aws|azure|fly)"
+[[ -n "$TARGET" ]] || die "--target is required (oci|ssh|scaleway|cloudrun|aws|azure|fly)"
 case "$TARGET" in
-  oci|ssh|cloudrun|aws|azure|fly) ;;
-  *) die "unsupported --target '$TARGET' (expected: oci|ssh|cloudrun|aws|azure|fly)" ;;
+  oci|ssh|scaleway|cloudrun|aws|azure|fly) ;;
+  *) die "unsupported --target '$TARGET' (expected: oci|ssh|scaleway|cloudrun|aws|azure|fly)" ;;
 esac
 
 if [[ -z "$BUILD_MODE" ]]; then
@@ -431,13 +467,23 @@ case "$TARGET" in
       SCP_OPTS+=(-i "$SSH_KEY")
     fi
 
-    info "Syncing selfhost/ Caddy + Compose stack to ${SSH_HOST}:${SSH_DIR}"
+    STACK_DIR="${REPO_ROOT}/${COMPOSE_DIR#./}"
+    STACK_DIR="${STACK_DIR%/}"
+    for required in docker-compose.yml Caddyfile .env.example; do
+      [[ -f "${STACK_DIR}/${required}" ]] || die "--compose-dir ${COMPOSE_DIR} has no ${required}"
+    done
+    STACK_FILES=("${STACK_DIR}/docker-compose.yml" "${STACK_DIR}/Caddyfile" "${STACK_DIR}/.env.example")
+    # Optional pieces of larger stacks (selfhost/eu): encrypted secrets, the
+    # secrets template, and config directories. Plaintext secrets.env never leaves.
+    for optional in secrets.sops.env secrets.env.example postgres-init attic; do
+      if [[ -e "${STACK_DIR}/${optional}" ]]; then
+        STACK_FILES+=("${STACK_DIR}/${optional}")
+      fi
+    done
+
+    info "Syncing ${COMPOSE_DIR}/ Caddy + Compose stack to ${SSH_HOST}:${SSH_DIR}"
     run_cmd ssh "${SSH_OPTS[@]}" "$SSH_HOST" "mkdir -p $(printf '%q' "$SSH_DIR")"
-    run_cmd scp "${SCP_OPTS[@]}" \
-      "${REPO_ROOT}/selfhost/docker-compose.yml" \
-      "${REPO_ROOT}/selfhost/Caddyfile" \
-      "${REPO_ROOT}/selfhost/.env.example" \
-      "${SSH_HOST}:${SSH_DIR}/"
+    run_cmd scp -r "${SCP_OPTS[@]}" "${STACK_FILES[@]}" "${SSH_HOST}:${SSH_DIR}/"
 
     REMOTE_ARCHIVE=""
     REMOTE_IMAGE=""
@@ -510,6 +556,21 @@ if [ ! -f .env ]; then
   cp .env.example .env
 fi
 
+# Decrypt container secrets on the host with its own age key; the plaintext
+# stays on the host with mode 0600.
+if [ -f secrets.sops.env ]; then
+  if ! command -v sops >/dev/null 2>&1; then
+    echo "error: secrets.sops.env is present but sops is not installed on the host" >&2
+    exit 1
+  fi
+  (
+    umask 077
+    SOPS_AGE_KEY_FILE="${SOPS_AGE_KEY_FILE:-/etc/dabney-moe/age.key}" \
+      sops decrypt --input-type dotenv --output-type dotenv --output secrets.env.tmp secrets.sops.env
+    mv secrets.env.tmp secrets.env
+  )
+fi
+
 upsert_env() {
   key="$1"
   val="$2"
@@ -545,6 +606,47 @@ REMOTE_EOF
     else
       echo "[dry-run] ssh ${SSH_OPTS[*]} ${SSH_HOST} 'detect docker|podman; load/pull ${REMOTE_IMAGE}; update ${SSH_DIR}/.env (SITE_DOMAIN=${DOMAIN}, WEB_IMAGE=${REMOTE_IMAGE}); <compose> up -d --remove-orphans'"
     fi
+    ;;
+
+  scaleway)
+    REGION="${REGION:-${SCW_DEFAULT_REGION:-fr-par}}"
+    case "$REGION" in
+      fr-par|nl-ams|pl-waw) ;;
+      *) die "--target scaleway needs a Scaleway region (fr-par|nl-ams|pl-waw), got '${REGION}'" ;;
+    esac
+    need_cmd scw
+
+    if [[ -n "$IMAGE" ]]; then
+      FULL_IMAGE="$(image_with_tag "$IMAGE" "$TAG")"
+    else
+      FULL_IMAGE="rg.${REGION}.scw.cloud/${SCW_NAMESPACE}/${SERVICE_NAME}:${TAG}"
+    fi
+
+    # Scaleway Container Registry accepts any user name with an API secret key.
+    SCW_CREDS=""
+    if [[ -n "${SCW_SECRET_KEY:-}" ]]; then
+      SCW_CREDS="nologin:${SCW_SECRET_KEY}"
+    elif [[ "$PUSH" -eq 0 ]]; then
+      SCW_CREDS="nologin:<SCW_SECRET_KEY>"
+    fi
+
+    if [[ -z "$SCW_CONTAINER_ID" && "$PUSH" -eq 1 ]]; then
+      need_cmd tofu
+      SCW_CONTAINER_ID="$(tofu -chdir="${REPO_ROOT}/terraform/eu" output -raw serverless_container_id 2>/dev/null || true)"
+      [[ -n "$SCW_CONTAINER_ID" && "$SCW_CONTAINER_ID" != "null" ]] \
+        || die "no Serverless Container: set serverless_image in terraform/eu or pass --scw-container-id"
+    fi
+    # The OpenTofu ID is <region>/<uuid>; scw wants the UUID.
+    SCW_CONTAINER_ID="${SCW_CONTAINER_ID##*/}"
+    SCW_CONTAINER_ID="${SCW_CONTAINER_ID:-<serverless_container_id>}"
+
+    info "Pushing image to ${FULL_IMAGE} and rolling Scaleway Serverless Container ${SCW_CONTAINER_ID} (${REGION})"
+    if [[ "$BUILD_MODE" != "none" || -n "$IMAGE_ARCHIVE" ]]; then
+      push_image_to_registry "$FULL_IMAGE" "$SCW_CREDS" "$LOCAL_DOCKER_IMAGE"
+    fi
+    # Updating the image redeploys the container.
+    run_cmd scw container container update "$SCW_CONTAINER_ID" \
+      "registry-image=${FULL_IMAGE}" "region=${REGION}"
     ;;
 
   cloudrun)
