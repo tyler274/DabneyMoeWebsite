@@ -23,10 +23,17 @@ import subprocess
 SKIP_PREFIXES = ("terraform/", "selfhost/")
 
 # Inputs of the Tauri desktop + Android builds: the Tauri shell, the UI crates
-# it links (never `crates/web/`, `vendor/coda-rust/`, or `public/coda/`), the
-# Trunk frontend bundle (styles + copied photos/favicon/resume), and Nix/Rust
-# toolchain files (excluding `nix/web-server.nix`, which is web-only).
-TAURI_PREFIXES = ("src-tauri/", "crates/ui/", "crates/tauri-ui/", "style/", "public/photos/")
+# it links (never `crates/web/`), the Trunk frontend bundle (styles + copied
+# photos/favicon/resume), and Nix/Rust toolchain files (excluding
+# `nix/web-server.nix`, which is web-only).
+TAURI_PREFIXES = (
+    "src-tauri/",
+    "crates/ui/",
+    "crates/clinical-workspace/",
+    "crates/tauri-ui/",
+    "style/",
+    "public/photos/",
+)
 TAURI_FILES = {
     "Cargo.toml",
     "Trunk.toml",
@@ -93,7 +100,7 @@ def select(event_name, event):
         return False, False, False, "only documentation, terraform/ or selfhost/ changed"
     if any(tauri_input(path) for path in paths):
         return True, True, True, "change includes Tauri desktop/Android build inputs"
-    return True, False, False, "change is web/Coda-only and cannot affect Tauri desktop or Android"
+    return True, False, False, "change is web-only and cannot affect Tauri desktop or Android"
 
 
 def main():

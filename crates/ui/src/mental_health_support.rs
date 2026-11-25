@@ -1,5 +1,5 @@
 //! Local-first Personal Crisis & Support Card (Stanley-Brown 6-part structure) +
-//! 1-Page Printable/Exportable Clinician Brief for Coda Health `/mental-health`.
+//! 1-Page Printable/Exportable Clinician Brief for Dabney.moe `/mental-health`.
 //!
 //! All personal contacts, early-warning signs, and coping steps stay strictly in the
 //! user's browser (`localStorage`), never leave the device unless explicitly printed or
@@ -13,7 +13,7 @@ use crate::mental_health_episodes::{classify_asrm, EpisodeCadenceSummary};
 use crate::mental_health_lingo::{classify_gad7, classify_phq9, MentalHealthCheckIn};
 
 #[cfg(any(feature = "hydrate", feature = "csr"))]
-const STORAGE_KEY_SUPPORT_CARD: &str = "coda.mental_health.v1.support_card";
+const STORAGE_KEY_SUPPORT_CARD: &str = "dabney.mental_health.v1.support_card";
 
 /// Patient-owned local Stanley-Brown safety & support card persisted exclusively in `localStorage`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -191,7 +191,7 @@ pub fn render_clinician_brief_markdown(
     };
 
     let mut md = String::from(
-        "# Coda Health — Patient-Prepared Clinical Brief\n\n\
+        "# Dabney.moe — Patient-Prepared Clinical Brief\n\n\
          > **Note:** Self-monitoring summary prepared locally by the patient for clinician review. Not an automated medical diagnosis.\n\n\
          ## 1. Mental Health Scales & Daily Check-Ins\n",
     );
@@ -432,7 +432,7 @@ pub fn SupportAndClinicianBriefSection(
                             view! {
                                 <a
                                     href=href
-                                    download="coda-personal-support-card.md"
+                                    download="dabney-personal-support-card.md"
                                     class="rounded-full border border-emerald-400/30 px-3 py-1 text-xs font-medium text-emerald-300 transition hover:bg-emerald-500/10"
                                 >
                                     "Save card .md"
@@ -702,7 +702,7 @@ pub fn SupportAndClinicianBriefSection(
                                 </button>
                                 <a
                                     href=href
-                                    download="coda-clinician-visit-brief.md"
+                                    download="dabney-clinician-visit-brief.md"
                                     class="inline-flex items-center rounded-full border border-white/15 px-3.5 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-white/5"
                                 >
                                     "Download .md"

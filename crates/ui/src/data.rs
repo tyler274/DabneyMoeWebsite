@@ -42,9 +42,10 @@ pub const ABOUT_PHOTO: &str = "/photos/tyler-travel.png";
 pub const TAGLINE: &str = "Independent software engineer & freelance contractor";
 
 pub const SUMMARY: &str = "Caltech-trained software engineer specializing in Rust, GPU \
-computing, and high-performance systems. Recent work spans Coda (full-stack clinical AI \
-workspace), Elysian Studio, ElyMalloc, and ElyLD in safe Rust. I take projects from \
-first commit to production deployment. I'm available for freelance and contract work.";
+computing, and high-performance systems. Recent work spans the Dabney.moe Clinical \
+Workspace (full-stack Rust clinical systems), Elysian Studio, ElyMalloc, and ElyLD in \
+safe Rust. I take projects from first commit to production deployment. I'm available for \
+freelance and contract work.";
 
 pub const ABOUT: &str = "When I'm not shipping systems code, you'll find me behind a camera \
 or exploring somewhere new. I bring the same curiosity I have for travel and culture to \
@@ -58,16 +59,16 @@ pub const EXPERTISE: &[Expertise] = &[
             "From lecturing for CS179 at Caltech to CUDA C++ at JPL and Zeiss, I design and ship \
                 parallel algorithms on GPUs-scientific simulation, ML inference, and \
                 real-time image pipelines.",
-        image: "/photos/cuda-logo.jpg",
-        image_alt: "NVIDIA CUDA logo",
+        image: "/photos/gpu-compute.jpg",
+        image_alt: "Isometric illustration of a parallel GPU compute die with glowing cyan and emerald streaming cores",
     },
     Expertise {
         title: "FPGAs & Hardware Acceleration",
         blurb: "At Carl Zeiss I deployed PyTorch models on AMD/Xilinx FPGAs for real-time \
                 image signal processing. Comfortable from board bring-up through SYCL, \
                 VHDL, and the full HPC stack.",
-        image: "/photos/fpga-ultra96.png",
-        image_alt: "Avnet Ultra96 FPGA development board",
+        image: "/photos/fpga-silicon.jpg",
+        image_alt: "Overhead illustration of an FPGA silicon die showing programmable logic arrays and routing fabric",
     },
 ];
 
@@ -101,15 +102,16 @@ pub const SERVICES: &[Service] = &[
 
 pub const PROJECTS: &[Project] = &[
     Project {
-        name: "Coda",
+        name: "Dabney.moe Clinical Workspace",
         blurb:
-            "Unlicense 37-crate Rust clinical workspace — Chords clinician site, Duet patient app, \
-                Connected Care sync, Epic/Oracle PKCE FHIR R4 & EHR adapters, Poppler/Tesseract OCR, \
-                bounded LLM harness, Valkey SSE, HealthKit/Health Connect bridges, Nix OCI images, \
-                OpenTofu GCP, and live interactive WASM SQLite demo hosted on dabney.moe.",
-        tags: &["Rust", "Dioxus", "PostgreSQL", "Valkey", "Nix", "OpenTofu"],
-        href: "https://github.com/tyler274/coda-rust",
-        demo_href: Some("/coda/"),
+            "Clean-room local-first Rust & WebAssembly clinical workspace hosted on dabney.moe — \
+                interactive synthetic zero-PHI physician chart review with verbatim record-cited Q&A, \
+                embedded Axum clinical API with optional same-origin streaming reverse proxy, \
+                comprehensive commercial CGM & mental health analytics, Nix OCI images, and \
+                provider-agnostic infrastructure.",
+        tags: &["Rust", "Leptos", "Axum", "WASM", "Nix", "Terraform"],
+        href: "https://dabney.moe/clinical",
+        demo_href: Some("/clinical/physician"),
     },
     Project {
         name: "Elysian Studio",
@@ -142,23 +144,21 @@ pub const PROJECTS: &[Project] = &[
 
 pub const EXPERIENCE: &[Role] = &[
     Role {
-        company: "Coda Health",
+        company: "Independent Clinical Systems (Dabney.moe)",
         location: "Remote",
         title: "Senior System Software Engineer",
         period: "Oct 2026 – Nov 2026",
         points: &[
-            "Engineered a 37-crate full-stack Rust workspace (Dioxus/WASM web, Axum services, \
-             SeaORM/PostgreSQL with pgvector RLS, Valkey SSE fan-out, zero-PHI push, and Swift \
-             HealthKit / Kotlin Health Connect bridges) powering the Chords clinician and Duet \
-             patient apps.",
+            "Engineered full-stack Rust clinical systems (WASM web interfaces, Axum services, \
+             PostgreSQL with pgvector RLS, Valkey SSE fan-out, zero-PHI push, and Swift \
+             HealthKit / Kotlin Health Connect bridges) powering clinician and patient workflows.",
             "Built a bounded LLM tool-execution harness, offline BGE semantic encoder, \
-             Poppler/Tesseract OCR, Epic/Oracle PKCE FHIR R4 + EHR/Spruce/Chrome adapters, and \
-             Connected Care sync backed by TLA+ model checks, PostgreSQL crash-recovery suites, \
-             headless Android emulator tests, and Chromium E2E qualification.",
-            "Automated Nix distroless OCI images, 9 OpenTofu GCP roots (Cloud Run, GKE \
-             Autopilot, Cloud SQL, IAP, Doppler), OpenTelemetry/Datadog/Langfuse telemetry, \
-             Firecracker/act sandboxed CI, and live interactive WASM SQLite hosting at \
-             dabney.moe/coda.",
+             Poppler/Tesseract OCR, PKCE FHIR R4 & EHR adapters, and synchronized care workflows \
+             backed by TLA+ model checks, PostgreSQL crash-recovery suites, headless Android \
+             emulator tests, and Chromium E2E qualification.",
+            "Automated Nix distroless OCI images, OpenTofu/Terraform cloud infrastructure, \
+             OpenTelemetry observability, sandboxed CI, and clean-room interactive WASM clinical \
+             workspace hosting at dabney.moe/clinical.",
         ],
     },
     Role {

@@ -51,23 +51,37 @@ pub const LAPIDARY_ITEMS: &[LapidaryItem] = &[
     },
 ];
 
-pub const ARTWORK_INTRO: &str = "Artwork commissioned from independent artists. Copyright remains \
-with the creators - these are pieces they made at my request.";
+pub const ARTWORK_INTRO: &str = "Original vector illustrations and visual studies created by \
+Tyler Port for dabney.moe.";
 
 pub const ARTWORK_ITEMS: &[GalleryItem] = &[
     GalleryItem {
-        src: "/commissions/artwork/Jack-O_Kiron_fightstick.jpg",
-        alt: "Jack-O' Valentine fightstick artwork with in-game UI elements",
-        title: "Jack-O' Valentine - fightstick art",
-        artist: "Subakeye",
-        artist_url: "https://x.com/Subakeye/status/1408890470827184128/photo/1",
+        src: "/dabney-elephant.svg",
+        alt: "Dabney.moe original emerald-green elephant vector emblem",
+        title: "Dabney.moe Elephant Emblem",
+        artist: "Tyler Port",
+        artist_url: "https://dabney.moe",
     },
     GalleryItem {
-        src: "/commissions/artwork/Angela.png",
-        alt: "Angela character portrait in a clinical office setting",
-        title: "Angela",
-        artist: "Hydowa",
-        artist_url: "https://vgen.co/Hydowa",
+        src: "/commissions/artwork/piece-01.svg",
+        alt: "Original geometric study with cyan circle, rectangle, and flowing wave on deep slate gradient",
+        title: "Geometric Study I — Cyan Wave",
+        artist: "Tyler Port",
+        artist_url: "https://dabney.moe",
+    },
+    GalleryItem {
+        src: "/commissions/artwork/piece-02.svg",
+        alt: "Original geometric study of layered cyan triangular peaks over a slate horizon",
+        title: "Geometric Study II — Slate Peaks",
+        artist: "Tyler Port",
+        artist_url: "https://dabney.moe",
+    },
+    GalleryItem {
+        src: "/commissions/artwork/piece-03.svg",
+        alt: "Original stylized minimalist mask portrait on a radial teal-to-slate backdrop",
+        title: "Geometric Study III — Minimalist Mask",
+        artist: "Tyler Port",
+        artist_url: "https://dabney.moe",
     },
 ];
 

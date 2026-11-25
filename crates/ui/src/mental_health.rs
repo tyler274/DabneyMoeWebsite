@@ -1,7 +1,8 @@
-//! Interactive Coda Health Mental Health & Abbott Lingo CGM tracking workspace (`/mental-health`).
+//! Interactive Dabney.moe Mental Health & Comprehensive Commercial CGM tracking workspace (`/mental-health`).
 
 use leptos::prelude::*;
 use leptos_meta::{Link, Meta, Title};
+use leptos_router::components::A;
 
 use crate::mental_health_3d::LingoMood3DChart;
 use crate::mental_health_cgm::{
@@ -217,7 +218,7 @@ pub fn MentalHealthPage() -> impl IntoView {
     };
 
     view! {
-        <Title text="Coda Health — Mental Health & Comprehensive Commercial CGM Tracking | dabney.moe" />
+        <Title text="Dabney.moe — Mental Health & Comprehensive Commercial CGM Tracking | dabney.moe" />
         <Meta
             name="description"
             content="Local-first mental health and comprehensive glucose tracking for all major commercial CGMs & BGMs (Abbott Lingo, FreeStyle Libre, Dexcom Clarity/Stelo, Medtronic CareLink, Eversense, Tandem, Omnipod/Glooko/Tidepool) with ADA 5-band TIR, AGP, GMI, GRI, and WebGL2 3D charts."
@@ -231,7 +232,7 @@ pub fn MentalHealthPage() -> impl IntoView {
             <div class="mb-10 flex flex-col gap-6 border-b border-white/10 pb-8 md:flex-row md:items-end md:justify-between">
                 <div class="max-w-2xl">
                     <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-cyan-400">
-                        "Coda Health · Metabolic Psychiatry & All Commercial CGMs"
+                        "Dabney.moe · Metabolic Psychiatry & All Commercial CGMs"
                     </p>
                     <h1 class="text-3xl font-bold tracking-tight text-white sm:text-4xl">
                         "Mental Health & Comprehensive Glucose Tracking"
@@ -241,12 +242,12 @@ pub fn MentalHealthPage() -> impl IntoView {
                     </p>
                 </div>
                 <div class="flex flex-wrap gap-3">
-                    <a
-                        href="/coda/physician/"
-                        class="inline-flex items-center gap-2 rounded-full bg-cyan-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
+                    <A
+                        href="/clinical/physician"
+                        attr:class="inline-flex items-center gap-2 rounded-full bg-cyan-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
                     >
-                        "Open Coda Live Harness →"
-                    </a>
+                        "Open Clinical Workspace →"
+                    </A>
                     <button
                         type="button"
                         on:click=reset_sample
@@ -703,7 +704,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                         view! {
                             <a
                                 href=href
-                                download="coda-mental-health-lingo.csv"
+                                download="dabney-mental-health-cgm.csv"
                                 class="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-4 py-2 text-xs font-medium text-slate-200 transition hover:bg-white/5"
                             >
                                 "Download CSV"

@@ -49,12 +49,11 @@ version = 2
 # vulnerability. Remove an entry as soon as its path drops the crate.
 ignore = [
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error is unmaintained; build-time proc macro via glib-macros/gtk3-macros 0.18 (gtk-rs GTK3 bindings) under tauri/wry on Linux; goes away when Tauri leaves the GTK3 bindings" },
-    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; build-time proc macro via leptos (either_of, reactive_graph, tachys) and the candle stack (gemm, pulp, tokenizers); no fixed release, upstreams have not moved to pastey" },
-    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is unmaintained; via serde_yaml 0.9 in vendor/coda-rust agent-skills, which parses skill front matter; that crate is synced from upstream coda-rust (scripts/sync-coda-site.sh), so the replacement has to land there" },
+    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; build-time proc macro via leptos (either_of, reactive_graph, reactive_stores, tachys); no fixed release, upstreams have not moved to pastey" },
     { id = "RUSTSEC-2026-0370", reason = "zvariant was merged into zbus 6; via zbus 5 under tauri-plugin-opener (desktop app only), which has not moved to zbus 6" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names was merged into zbus 6; via zbus 5 under tauri-plugin-opener (desktop app only), which has not moved to zbus 6" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive was merged into zbus 6; via zbus 5 under tauri-plugin-opener (desktop app only), which has not moved to zbus 6" },
-    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained, all versions affected; via turso_core/turso_ext under vendor/coda-rust physician-demo-db; 0.8.4 is the latest stable turso and still depends on chrono" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained, all versions affected; used by crates/ui for timestamp formatting until migrated to jiff/time" },
 ]
 
 [sources]

@@ -1,0 +1,42 @@
+# Fly.io deployment configuration for dabney.moe.
+#
+# Deploy via scripts/deploy.sh (dry-run by default; add --push to execute):
+#   ./scripts/deploy.sh --target fly --push
+#   ./scripts/deploy.sh --target fly --image registry.gitlab.com/<user>/dabney-moe/web:latest --push
+#
+# Or invoke flyctl directly from the repository root:
+#   flyctl deploy --config selfhost/fly.toml --dockerfile Dockerfile
+
+app = "dabney-web"
+primary_region = "iad"
+
+[build]
+  dockerfile = "../Dockerfile"
+
+[env]
+  LEPTOS_OUTPUT_NAME = "dabney"
+  LEPTOS_HASH_FILES = "true"
+  LEPTOS_SITE_PKG_DIR = "pkg"
+  LEPTOS_SITE_ADDR = "0.0.0.0:8080"
+  LEPTOS_ENV = "PROD"
+  RUST_LOG = "info"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/"
+
+[[vm]]
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1

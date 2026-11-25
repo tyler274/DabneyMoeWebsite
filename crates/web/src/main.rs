@@ -35,35 +35,25 @@ async fn main() {
     let leptos_options = conf.leptos_options;
     let addr = leptos_options.site_addr;
     let routes = generate_route_list(App);
-    let coda_api_proxy =
-        web::coda_proxy::CodaApiProxyConfig::from_env(|key| std::env::var(key).ok())
+    let clinical_api_proxy =
+        web::clinical_proxy::ClinicalApiProxyConfig::from_env(|key| std::env::var(key).ok())
             .unwrap_or_else(|err| {
-                tracing::error!(error = %err, "invalid CODA_PHYSICIAN_API_URL configuration");
+                tracing::error!(error = %err, "invalid CLINICAL_API_URL configuration");
                 std::process::exit(1);
             });
-    let embedded_coda_api = if coda_api_proxy.is_some() {
+    if clinical_api_proxy.is_some() {
         tracing::info!(
             service = "dabney-web",
-            mount = web::coda_proxy::CODA_API_PREFIX,
-            "enabled Coda physician live API proxy"
+            mount = web::clinical_proxy::CLINICAL_API_PREFIX,
+            "enabled clinical workspace live API proxy"
         );
-        None
     } else {
-        match web::build_embedded_coda_api(&leptos_options.site_root).await {
-            Ok(router) => {
-                tracing::info!(
-                    service = "dabney-web",
-                    mount = web::coda_proxy::CODA_API_PREFIX,
-                    "enabled embedded Coda physician crates/harness API"
-                );
-                Some(router)
-            }
-            Err(err) => {
-                tracing::error!(error = %err, "failed to initialize embedded Coda physician API");
-                None
-            }
-        }
-    };
+        tracing::info!(
+            service = "dabney-web",
+            mount = web::clinical_proxy::CLINICAL_API_PREFIX,
+            "enabled embedded clinical workspace API"
+        );
+    }
 
     let site_routes = web::mount_removed_pages(Router::new())
         .route("/api/telemetry/errors", post(report_client_error))
@@ -75,37 +65,32 @@ async fn main() {
         .layer(RequestBodyLimitLayer::new(8 * 1024))
         .with_state(leptos_options.clone());
 
-    let app = web::mount_coda_routes_with_embedded(
-        Router::new(),
-        &leptos_options.site_root,
-        coda_api_proxy,
-        embedded_coda_api,
-    )
-    .merge(site_routes)
-    .layer(axum::middleware::from_fn(
-        web::community_activity::privacy_headers,
-    ))
-    .layer(SetRequestIdLayer::new(
-        HeaderName::from_static("x-request-id"),
-        MakeRequestUuid,
-    ))
-    .layer(PropagateRequestIdLayer::new(HeaderName::from_static(
-        "x-request-id",
-    )))
-    .layer(
-        TraceLayer::new_for_http()
-            .make_span_with(|request: &axum::http::Request<axum::body::Body>| {
-                let path = scrub_path(request.uri().path());
-                tracing::info_span!(
-                    "http_request",
-                    service = "dabney-web",
-                    method = %request.method(),
-                    path = %path,
-                )
-            })
-            .on_response(DefaultOnResponse::new().level(Level::INFO))
-            .on_failure(DefaultOnFailure::new().level(Level::ERROR)),
-    );
+    let app = web::mount_clinical_api_routes(Router::new(), clinical_api_proxy)
+        .merge(site_routes)
+        .layer(axum::middleware::from_fn(
+            web::community_activity::privacy_headers,
+        ))
+        .layer(SetRequestIdLayer::new(
+            HeaderName::from_static("x-request-id"),
+            MakeRequestUuid,
+        ))
+        .layer(PropagateRequestIdLayer::new(HeaderName::from_static(
+            "x-request-id",
+        )))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &axum::http::Request<axum::body::Body>| {
+                    let path = scrub_path(request.uri().path());
+                    tracing::info_span!(
+                        "http_request",
+                        service = "dabney-web",
+                        method = %request.method(),
+                        path = %path,
+                    )
+                })
+                .on_response(DefaultOnResponse::new().level(Level::INFO))
+                .on_failure(DefaultOnFailure::new().level(Level::ERROR)),
+        );
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     tracing::info!(%addr, service = "dabney-web", "listening");
     axum::serve(

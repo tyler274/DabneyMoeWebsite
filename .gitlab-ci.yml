@@ -1,0 +1,147 @@
+# Provider-agnostic, GitHub-free GitLab CI pipeline for dabney.moe.
+#
+# Runs the full Nix CI gate (format, cargo-deny, clippy, tests), builds the
+# hardened static-musl OCI image (`nix build .#serverImage`), and deploys on
+# the default branch according to `DEPLOY_TARGET`:
+#   - oci      Push image to GitLab Container Registry (or custom DEPLOY_IMAGE)
+#   - ssh      Deploy over SSH to any Linux VPS (Docker/Podman + Caddy HTTPS)
+#   - cloudrun Push to Artifact Registry and roll GCP Cloud Run
+#   - fly      Deploy to Fly.io using selfhost/fly.toml
+#
+# Leave DEPLOY_TARGET unset to run checks and image builds without deploying.
+
+stages:
+  - check
+  - build
+  - deploy
+
+variables:
+  NIX_CONFIG: "experimental-features = nix-command flakes"
+  SITE_DOMAIN: "dabney.moe"
+
+default:
+  image: nixos/nix:latest
+
+ci-checks:
+  stage: check
+  script:
+    - nix run .#ci
+
+build-image:
+  stage: build
+  needs:
+    - ci-checks
+  script:
+    - nix build .#serverImage
+    - cp -L result server-image.tar.gz
+    - ls -lh server-image.tar.gz
+  artifacts:
+    name: "dabney-server-image-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - server-image.tar.gz
+    expire_in: 1 day
+
+deploy-oci:
+  stage: deploy
+  needs:
+    - job: build-image
+      artifacts: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $DEPLOY_TARGET == "oci"'
+  script:
+    - |
+      TARGET_IMAGE="${DEPLOY_IMAGE:-${CI_REGISTRY_IMAGE}/web}"
+      export OCI_REGISTRY_USER="${OCI_REGISTRY_USER:-$CI_REGISTRY_USER}"
+      export OCI_REGISTRY_PASS="${OCI_REGISTRY_PASS:-$CI_REGISTRY_PASSWORD}"
+      nix develop .#deploy -c ./scripts/deploy.sh \
+        --build none \
+        --target oci \
+        --image "$TARGET_IMAGE" \
+        --image-archive server-image.tar.gz \
+        --tag "$CI_COMMIT_SHORT_SHA" \
+        --push
+
+deploy-ssh:
+  stage: deploy
+  needs:
+    - job: build-image
+      artifacts: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $DEPLOY_TARGET == "ssh"'
+  script:
+    - |
+      set -euo pipefail
+      SSH_KEY_FILE="$(mktemp)"
+      trap 'rm -f "$SSH_KEY_FILE"' EXIT
+      chmod 600 "$SSH_KEY_FILE"
+      printf '%s\n' "$DEPLOY_SSH_KEY" > "$SSH_KEY_FILE"
+      nix develop .#deploy -c ./scripts/deploy.sh \
+        --build none \
+        --target ssh \
+        --image-archive server-image.tar.gz \
+        --ssh-host "$DEPLOY_SSH_HOST" \
+        --ssh-dir "${DEPLOY_SSH_DIR:-/opt/dabney-moe}" \
+        --ssh-key "$SSH_KEY_FILE" \
+        --domain "${SITE_DOMAIN:-dabney.moe}" \
+        --tag "$CI_COMMIT_SHORT_SHA" \
+        --push
+
+deploy-cloudrun:
+  stage: deploy
+  needs:
+    - job: build-image
+      artifacts: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $DEPLOY_TARGET == "cloudrun"'
+  script:
+    - |
+      set -euo pipefail
+      run_cloudrun() {
+        SA_FILE="$(mktemp)"
+        trap 'rm -f "$SA_FILE"' EXIT
+        printf '%s' "$GCP_SA_KEY" > "$SA_FILE"
+        gcloud auth activate-service-account --key-file="$SA_FILE"
+        gcloud config set project "$GCP_PROJECT_ID"
+        ./scripts/deploy.sh \
+          --build none \
+          --target cloudrun \
+          --image-archive server-image.tar.gz \
+          --project "$GCP_PROJECT_ID" \
+          --region "${GCP_REGION:-us-central1}" \
+          --tag "$CI_COMMIT_SHORT_SHA" \
+          --push
+      }
+      if [ -n "${DOPPLER_TOKEN:-}" ]; then
+        nix develop .#deploy -c doppler run -- bash -euo pipefail -c "$(declare -f run_cloudrun); run_cloudrun"
+      else
+        nix develop .#deploy -c bash -euo pipefail -c "$(declare -f run_cloudrun); run_cloudrun"
+      fi
+
+deploy-fly:
+  stage: deploy
+  needs:
+    - job: build-image
+      artifacts: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $DEPLOY_TARGET == "fly"'
+  script:
+    - |
+      set -euo pipefail
+      export FLYCTL_INSTALL="${HOME}/.fly"
+      if ! command -v flyctl >/dev/null 2>&1; then
+        nix profile install nixpkgs#flyctl
+      fi
+      ARGS=(
+        --build none
+        --target fly
+        --image-archive server-image.tar.gz
+        --tag "$CI_COMMIT_SHORT_SHA"
+        --push
+      )
+      if [ -n "${DEPLOY_IMAGE:-}" ]; then
+        ARGS+=(--image "$DEPLOY_IMAGE")
+      fi
+      if [ -n "${FLY_REGION:-}" ]; then
+        ARGS+=(--region "$FLY_REGION")
+      fi
+      nix develop .#deploy -c ./scripts/deploy.sh "${ARGS[@]}"

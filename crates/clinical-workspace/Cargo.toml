@@ -1,0 +1,21 @@
+[package]
+name = "clinical-workspace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Clean-room Dabney.moe clinical workspace domain model, synthetic charts, and grounded Q&A API."
+
+[features]
+default = []
+ssr = ["dep:axum", "dep:tower-http"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+axum = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio.workspace = true
+tower.workspace = true

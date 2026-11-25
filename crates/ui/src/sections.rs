@@ -162,32 +162,12 @@ pub fn NavBar() -> impl IntoView {
                         <A href="/mental-health" on:click=close_mobile>
                             <span class=MOBILE_NAV_SUBLINK>"Mental Health & Lingo CGM"</span>
                         </A>
-                        <a
-                            href="/coda/"
-                            class=MOBILE_NAV_SUBLINK
-                            on:click=move |ev| {
-                                #[cfg(any(feature = "csr", feature = "hydrate"))]
-                                if open_site_or_external("/coda/") {
-                                    ev.prevent_default();
-                                }
-                                close_mobile(ev);
-                            }
-                        >
-                            "Coda Clinical Workspace"
-                        </a>
-                        <a
-                            href="/coda/physician/"
-                            class=MOBILE_NAV_SUBLINK
-                            on:click=move |ev| {
-                                #[cfg(any(feature = "csr", feature = "hydrate"))]
-                                if open_site_or_external("/coda/physician/") {
-                                    ev.prevent_default();
-                                }
-                                close_mobile(ev);
-                            }
-                        >
-                            "Coda Physician Demo (WASM)"
-                        </a>
+                        <A href="/clinical" on:click=close_mobile>
+                            <span class=MOBILE_NAV_SUBLINK>"Clinical Workspace"</span>
+                        </A>
+                        <A href="/clinical/physician" on:click=close_mobile>
+                            <span class=MOBILE_NAV_SUBLINK>"Physician Workspace Demo"</span>
+                        </A>
                         <A href="/tools/investment-account" on:click=close_mobile>
                             <span class=MOBILE_NAV_SUBLINK>"Investment Account Calculator"</span>
                         </A>
@@ -398,7 +378,11 @@ pub fn Projects() -> impl IntoView {
                                             rel="noopener"
                                             class="text-sm font-medium text-cyan-300 transition hover:text-cyan-200"
                                         >
-                                            "GitHub →"
+                                            {if p.href.contains("github.com") {
+                                                "GitHub →"
+                                            } else {
+                                                "Overview →"
+                                            }}
                                         </a>
                                     </div>
                                 </div>
@@ -564,7 +548,6 @@ pub fn Footer() -> impl IntoView {
                         <span>"Built with Rust, Leptos & Tauri"</span>
                     </span>
                 </div>
-                <span class="text-xs text-slate-600">"Icon © HoYoverse. All Rights Reserved."</span>
             </div>
         </footer>
     }
@@ -657,7 +640,36 @@ mod render_tests {
         for p in PROJECTS {
             assert!(html.contains(p.name), "projects missing name: {}", p.name);
             assert!(html.contains(p.href), "projects missing href: {}", p.name);
+            if let Some(demo) = p.demo_href {
+                assert!(
+                    html.contains(demo),
+                    "projects missing demo_href: {}",
+                    p.name
+                );
+            }
         }
+    }
+
+    #[test]
+    fn footer_omits_third_party_icon_credit() {
+        let owner = Owner::new();
+        let html = owner.with(|| {
+            crate::consent::provide_consent_context();
+            provide_context(leptos_router::location::RequestUrl::new("/"));
+            view! {
+                <leptos_router::components::Router>
+                    <Footer />
+                </leptos_router::components::Router>
+            }
+            .to_html()
+        });
+        drop(owner);
+        assert!(html.contains("Tyler Port"));
+        let removed_credit = ["hoyo", "verse"].concat();
+        assert!(
+            !html.to_ascii_lowercase().contains(&removed_credit),
+            "footer must not contain third-party icon credit"
+        );
     }
 
     #[test]

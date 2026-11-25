@@ -114,8 +114,8 @@ variable "ga4_property_id" {
   default     = ""
 }
 
-variable "coda_physician_api_url" {
+variable "clinical_api_url" {
   type        = string
-  description = "Optional HTTPS origin of the Coda physician public-demo Cloud Run runtime proxied under /coda/physician/api. Empty leaves /coda/physician/ in browser-SQLite fallback mode."
+  description = "Optional HTTPS origin of an external clinical workspace API proxied under /clinical/api. Empty uses the embedded in-process synthetic clinical workspace API."
   default     = ""
 }

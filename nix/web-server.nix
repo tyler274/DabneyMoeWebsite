@@ -95,9 +95,6 @@ let
           install -Dm644 ${builtins.dirOf binPath}/hash.txt "$out/bin/hash.txt"
           mkdir -p "$out/share"
           cp -r target/site "$out/share/site"
-          if [ -d vendor/coda-rust/skills ]; then
-            cp -r vendor/coda-rust/skills "$out/share/coda-skills"
-          fi
           runHook postInstall
         '';
 
@@ -134,22 +131,11 @@ let
   webServerStatic = mkWebServer { staticMusl = true; }; # hardened default
   webServer = mkWebServer { }; # glibc fallback
 
-  # Pre-baked Qwen3-1.7B Q4_K_M GGUF weights + tokenizer for the embedded
-  # pure-Rust `candle-transformers` (`quantized_qwen3`) physician harness API,
-  # so Cloud Run cold starts load directly from `/nix/store` with zero network I/O.
-  qwenGguf = pkgs.fetchurl {
-    url = "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf";
-    sha256 = "b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897";
-  };
-  qwenTokenizer = pkgs.fetchurl {
-    url = "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/main/tokenizer.json";
-    sha256 = "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4";
-  };
-
   # OCI image factory: copies the server + assets in, sets the LEPTOS_* runtime
-  # env, and listens on 0.0.0.0:8080 (the port every cloud module wires its
-  # ingress to). Build with `nix build .#serverImage` -> result is a tarball
-  # you `skopeo copy docker-archive:result docker://<reg>`.
+  # env, and listens on 0.0.0.0:8080 (the port every cloud module and self-host
+  # target wires its ingress to). Build with `nix build .#serverImage` -> result
+  # is an ultra-lean ~25 MB static-musl OCI tarball deployable anywhere via
+  # `./scripts/deploy.sh` or `skopeo copy docker-archive:result docker://<reg>`.
   mkServerImage =
     server:
     pkgs.dockerTools.buildLayeredImage {
@@ -181,10 +167,6 @@ let
           "LEPTOS_SITE_ADDR=0.0.0.0:8080"
           "LEPTOS_ENV=PROD"
           "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-          "CODA_CANDLE_GGUF_PATH=${qwenGguf}"
-          "CODA_CANDLE_TOKENIZER_PATH=${qwenTokenizer}"
-          "CODA_DEMO_SKILLS_DIR=${server}/share/coda-skills"
-          "CODA_DEMO_ALLOW_CORS=0"
         ];
         ExposedPorts = {
           "8080/tcp" = { };

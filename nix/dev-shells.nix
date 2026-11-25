@@ -62,12 +62,15 @@
     '';
   };
 
-  # Deploy shell for CI: only the tools the `deploy` job runs. The default
-  # shell also carries them, but pulls the Rust toolchain and the whole Tauri
-  # library closure, which the deploy job never uses.
+  # Deploy shell for CI and local releases: only the tools `scripts/deploy.sh`
+  # and CI deploy jobs run (OCI registries, SSH/VPS, OpenTofu clouds, Cloud Run,
+  # and Doppler). The default shell also carries most of them, but pulls the
+  # Rust toolchain and the whole Tauri library closure, which deploy never uses.
   deploy = pkgs.mkShell {
     packages = [
       pkgs.skopeo
+      pkgs.openssh
+      pkgs.opentofu
       pkgs.google-cloud-sdk
       pkgs.doppler
     ];

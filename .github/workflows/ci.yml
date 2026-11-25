@@ -299,6 +299,8 @@ jobs:
           key: rust-v1-clippy-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             rust-v1-clippy-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-
+      - name: "clippy: clinical-workspace (ssr)"
+        run: nix develop -c cargo clippy -p clinical-workspace --features ssr -- -D warnings
       - name: "clippy: ui (ssr)"
         run: nix develop -c cargo clippy -p ui --features ssr -- -D warnings
       - name: "clippy: web (ssr)"
@@ -531,6 +533,8 @@ jobs:
           key: rust-v1-test-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             rust-v1-test-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-
+      - name: "test: clinical-workspace (ssr)"
+        run: nix develop -c cargo test -p clinical-workspace --features ssr
       - name: "test: ui (data + ssr render)"
         run: nix develop -c cargo test -p ui --features ssr
       - name: "test: web (ssr route list)"
@@ -550,8 +554,7 @@ jobs:
           path: target
           key: ${{ steps.rust-cache.outputs.cache-primary-key }}
   # Build the production OCI image (Nix). Runs on the host runner with the Nix
-  # daemon + Magic Nix Cache (matching coda-rust's Locked Nix images job) so
-  # `cargoVendorDir`, pre-baked Qwen GGUF weights, and unchanged static musl
+  # daemon + Magic Nix Cache so `cargoVendorDir` and unchanged static musl
   # builds are cached across runs instead of rebuilt cold inside a container.
   build-image:
     name: Build server OCI image
@@ -674,7 +677,7 @@ jobs:
             skopeo --insecure-policy copy --dest-creds "oauth2accesstoken:$TOKEN" docker-archive:server-image.tar.gz "docker://$IMAGE"
             skopeo --insecure-policy copy --dest-creds "oauth2accesstoken:$TOKEN" docker-archive:server-image.tar.gz "docker://$REPO/web:latest"
 
-            gcloud run deploy dabney-web --image "$IMAGE" --region "$GCP_REGION" --cpu 4 --memory 4Gi --session-affinity --quiet
+            gcloud run deploy dabney-web --image "$IMAGE" --region "$GCP_REGION" --quiet
           '
       - name: Publish app
         run: |

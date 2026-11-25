@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/ui", "crates/web", "crates/tauri-ui", "crates/icon-gen", "src-tauri"]
-exclude = ["vendor/coda-rust"]
+members = ["crates/clinical-workspace", "crates/ui", "crates/web", "crates/tauri-ui", "crates/icon-gen", "src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -36,7 +35,7 @@ console_error_panic_hook = "0.1"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-physician-demo-api = { path = "vendor/coda-rust/crates/physician-demo-api" }
+clinical-workspace = { path = "crates/clinical-workspace" }
 
 # cargo-leptos drives the full-stack web build (SSR server + WASM hydration).
 [[workspace.metadata.leptos]]

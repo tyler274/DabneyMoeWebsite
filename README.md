@@ -1,32 +1,34 @@
 # dabney.moe
 
-[![CI](https://github.com/tyler274/DabneyMoeWebsite/actions/workflows/ci.yml/badge.svg)](https://github.com/tyler274/DabneyMoeWebsite/actions/workflows/ci.yml)
-
-Tyler Port's résumé and freelance software-engineering site, plus a multiplatform
-app suite. The web frontend is a **Leptos** SSR app (Axum + WASM hydration); the
-same UI is reused inside a **Tauri v2** shell (desktop + mobile) as a client-side
-rendered build. Everything is driven by a **Nix flake** dev shell, with **Bun**
-for JS tooling.
+Tyler Port's résumé, clinical workspace showcase, and freelance
+software-engineering site, plus a multiplatform app suite. The web frontend is
+a **Leptos** SSR app (Axum + WASM hydration); the same UI is reused inside a
+**Tauri v2** shell (desktop + mobile) as a client-side rendered build.
+Everything is driven by a **Nix flake** dev shell, with **Bun** for JS tooling
+and a standalone **Dockerfile** for Nix-free container builds.
 
 ## Architecture
 
-The page content lives once, in the shared `ui` crate. The web server and the
-Tauri shell are thin wrappers around it.
+The page content and synthetic clinical domain live in shared Rust crates. The
+web server and the Tauri shell are thin wrappers around them.
 
 ```
-crates/ui          shared Leptos components + App root (features: ssr/hydrate/csr)
-crates/web         cargo-leptos package: Axum SSR binary + WASM hydrate cdylib
-crates/tauri-ui    Trunk CSR binary that mounts ui::App, output to dist/
-src-tauri          Tauri v2 app (desktop + mobile), serves dist/
+crates/clinical-workspace  clean-room synthetic clinical charts, grounded citation Q&A, optional Axum API
+crates/ui                  shared Leptos components + App root (features: ssr/hydrate/csr)
+crates/web                 cargo-leptos package: Axum SSR binary + WASM hydrate cdylib
+crates/tauri-ui            Trunk CSR binary that mounts ui::App, output to dist/
+src-tauri                  Tauri v2 app (desktop + mobile), serves dist/
 ```
 
 | Path | Purpose |
 | --- | --- |
 | `flake.nix` / `rust-toolchain.toml` | Dev shell + pinned Rust toolchain (incl. `wasm32-unknown-unknown`). |
 | `Cargo.toml` | Workspace + `[[workspace.metadata.leptos]]` config. |
+| `Dockerfile` | Multi-stage container build (pure Rust `cargo-leptos` + Bun/Tailwind, no Nix required). |
+| `scripts/deploy.sh` | Provider-agnostic deploy CLI (`oci`, `ssh`, `cloudrun`, `aws`, `azure`, `fly`; dry-run by default). |
 | `tailwind.config.js`, `style/input.css` | Tailwind CSS source. |
 | `package.json` | Bun-managed tooling (Tailwind CLI + scripts). |
-| `public/` | Static assets served at the site root (`resume.pdf`, `/coda/` static export + WASM SQLite demo via `scripts/sync-coda-site.sh`). |
+| `public/` | Static assets served at the site root (`resume.pdf`, SVG/PNG icons, photos, original artwork). |
 | `crates/icon-gen` | Small Rust dev tool that regenerates the source app icon. |
 
 ## Prerequisites
@@ -70,8 +72,9 @@ environment variables (see `[[workspace.metadata.leptos]]` in `Cargo.toml`), e.g
 `LEPTOS_OUTPUT_NAME=dabney LEPTOS_HASH_FILES=true LEPTOS_SITE_ROOT=target/site
 LEPTOS_SITE_PKG_DIR=pkg LEPTOS_SITE_ADDR=0.0.0.0:3039 ./target/release/web`.
 Keep the generated `hash.txt` beside the server executable: the SSR shell uses it
-to resolve the matching content-hashed JS, WASM, and CSS filenames. The Nix images
-package this manifest and enable hash resolution automatically.
+to resolve the matching content-hashed JS, WASM, and CSS filenames. Both the Nix
+images and the root [`Dockerfile`](Dockerfile) package this manifest and enable
+hash resolution automatically.
 
 ## Apps (Tauri)
 
@@ -114,89 +117,67 @@ iOS still needs Xcode (macOS only): `cargo tauri ios init && cargo tauri ios dev
 
 ```bash
 # Run the full gate locally (exactly what CI runs):
-nix run .#ci          # rustfmt --check, cargo-deny, clippy (-D warnings), and all tests
+nix run .#ci          # nixpkgs-fmt, rustfmt, cargo-deny, clippy (-D warnings), and all tests
 ```
 
-Tests live next to the code: data-table invariants and SSR render assertions in
-`crates/ui`, a router smoke test in `crates/web`, and a Tauri-context parse test
-in `src-tauri`. Because the `ui`/`web`/`tauri-ui` crates select mutually
+Tests live next to the code: synthetic chart and API tests in
+`crates/clinical-workspace`, data-table invariants and SSR render assertions in
+`crates/ui`, router and proxy tests in `crates/web`, and a Tauri-context parse
+test in `src-tauri`. Because the `ui`/`web`/`tauri-ui` crates select mutually
 exclusive Leptos features, each is tested with its own feature set (see the
 `ci` runner in [`flake.nix`](flake.nix)).
 
-GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the
-same checks plus web, desktop, and Android (APK) builds on every push/PR, then a
-main-only deploy job that ships the web server to **Google Cloud Run** via a
-Nix-built container image (infra is provisioned separately with
-Terraform/OpenTofu, see [`terraform/`](terraform/)). The deploy no-ops until the
-`DOPPLER_TOKEN` secret is set. Play Store publishing is still a placeholder
-pending Play Console account setup.
+CI/CD pipelines are provider-agnostic and available across multiple forges:
 
-How the workflow is laid out:
+- **GitLab CI** ([`.gitlab-ci.yml`](.gitlab-ci.yml)): runs `nix run .#ci`,
+  builds `.#serverImage`, and deploys on `main` via `scripts/deploy.sh`
+  according to `DEPLOY_TARGET` (`oci`, `ssh`, `cloudrun`, `fly`).
+- **Codeberg / Forgejo / Gitea Actions**
+  ([`.forgejo/workflows/deploy.yml`](.forgejo/workflows/deploy.yml)): uses
+  `https://code.forgejo.org/actions/checkout@v4` (zero GitHub dependency) and
+  dispatches `scripts/deploy.sh` on `main`.
+- **GitHub Actions** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
+  parallel format, `cargo-deny`, clippy, tests, web/desktop/Android/OCI image
+  builds, scoped via [`scripts/ci_scope.py`](scripts/ci_scope.py), plus an
+  optional main-only Cloud Run rollout when `DOPPLER_TOKEN` is set.
 
-- **Parallel jobs.** After a short scope and CI-image check, format, clippy,
-  tests, and every build (web, desktop, Android, server image) run side by
-  side. Deploy waits for format, clippy, tests, the web build, and the image
-  build, and is skipped if any of them fails, is cancelled, or is skipped.
-- **Dependency guardrails.** `cargo deny` checks RustSec advisories, licences,
-  bans, and crate sources against [`deny.toml`](deny.toml). It runs in its own
-  job without the CI image and does not gate the deploy, so a newly published
-  advisory cannot block shipping otherwise unchanged code.
-- **Rust build cache.** Clippy, tests, the web build, and the desktop build
-  restore `target/` from the Actions cache, keyed by job, `rustc` version,
-  `flake.lock`, and `Cargo.lock`. A changed `Cargo.lock` falls back to the
-  newest cache for the same `flake.lock`; a changed `flake.lock` starts cold,
-  because cached build scripts and proc macros link against the old pin's
-  glibc store path and cannot run under the new one. Only runs on `main` save it, after
-  [`scripts/ci-trim-target.sh`](scripts/ci-trim-target.sh) strips workspace
-  outputs so only dependency artifacts are stored. Pull requests read the
-  cache but never write it.
-- **Scope.** [`scripts/ci_scope.py`](scripts/ci_scope.py) skips all builds and
-  the deploy when a change only touches Markdown, `terraform/`, or `selfhost/`,
-  and skips the Android build unless its inputs changed. Manual runs build
-  everything.
-- **Concurrency.** A new commit cancels the previous run of the same pull
-  request only. Runs on `main` are never cancelled, and deploys run one at a
-  time.
-- **Deploy shell.** The deploy job uses the slim `nix develop .#deploy` shell
-  (`gcloud`, `skopeo`, `doppler`) instead of the full dev shell.
+The slim deploy shell (`nix develop .#deploy`) supplies `skopeo`, `openssh`,
+`opentofu`, `gcloud`, and `doppler` without pulling the Rust or Tauri closure.
 
 ## Deployment (web)
 
-The site is a Leptos SSR server, so it deploys as a container. The image is
-built reproducibly with Nix and infra is described with Terraform-compatible HCL
-(driven by OpenTofu in the dev shell):
+`dabney.moe` deploys anywhere as a ~25 MB non-root OCI container built either
+with Nix (`nix build .#serverImage`) or the standalone [`Dockerfile`](Dockerfile)
+(`docker build` / `podman build`). Use [`scripts/deploy.sh`](scripts/deploy.sh)
+(dry-run by default; pass `--push` to execute) to ship to any target:
 
 ```bash
-nix build .#serverImage          # OCI image tarball at ./result
-cd terraform/gcp                 # or terraform/aws, terraform/azure
-tofu init && tofu apply          # two-phase: registry, push image, then service
+# Any OCI registry (GitLab, Codeberg, Docker Hub, Quay, GCP AR, AWS ECR, Azure ACR):
+./scripts/deploy.sh --target oci --image registry.gitlab.com/tyler274/dabney-moe/web --push
+
+# Any Linux VPS over SSH (Docker or Podman + Caddy automatic Let's Encrypt HTTPS):
+./scripts/deploy.sh --target ssh --ssh-host deploy@vps.example.com --domain dabney.moe --push
+
+# Fly.io (using selfhost/fly.toml):
+./scripts/deploy.sh --target fly --region iad --push
+
+# Managed clouds (OpenTofu / Cloud Run / App Runner / Container Apps):
+./scripts/deploy.sh --target cloudrun --project "$GCP_PROJECT_ID" --region us-central1 --push
+./scripts/deploy.sh --target aws --region us-east-1 --push
+./scripts/deploy.sh --target azure --region eastus --push
 ```
 
-See [`terraform/README.md`](terraform/README.md) for the full multi-cloud
-workflow (GCP Cloud Run, AWS App Runner, Azure Container Apps) and custom-domain
-setup.
+See [`docs/deploy.md`](docs/deploy.md) for the complete provider-agnostic guide,
+[`selfhost/README.md`](selfhost/README.md) for VPS/Caddy and Fly.io details, and
+[`terraform/README.md`](terraform/README.md) for multi-cloud OpenTofu modules.
 
 `nix build .#serverImage` produces a **hardened, statically-linked
-`x86_64-unknown-linux-musl`** build: the `mold` linker plus fat LTO, and
+`x86_64-unknown-linux-musl`** image using the `mold` linker, fat LTO, and
 Microsoft `mimalloc` in secure mode (`-DMI_SECURE`: guard pages, encrypted free
-lists, randomized allocation) as the global allocator. The result is glibc-free
-(zero runtime store references, ~18.7 MB image). The original dynamically-linked
-glibc image is still available as `nix build .#serverImageGlibc` if you ever need
-it.
-
-### Self-hosting with HTTPS (Caddy + Let's Encrypt)
-
-The managed targets above terminate TLS themselves. To run the site on your own
-host/VPS with HTTPS, [`selfhost/`](selfhost/) provides a Docker Compose stack
-where a Caddy reverse proxy auto-issues and renews a Let's Encrypt certificate
-for `dabney.moe`, redirects HTTP→HTTPS, and keeps port 80 open for the ACME
-`http-01` challenge. See [`selfhost/README.md`](selfhost/README.md).
-
-A separate, heavier
-[Android emulator smoke test](.github/workflows/android-emulator.yml) boots a
-Nix-provided AVD and installs the APK; it runs nightly and on demand (not as a
-per-push gate). It relies on `/dev/kvm`, which GitHub-hosted Linux runners
-expose.
+lists, randomized allocation) as the global allocator. Because the clean-room
+`clinical-workspace` runs in-process with zero external weight files, the image
+stays ~25 MB and glibc-free. The dynamically-linked glibc image remains
+available as `nix build .#serverImageGlibc`.
 
 ## Styling
 

@@ -1,11 +1,11 @@
-# Self-hosting dabney.moe with HTTPS (Caddy + Let's Encrypt)
+# Self-hosting dabney.moe (Caddy + Let's Encrypt or Fly.io)
 
-The managed cloud targets under [`../terraform`](../terraform) (Cloud Run / App
-Runner / Container Apps) terminate TLS with their own certificates, so they need
-nothing here. This directory is for running the site on **your own host/VPS**,
-where you bring the TLS: [Caddy](https://caddyserver.com) reverse-proxies the SSR
-server and obtains + auto-renews a [Let's Encrypt](https://letsencrypt.org)
-certificate over ACME.
+Managed cloud targets under [`../terraform`](../terraform) (Cloud Run, App
+Runner, Container Apps) terminate TLS with their own certificates. This
+directory supports running `dabney.moe` on **any Linux host or VPS** with
+Docker or Podman (fronted by [Caddy](https://caddyserver.com) +
+[Let's Encrypt](https://letsencrypt.org)), as well as [Fly.io](https://fly.io)
+via [`fly.toml`](fly.toml).
 
 ```
 internet ──▶ :443 HTTPS  ┌─────────┐  :8080  ┌──────────────┐
@@ -16,47 +16,96 @@ internet ──▶ :443 HTTPS  ┌─────────┐  :8080  ┌─�
                          Let's Encrypt
 ```
 
-Caddy gives us the security best practices out of the box: HTTP→HTTPS redirect,
-automatic issuance/renewal at randomized times, modern TLS defaults, and it
-follows the ACME `Link` headers (so the intermediate and ToS URLs are never
-hardcoded). Port 80 stays open for the `http-01` challenge and the redirect.
+Caddy provides automatic HTTP→HTTPS redirection, ACME certificate issuance and
+renewal at randomized intervals, modern TLS defaults, and immediate streaming
+flushes (`flush_interval -1`). Port 80 stays open for the ACME `http-01`
+challenge and HTTP→HTTPS redirects.
 
-## Prerequisites
+## Prerequisites (VPS / self-hosted)
 
-- A host with a public IP and inbound **80 + 443** open (80 is required for the
-  ACME `http-01` challenge and the HTTP→HTTPS redirect).
+- A Linux host with a public IP and inbound **80 + 443** open (80 is required
+  for the ACME `http-01` challenge and HTTP→HTTPS redirect).
 - `dabney.moe`'s `A` (and `AAAA`) DNS record pointing at that host.
-- Docker + the Compose plugin.
+- **Docker** (`docker compose` or `docker-compose`) **or Podman**
+  (`podman compose` or `podman-compose`).
+- For automated remote deploys, SSH access (`user@host`) with permission to run
+  Docker/Podman and write to `--ssh-dir` (default `/opt/dabney-moe`).
 
-## Run
+## Automated deploy over SSH (`scripts/deploy.sh`)
+
+`scripts/deploy.sh` builds the container image (Nix static-musl by default, or
+`Dockerfile` via `--build docker`), copies `selfhost/` configs and the image
+tarball over SSH, loads and tags the image in Docker or Podman, and runs
+`compose up -d`:
+
+```bash
+# Dry-run first (prints planned commands without mutating the remote host):
+./scripts/deploy.sh --target ssh --ssh-host deploy@vps.example.com --domain dabney.moe
+
+# Execute the rollout:
+./scripts/deploy.sh --target ssh \
+  --ssh-host deploy@vps.example.com \
+  --ssh-dir /opt/dabney-moe \
+  --domain dabney.moe \
+  --acme-email ops@dabney.moe \
+  --push
+
+# Or deploy an image already published to any OCI registry (no tarball transfer):
+./scripts/deploy.sh --build none --target ssh \
+  --image registry.gitlab.com/tyler274/dabney-moe/web:latest \
+  --ssh-host deploy@vps.example.com \
+  --domain dabney.moe \
+  --push
+```
+
+## Manual run on the host
 
 ```bash
 cd selfhost
 cp .env.example .env          # set ACME_EMAIL and (if needed) SITE_DOMAIN
 
-# Build the hardened SSR image with Nix and load it into the local daemon.
-# (Or set WEB_IMAGE in .env to a registry ref to pull instead.)
+# Option A: build with Nix (~25 MB static-musl OCI tarball) and load into Docker
 nix -C .. build .#serverImage
 skopeo --insecure-policy copy docker-archive:../result docker-daemon:dabney-web:latest
 
-docker compose up -d
-docker compose logs -f caddy   # watch the cert get issued
+# Option B: build with Docker or Podman using the root Dockerfile (no Nix required)
+docker build -t dabney-web:latest ..    # or: podman build -t dabney-web:latest ..
+
+# Option C: set WEB_IMAGE in .env to any OCI registry reference and pull it
+docker compose up -d                    # or: podman compose up -d
+docker compose logs -f caddy            # watch the certificate get issued
 ```
 
 Open `https://dabney.moe`. Plain `http://` redirects to HTTPS.
+
+> **SELinux hosts (Fedora / RHEL / Rocky / Alma):** append `:Z` to the Caddyfile
+> bind mount (`./Caddyfile:/etc/caddy/Caddyfile:ro,Z`) if container policy blocks
+> reading the mounted file.
+
+## Fly.io (`fly.toml`)
+
+[`fly.toml`](fly.toml) runs the same container on port 8080 with forced HTTPS
+and scale-to-zero (`256mb` shared-cpu VM):
+
+```bash
+./scripts/deploy.sh --target fly --push
+# Or deploy a pre-built OCI image:
+./scripts/deploy.sh --build none --target fly \
+  --image registry.gitlab.com/tyler274/dabney-moe/web:latest --push
+```
 
 ## Testing without burning rate limits
 
 Let's Encrypt's production CA has
 [rate limits](https://letsencrypt.org/docs/rate-limits/). While iterating, point
-Caddy at the staging CA by uncommenting the `acme_ca` line in the
-[`Caddyfile`](Caddyfile); staging certs aren't publicly trusted (the browser
-warns) but exercise the full flow. Remove it (and `docker compose restart caddy`)
-for a real cert.
+Caddy at the staging CA by uncommenting the `acme_ca` line in
+[`Caddyfile`](Caddyfile); staging certificates trigger a browser warning while
+exercising the full issuance flow. Remove the line and restart Caddy for a
+production certificate.
 
 ## HSTS
 
-The `Caddyfile` sets `Strict-Transport-Security` with a 60-day `max-age` to start
-(per the Let's Encrypt integration guidance; a too-early long max-age can lock
-users out if a cert problem appears). Once HTTPS is stable, bump it to
+[`Caddyfile`](Caddyfile) starts `Strict-Transport-Security` at 60 days per the
+Let's Encrypt integration guidance so an early certificate misconfiguration
+cannot lock visitors out for a year. Once HTTPS is verified stable, raise it to
 `max-age=31536000; includeSubDomains; preload`.

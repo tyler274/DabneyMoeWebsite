@@ -1,4 +1,4 @@
-//! WASM hydration entry point and `/coda` routing for the web build.
+//! WASM hydration entry point and clinical API routing for the web build.
 #![recursion_limit = "1024"]
 //!
 //! cargo-leptos compiles this crate as a `cdylib` with the `hydrate` feature
@@ -6,7 +6,7 @@
 //! server-rendered markup produced by `ui::shell`.
 
 #[cfg(feature = "ssr")]
-pub mod coda_proxy;
+pub mod clinical_proxy;
 #[cfg(feature = "ssr")]
 pub mod community_activity;
 
@@ -38,167 +38,20 @@ where
 }
 
 #[cfg(feature = "ssr")]
-pub fn mount_coda_static<S>(router: axum::Router<S>, site_root: &str) -> axum::Router<S>
-where
-    S: Clone + Send + Sync + 'static,
-{
-    mount_coda_routes_with_embedded(router, site_root, None, None)
-}
-
-#[cfg(feature = "ssr")]
-pub fn mount_coda_routes<S>(
+pub fn mount_clinical_api_routes<S>(
     router: axum::Router<S>,
-    site_root: &str,
-    api_proxy: Option<coda_proxy::CodaApiProxyConfig>,
+    api_proxy: Option<clinical_proxy::ClinicalApiProxyConfig>,
 ) -> axum::Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
-    mount_coda_routes_with_embedded(router, site_root, api_proxy, None)
-}
-
-#[cfg(feature = "ssr")]
-pub async fn build_embedded_coda_api(site_root: &str) -> Result<axum::Router, String> {
-    use std::path::PathBuf;
-    use tower_http::limit::RequestBodyLimitLayer;
-
-    let seed_path = PathBuf::from(site_root).join("coda/physician/demo.sqlite");
-    let seed_bytes = std::fs::read(&seed_path)
-        .map_err(|err| format!("failed to read {}: {err}", seed_path.display()))?;
-    let state = physician_demo_api::DemoApiState::from_env_with(seed_bytes, |key| {
-        if key == "CODA_DEMO_ALLOW_CORS" {
-            return Some(std::env::var(key).ok().unwrap_or_else(|| "0".to_string()));
-        }
-        std::env::var(key).ok()
-    })
-    .await?;
-    Ok(state
-        .into_router()
-        .layer(RequestBodyLimitLayer::new(8 * 1024 * 1024)))
-}
-
-#[cfg(feature = "ssr")]
-pub fn mount_coda_routes_with_embedded<S>(
-    router: axum::Router<S>,
-    site_root: &str,
-    api_proxy: Option<coda_proxy::CodaApiProxyConfig>,
-    embedded_api: Option<axum::Router>,
-) -> axum::Router<S>
-where
-    S: Clone + Send + Sync + 'static,
-{
-    use axum::http::Method;
-    use axum::middleware::{from_fn, Next};
-    use axum::response::{IntoResponse, Redirect};
-    use std::path::PathBuf;
-    use std::sync::Arc;
-
-    let coda_dir = Arc::new(PathBuf::from(site_root).join("coda"));
-    let redirect_coda_dir = Arc::clone(&coda_dir);
-
-    let redirect_coda_directories = move |req: axum::extract::Request, next: Next| {
-        let coda_dir = Arc::clone(&redirect_coda_dir);
-        async move {
-            let path = req.uri().path();
-            if path == "/coda" {
-                let target = append_query("/coda/", req.uri().query());
-                return Redirect::permanent(&target).into_response();
-            }
-            if matches!(*req.method(), Method::GET | Method::HEAD)
-                && !path.ends_with('/')
-                && path != coda_proxy::CODA_API_PREFIX
-                && !path.starts_with("/coda/physician/api/")
-            {
-                if let Some(rel) = path.strip_prefix("/coda/") {
-                    if is_safe_relative_subpath(rel)
-                        && coda_dir.join(rel).join("index.html").is_file()
-                    {
-                        let target = append_query(&format!("{path}/"), req.uri().query());
-                        return Redirect::permanent(&target).into_response();
-                    }
-                }
-            }
-            next.run(req).await
-        }
-    };
-
-    let mut api_router = axum::Router::new();
-    if let Some(cfg) = api_proxy {
-        api_router = api_router.merge(coda_proxy::coda_nested_api_proxy_router(cfg));
-    } else if let Some(embedded) = embedded_api {
-        api_router = api_router.nest("/physician/api", embedded);
-    } else {
-        api_router = api_router.merge(coda_proxy::coda_nested_api_disabled_router());
+    match api_proxy {
+        Some(cfg) => router.merge(clinical_proxy::clinical_api_proxy_router(cfg)),
+        None => router.nest_service(
+            clinical_proxy::CLINICAL_API_PREFIX,
+            clinical_workspace::api::router(),
+        ),
     }
-
-    let static_router = axum::Router::new()
-        .fallback_service(tower_http::services::ServeDir::new(coda_dir.as_ref()))
-        .layer(from_fn(coda_static_cache_headers))
-        .layer(tower_http::compression::CompressionLayer::new());
-
-    let coda_subrouter = api_router.fallback_service(static_router);
-
-    router
-        .nest_service("/coda", coda_subrouter)
-        .layer(from_fn(redirect_coda_directories))
-}
-
-#[cfg(feature = "ssr")]
-async fn coda_static_cache_headers(
-    mut req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    use axum::http::{header, HeaderValue};
-
-    // Nix store files carry mtime = 1970-01-01 00:00:01 UTC; strip conditional
-    // mtime headers so browsers with an older 1970 cache entry never get a
-    // false `304 Not Modified` across deployments, and strip `Last-Modified`
-    // from responses to prevent multi-year RFC 9111 heuristic freshness.
-    req.headers_mut().remove(header::IF_MODIFIED_SINCE);
-    req.headers_mut().remove(header::IF_UNMODIFIED_SINCE);
-
-    let path = req.uri().path().to_owned();
-    let has_version_query = req
-        .uri()
-        .query()
-        .is_some_and(|q| q.split('&').any(|kv| kv.starts_with("v=") && kv.len() > 2));
-
-    let mut resp = next.run(req).await;
-    resp.headers_mut().remove(header::LAST_MODIFIED);
-
-    if resp.status().is_success() {
-        let is_html = resp
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|ct| ct.starts_with("text/html"));
-        let immutable = !is_html && (has_version_query || path.starts_with("/assets/"));
-        let cache_value = if immutable {
-            HeaderValue::from_static("public, max-age=31536000, immutable")
-        } else {
-            HeaderValue::from_static("no-cache")
-        };
-        resp.headers_mut()
-            .insert(header::CACHE_CONTROL, cache_value);
-    }
-    resp
-}
-
-#[cfg(feature = "ssr")]
-fn append_query(base: &str, query: Option<&str>) -> String {
-    match query {
-        Some(q) if !q.is_empty() => format!("{base}?{q}"),
-        _ => base.to_string(),
-    }
-}
-
-#[cfg(feature = "ssr")]
-fn is_safe_relative_subpath(rel: &str) -> bool {
-    !rel.is_empty()
-        && !rel.contains('\\')
-        && rel
-            .split('/')
-            .all(|seg| !seg.is_empty() && seg != "." && seg != "..")
 }
 
 #[cfg(all(test, feature = "ssr"))]
@@ -212,12 +65,11 @@ mod tests {
     use futures_util::stream;
     use leptos_axum::generate_route_list;
     use std::convert::Infallible;
-    use std::path::PathBuf;
     use tower::ServiceExt;
     use ui::App;
 
-    use super::coda_proxy::CodaApiProxyConfig;
-    use super::{mount_coda_routes, mount_coda_static};
+    use super::clinical_proxy::ClinicalApiProxyConfig;
+    use super::mount_clinical_api_routes;
 
     #[test]
     fn app_exposes_at_least_one_route() {
@@ -473,124 +325,189 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn coda_subpath_serves_exported_site_demo_book_and_directory_redirects() {
-        let public_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../public");
-        let app = mount_coda_static(Router::<()>::new(), public_root.to_str().unwrap());
+    #[test]
+    fn clinical_api_proxy_config_validates_origins_and_env() {
+        assert_eq!(ClinicalApiProxyConfig::from_env(|_| None).unwrap(), None);
+        assert_eq!(
+            ClinicalApiProxyConfig::from_env(|key| {
+                (key == "CLINICAL_API_URL").then(|| "   ".to_string())
+            })
+            .unwrap(),
+            None
+        );
 
-        for (bare, expected_loc) in [
-            ("/coda", "/coda/"),
-            ("/coda/duet?ref=hero", "/coda/duet/?ref=hero"),
-            ("/coda/physician", "/coda/physician/"),
-            ("/coda/book", "/coda/book/"),
+        // Local development accepts loopback HTTP and leaves expected_origin unset by default.
+        for local_url in [
+            "http://127.0.0.1:8080",
+            "http://localhost:8080/",
+            "http://[::1]:8080",
         ] {
-            let redirect = app
-                .clone()
-                .oneshot(Request::builder().uri(bare).body(Body::empty()).unwrap())
-                .await
-                .unwrap();
+            let cfg = ClinicalApiProxyConfig::new(local_url, None, false).unwrap();
+            assert_eq!(cfg.expected_origin(), None);
+        }
+
+        // Non-loopback HTTP, paths, query strings, fragments, credentials, and whitespace fail.
+        for invalid in [
+            "http://api.example.com",
+            "https://user:pass@api.example.com",
+            "https://api.example.com/v1",
+            "https://api.example.com/?a=1",
+            "https://api.example.com/#frag",
+            " https://api.example.com",
+            "ftp://api.example.com",
+        ] {
             assert!(
-                redirect.status().is_redirection(),
-                "expected {bare} to redirect, got {}",
-                redirect.status()
-            );
-            assert_eq!(
-                redirect
-                    .headers()
-                    .get(header::LOCATION)
-                    .and_then(|v| v.to_str().ok()),
-                Some(expected_loc)
+                ClinicalApiProxyConfig::new(invalid, None, false).is_err(),
+                "expected {invalid:?} to fail validation"
             );
         }
 
-        for (uri, needle) in [
-            ("/coda/", "https://dabney.moe/coda"),
-            ("/coda/duet/", "Health Connect"),
-            ("/coda/physician/", "physician-app.js"),
-            ("/coda/book/", "book"),
-        ] {
-            let resp = app
-                .clone()
-                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
-                .await
-                .unwrap();
-            assert_eq!(resp.status(), StatusCode::OK, "expected 200 OK for {uri}");
-            let bytes = to_bytes(resp.into_body(), 2 * 1024 * 1024).await.unwrap();
-            let text = String::from_utf8_lossy(&bytes);
-            assert!(
-                text.contains(needle),
-                "expected response for {uri} to contain {needle:?}"
-            );
-        }
-
-        // Conditional 1970 mtime requests must never return 304 Not Modified,
-        // Last-Modified must be stripped, HTML must get Cache-Control: no-cache,
-        // and ?v= versioned assets must be gzipped + immutable.
-        let cond_html = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/coda/physician/")
-                    .header(header::IF_MODIFIED_SINCE, "Thu, 01 Jan 1970 00:00:01 GMT")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(cond_html.status(), StatusCode::OK);
-        assert!(cond_html.headers().get(header::LAST_MODIFIED).is_none());
+        // Deployed mode rejects loopback HTTP and defaults expected_origin to https://dabney.moe.
+        assert!(ClinicalApiProxyConfig::new("http://127.0.0.1:8080", None, true).is_err());
+        let deployed_cfg = ClinicalApiProxyConfig::from_env(|key| match key {
+            "CLINICAL_API_URL" => Some("https://clinical-api.example.com".to_string()),
+            "K_SERVICE" => Some("dabney-web".to_string()),
+            _ => None,
+        })
+        .unwrap()
+        .expect("deployed proxy config");
+        assert_eq!(deployed_cfg.expected_origin(), Some("https://dabney.moe"));
         assert_eq!(
-            cond_html
-                .headers()
-                .get(header::CACHE_CONTROL)
-                .and_then(|v| v.to_str().ok()),
-            Some("no-cache")
+            deployed_cfg.upstream().as_str(),
+            "https://clinical-api.example.com/"
         );
 
-        let versioned_js = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/coda/physician/physician-app.js?v=123456789abc")
-                    .header(header::ACCEPT_ENCODING, "gzip")
-                    .header(header::IF_MODIFIED_SINCE, "Thu, 01 Jan 1970 00:00:01 GMT")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(versioned_js.status(), StatusCode::OK);
-        assert!(versioned_js.headers().get(header::LAST_MODIFIED).is_none());
+        let custom_origin = ClinicalApiProxyConfig::from_env(|key| match key {
+            "CLINICAL_API_URL" => Some("https://clinical-api.example.com".to_string()),
+            "CLINICAL_PUBLIC_ORIGIN" => Some("https://staging.dabney.moe/".to_string()),
+            "LEPTOS_ENV" => Some("PROD".to_string()),
+            _ => None,
+        })
+        .unwrap()
+        .expect("custom origin proxy config");
         assert_eq!(
-            versioned_js
-                .headers()
-                .get(header::CACHE_CONTROL)
-                .and_then(|v| v.to_str().ok()),
-            Some("public, max-age=31536000, immutable")
+            custom_origin.expected_origin(),
+            Some("https://staging.dabney.moe")
         );
-        assert_eq!(
-            versioned_js
-                .headers()
-                .get(header::CONTENT_ENCODING)
-                .and_then(|v| v.to_str().ok()),
-            Some("gzip")
-        );
-
-        let unconfigured_api = app
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/coda/physician/api/auth/demo-session")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(unconfigured_api.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
-    async fn coda_api_proxy_streams_sse_enforces_origin_and_strips_cookies() {
+    async fn embedded_clinical_api_serves_health_session_today_and_grounded_chat() {
+        let app = mount_clinical_api_routes(Router::<()>::new(), None);
+
+        let health = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/clinical/api/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(health.status(), StatusCode::OK);
+        assert_eq!(
+            health.headers()[header::CACHE_CONTROL],
+            "private, no-store, max-age=0"
+        );
+        let health_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(health.into_body(), 64 * 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(health_json["status"], "ok");
+        assert_eq!(health_json["synthetic_data"], true);
+
+        let session_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/clinical/api/auth/demo-session")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(session_resp.status(), StatusCode::OK);
+        assert_eq!(
+            session_resp.headers()[header::CACHE_CONTROL],
+            "private, no-store, max-age=0"
+        );
+        let session_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(session_resp.into_body(), 64 * 1024).await.unwrap())
+                .unwrap();
+        assert!(session_json["session_id"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty()));
+
+        let today = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/clinical/api/today")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(today.status(), StatusCode::OK);
+        assert_eq!(
+            today.headers()[header::CACHE_CONTROL],
+            "private, no-store, max-age=0"
+        );
+        let today_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(today.into_body(), 64 * 1024).await.unwrap()).unwrap();
+        assert!(today_json["patients"]
+            .as_array()
+            .is_some_and(|pts| pts.iter().any(|p| p["id"] == "pt-nadia-kulkarni")));
+
+        let chat = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/clinical/api/patients/pt-nadia-kulkarni/chat")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"question":"What is her latest HbA1c and CGM time in range?"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(chat.status(), StatusCode::OK);
+        assert_eq!(
+            chat.headers()[header::CACHE_CONTROL],
+            "private, no-store, max-age=0"
+        );
+        let chat_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(chat.into_body(), 64 * 1024).await.unwrap()).unwrap();
+        assert_eq!(chat_json["patient_id"], "pt-nadia-kulkarni");
+        assert!(chat_json["answer"]
+            .as_str()
+            .is_some_and(|ans| ans.contains("6.7%")));
+        assert!(chat_json["citations"]
+            .as_array()
+            .is_some_and(|cites| !cites.is_empty()));
+
+        let missing = app
+            .oneshot(
+                Request::builder()
+                    .uri("/clinical/api/patients/pt-unknown")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            missing.headers()[header::CACHE_CONTROL],
+            "private, no-store, max-age=0"
+        );
+    }
+
+    #[tokio::test]
+    async fn clinical_api_proxy_streams_sse_enforces_origin_and_strips_cookies() {
         let upstream_app = Router::new()
             .route(
                 "/auth/demo-session",
@@ -600,12 +517,12 @@ mod tests {
                     (
                         StatusCode::OK,
                         [(header::SET_COOKIE, "leak=1")],
-                        r#"{"session":"demo-tok","physician_id":"demo-1","practice_id":"coda-demo-practice","ends_at":999}"#,
+                        r#"{"session_id":"demo-tok","clinician_label":"Demo Clinician","mode":"remote_proxy","synthetic_data":true}"#,
                     )
                 }),
             )
             .route(
-                "/patient-workspaces/events",
+                "/events",
                 get(|req: AxumRequest| async move {
                     assert_eq!(req.uri().query(), Some("after=0"));
                     assert_eq!(
@@ -615,8 +532,10 @@ mod tests {
                         Some("Bearer demo-tok")
                     );
                     let chunks = stream::iter(vec![
-                        Ok::<_, Infallible>("event: workspace_changed\n".to_string()),
-                        Ok::<_, Infallible>("data: {\"workspace_id\":\"pw-1\"}\n\n".to_string()),
+                        Ok::<_, Infallible>("event: chart_updated\n".to_string()),
+                        Ok::<_, Infallible>(
+                            "data: {\"patient_id\":\"pt-nadia-kulkarni\"}\n\n".to_string(),
+                        ),
                     ]);
                     (
                         StatusCode::OK,
@@ -633,18 +552,13 @@ mod tests {
             axum::serve(listener, upstream_app).await.unwrap();
         });
 
-        let cfg = CodaApiProxyConfig::new(
+        let cfg = ClinicalApiProxyConfig::new(
             &format!("http://127.0.0.1:{}/", addr.port()),
             Some("https://dabney.moe"),
             false,
         )
         .unwrap();
-        let public_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../public");
-        let app = mount_coda_routes(
-            Router::<()>::new(),
-            public_root.to_str().unwrap(),
-            Some(cfg),
-        );
+        let app = mount_clinical_api_routes(Router::<()>::new(), Some(cfg));
 
         // Cross-origin POST is rejected 403 before reaching upstream.
         let bad_origin = app
@@ -652,7 +566,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method(Method::POST)
-                    .uri("/coda/physician/api/auth/demo-session")
+                    .uri("/clinical/api/auth/demo-session")
                     .header(header::ORIGIN, "https://evil.example")
                     .body(Body::empty())
                     .unwrap(),
@@ -660,13 +574,47 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(bad_origin.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            bad_origin.headers()[header::CACHE_CONTROL],
+            "private, no-store, max-age=0"
+        );
+        assert_eq!(bad_origin.headers()[header::VARY], "*");
+
+        // Missing Origin and Sec-Fetch-Site: cross-site are rejected 403.
+        let missing_origin = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/clinical/api/auth/demo-session")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing_origin.status(), StatusCode::FORBIDDEN);
+
+        let cross_site = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/clinical/api/auth/demo-session")
+                    .header(header::ORIGIN, "https://dabney.moe")
+                    .header("sec-fetch-site", "cross-site")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cross_site.status(), StatusCode::FORBIDDEN);
 
         // Path traversal is rejected 400.
         let traversal = app
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri("/coda/physician/api/%2e%2e/secret")
+                    .uri("/clinical/api/%2e%2e/secret")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -674,13 +622,27 @@ mod tests {
             .unwrap();
         assert_eq!(traversal.status(), StatusCode::BAD_REQUEST);
 
+        // TRACE is rejected 405.
+        let trace = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::TRACE)
+                    .uri("/clinical/api/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(trace.status(), StatusCode::METHOD_NOT_ALLOWED);
+
         // Valid same-origin POST succeeds, strips cookies & Set-Cookie, and forces no-store.
         let session_resp = app
             .clone()
             .oneshot(
                 Request::builder()
                     .method(Method::POST)
-                    .uri("/coda/physician/api/auth/demo-session")
+                    .uri("/clinical/api/auth/demo-session")
                     .header(header::ORIGIN, "https://dabney.moe")
                     .header(header::COOKIE, "victim=secret")
                     .header("x-goog-iap-jwt-assertion", "spoofed")
@@ -698,12 +660,19 @@ mod tests {
                 .and_then(|v| v.to_str().ok()),
             Some("private, no-store, max-age=0")
         );
+        assert_eq!(
+            session_resp
+                .headers()
+                .get(header::VARY)
+                .and_then(|v| v.to_str().ok()),
+            Some("*")
+        );
 
-        // Valkey SSE stream passes query + Bearer header and streams event frames.
+        // SSE stream passes query + Bearer header and streams event frames unbuffered.
         let sse_resp = app
             .oneshot(
                 Request::builder()
-                    .uri("/coda/physician/api/patient-workspaces/events?after=0")
+                    .uri("/clinical/api/events?after=0")
                     .header(header::AUTHORIZATION, "Bearer demo-tok")
                     .body(Body::empty())
                     .unwrap(),
@@ -711,65 +680,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(sse_resp.status(), StatusCode::OK);
+        assert_eq!(
+            sse_resp.headers()[header::CACHE_CONTROL],
+            "private, no-store, max-age=0"
+        );
+        assert_eq!(sse_resp.headers()[header::VARY], "*");
         let sse_bytes = to_bytes(sse_resp.into_body(), 64 * 1024).await.unwrap();
         let sse_text = String::from_utf8_lossy(&sse_bytes);
-        assert!(sse_text.contains("event: workspace_changed"));
-        assert!(sse_text.contains("\"workspace_id\":\"pw-1\""));
-    }
-
-    #[tokio::test]
-    async fn embedded_coda_api_mints_demo_session_and_serves_today_and_health() {
-        let public_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../public");
-        let embedded = super::build_embedded_coda_api(public_root.to_str().unwrap())
-            .await
-            .expect("build embedded Coda physician demo API");
-        let app = super::mount_coda_routes_with_embedded(
-            Router::<()>::new(),
-            public_root.to_str().unwrap(),
-            None,
-            Some(embedded),
-        );
-
-        let health = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/coda/physician/api/health")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(health.status(), StatusCode::OK);
-
-        let session_resp = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/coda/physician/api/auth/demo-session")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from("{}"))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(session_resp.status(), StatusCode::OK);
-        let session_json: serde_json::Value =
-            serde_json::from_slice(&to_bytes(session_resp.into_body(), 64 * 1024).await.unwrap())
-                .unwrap();
-        let token = session_json["session"].as_str().expect("session token");
-
-        let today = app
-            .oneshot(
-                Request::builder()
-                    .uri("/coda/physician/api/today")
-                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(today.status(), StatusCode::OK);
+        assert!(sse_text.contains("event: chart_updated"));
+        assert!(sse_text.contains("\"patient_id\":\"pt-nadia-kulkarni\""));
     }
 }

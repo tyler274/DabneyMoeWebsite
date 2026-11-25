@@ -1,19 +1,24 @@
-# Self-hosted dabney.moe with HTTPS.
+# Self-hosted dabney.moe with automatic HTTPS (Docker Compose or Podman Compose).
 #
-# The managed clouds (Cloud Run / App Runner / Container Apps) terminate TLS
-# themselves; this compose file is for running the site on your own box/VPS,
-# where Caddy fronts the SSR server and obtains + auto-renews a Let's Encrypt
-# certificate over ACME.
+# Managed cloud targets (Cloud Run / App Runner / Container Apps / Fly.io)
+# terminate TLS themselves. This compose file runs dabney.moe on any Linux host
+# or VPS with Docker or Podman, where Caddy fronts the SSR server and obtains +
+# auto-renews a Let's Encrypt certificate over ACME.
 #
+# One-command remote deploy from your workstation or CI:
+#   ./scripts/deploy.sh --target ssh --ssh-host user@host --domain dabney.moe --push
+#
+# Manual setup on the host:
 #   1. Point dabney.moe's A (and AAAA) record at this host.
 #   2. Open inbound 80 + 443 (80 must stay open for the ACME http-01 challenge
 #      and the HTTP->HTTPS redirect).
-#   3. cp .env.example .env  &&  edit ACME_EMAIL / SITE_DOMAIN.
-#   4. Load the image (retags as :latest - plain `docker load` leaves a
-#      content-hash tag and compose will keep using an old :latest):
+#   3. cp .env.example .env && edit ACME_EMAIL / SITE_DOMAIN / WEB_IMAGE.
+#   4. Load the Nix image (or build with `docker build -t dabney-web:latest ..`):
 #      nix build .#serverImage
 #      skopeo --insecure-policy copy docker-archive:result docker-daemon:dabney-web:latest
-#   5. docker compose up -d
+#      # Podman equivalent:
+#      # podman load -i result && podman tag <loaded-ref> dabney-web:latest
+#   5. docker compose up -d   (or: podman compose up -d)
 #
 # Caddy handles HTTP->HTTPS redirect, cert issuance/renewal (at randomized
 # times), and follows the ACME Link headers (no hardcoded intermediate/ToS).
@@ -25,9 +30,14 @@ services:
     # No published ports: only Caddy talks to it, over the internal network.
     expose:
       - "8080"
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      CLINICAL_API_URL: ${CLINICAL_API_URL:-}
+      GA4_MEASUREMENT_ID: ${GA4_MEASUREMENT_ID:-}
 
   caddy:
-    image: caddy:2
+    # Fully-qualified image ref so Podman works even with empty unqualified search registries.
+    image: docker.io/library/caddy:2
     restart: unless-stopped
     depends_on:
       - web

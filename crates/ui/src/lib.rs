@@ -10,6 +10,7 @@ pub mod activity_snapshot;
 #[cfg(feature = "ssr")]
 pub mod activity_source;
 pub mod analytics;
+pub mod clinical;
 pub mod commissions;
 pub mod commissions_data;
 pub mod community_activity;
@@ -79,6 +80,7 @@ pub fn App() -> impl IntoView {
 
     view! {
         {#[cfg(feature = "csr")] { view! { <Stylesheet id="leptos" href="/pkg/dabney.css" /> } }}
+        <Link rel="icon" href="/favicon.svg" type_="image/svg+xml" />
         <Link rel="icon" href="/favicon.png" type_="image/png" />
 
         <ConsentBanner />
@@ -90,6 +92,11 @@ pub fn App() -> impl IntoView {
                 <Routes fallback=|| view! { <HomePage /> }>
                     <Route path=StaticSegment("") view=HomePage />
                     <Route path=StaticSegment("privacy") view=PrivacyPage />
+                    <Route path=StaticSegment("clinical") view=clinical::ClinicalOverviewPage />
+                    <Route
+                        path=(StaticSegment("clinical"), StaticSegment("physician"))
+                        view=clinical::PhysicianWorkspacePage
+                    />
                     <Route path=StaticSegment("mental-health") view=mental_health::MentalHealthPage />
                     <Route path=StaticSegment("creators") view=creators::CreatorsPage />
                     <Route path=StaticSegment("community-policy") view=CommunityPolicyPage />
