@@ -16,6 +16,13 @@ use leptos_meta::{Link, Meta, Title};
 use leptos_router::components::A;
 use leptos_router::hooks::use_location;
 
+use crate::health_bridge::LocalLlmStatusUi;
+#[cfg(any(feature = "csr", feature = "hydrate"))]
+use crate::health_bridge::{
+    build_chart_chat_prompt, generate_local_llm, load_personal_vault, prepare_local_llm,
+    probe_local_llm, probe_personal_vault, save_personal_vault, PersonalVaultSaveUi,
+};
+use crate::local_ai_chat::LocalLlmStatusBanner;
 #[cfg(any(feature = "csr", feature = "hydrate"))]
 use crate::sections::open_site_or_external;
 use crate::sections::{Footer, NavBar, SITE_ORIGIN};
@@ -125,7 +132,73 @@ pub fn PatientDemoPage() -> impl IntoView {
     let new_visit_question = RwSignal::new(String::new());
     let next_note_seq = RwSignal::new(2usize);
 
+    // Optional on-device Gemini Nano (AICore) & encrypted note vault (`moe.dabney.personal` only).
+    let llm_status = RwSignal::new(Option::<LocalLlmStatusUi>::None);
+    let use_local_llm = RwSignal::new(true);
+    let llm_preparing = RwSignal::new(false);
+    let llm_prepare_notice = RwSignal::new(Option::<String>::None);
+    let llm_thinking = RwSignal::new(false);
+    let llm_req_seq = RwSignal::new(0usize);
+    let vault_enabled = RwSignal::new(false);
+
+    Effect::new(move |_| {
+        #[cfg(any(feature = "csr", feature = "hydrate"))]
+        {
+            probe_local_llm(move |status| {
+                llm_status.set(Some(status));
+            });
+            probe_personal_vault(move |status| {
+                if status.enabled {
+                    vault_enabled.set(true);
+                    if status.note_count > 0 {
+                        load_personal_vault(move |res| {
+                            if let Ok(snap) = res {
+                                if let Some(notes_raw) = snap.notes_json {
+                                    if let Ok(restored) =
+                                        serde_json::from_str::<Vec<PatientVisitNote>>(&notes_raw)
+                                    {
+                                        if !restored.is_empty() {
+                                            let active = selected_id.get_untracked();
+                                            next_note_seq.set(restored.len() + 2);
+                                            demo_states.update(|map| {
+                                                if let Some(st) = map.get_mut(&active) {
+                                                    st.personal_notes = restored;
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }
+            });
+        }
+    });
+
+    let prepare_llm_now = Callback::new(move |()| {
+        #[cfg(any(feature = "csr", feature = "hydrate"))]
+        {
+            llm_preparing.set(true);
+            llm_prepare_notice.set(Some(
+                "Requesting Gemini Nano download via Android AICore…".to_string(),
+            ));
+            prepare_local_llm(move |res| {
+                llm_preparing.set(false);
+                match res {
+                    Ok(outcome) => {
+                        llm_prepare_notice.set(Some(outcome.detail));
+                        probe_local_llm(move |status| llm_status.set(Some(status)));
+                    }
+                    Err(err) => llm_prepare_notice.set(Some(err)),
+                }
+            });
+        }
+    });
+
     let select_profile = move |patient_id: String| {
+        llm_req_seq.update(|n| *n += 1);
+        llm_thinking.set(false);
         selected_id.set(patient_id.clone());
         let default_q = default_patient_questions(&patient_id)
             .first()
@@ -148,13 +221,50 @@ pub fn PatientDemoPage() -> impl IntoView {
             return;
         }
         let active_id = selected_id.get();
-        let next_answer = panel.with_value(|charts| {
+        let next_pair = panel.with_value(|charts| {
             charts
                 .iter()
                 .find(|p| p.id == active_id)
-                .map(|p| answer_patient_question(p, &trimmed))
+                .map(|p| (p.display_name.clone(), answer_patient_question(p, &trimmed)))
         });
-        latest_answer.set(next_answer);
+        let Some((patient_name, grounded)) = next_pair else {
+            return;
+        };
+        latest_answer.set(Some(grounded.clone()));
+
+        let req_id = llm_req_seq.get_untracked() + 1;
+        llm_req_seq.set(req_id);
+
+        let should_run_llm = use_local_llm.get_untracked()
+            && !grounded.citations.is_empty()
+            && llm_status
+                .get_untracked()
+                .is_some_and(|s| s.enabled && s.availability == "available");
+
+        #[cfg(any(feature = "csr", feature = "hydrate"))]
+        if should_run_llm {
+            let prompt = build_chart_chat_prompt("patient", &patient_name, &trimmed, &grounded);
+            llm_thinking.set(true);
+            generate_local_llm(&prompt, Some(320), move |res| {
+                if llm_req_seq.get_untracked() != req_id {
+                    return;
+                }
+                llm_thinking.set(false);
+                if let Ok(gen) = res {
+                    let mut enhanced = grounded.clone();
+                    enhanced.answer = gen.text;
+                    enhanced.basis = format!(
+                        "{} (on-device · {} ms) grounded strictly in {} verbatim citation(s) from this profile.",
+                        gen.model_name,
+                        gen.latency_ms,
+                        enhanced.citations.len()
+                    );
+                    latest_answer.set(Some(enhanced));
+                }
+            });
+        }
+        #[cfg(not(any(feature = "csr", feature = "hydrate")))]
+        let _ = (patient_name, should_run_llm);
     };
 
     let toggle_record_selection = move |record_id: String| {
@@ -221,10 +331,31 @@ pub fn PatientDemoPage() -> impl IntoView {
                 state.personal_notes.push(PatientVisitNote {
                     id: format!("{active_id}-priv-{seq}"),
                     body,
-                    created_label: "Added locally (demo)".into(),
+                    created_label: if vault_enabled.get_untracked() {
+                        "Saved in encrypted vault".into()
+                    } else {
+                        "Added locally (demo)".into()
+                    },
                 });
             }
         });
+        #[cfg(any(feature = "csr", feature = "hydrate"))]
+        if vault_enabled.get_untracked() {
+            let notes_snapshot = demo_states
+                .get_untracked()
+                .get(&active_id)
+                .map(|st| st.personal_notes.clone())
+                .unwrap_or_default();
+            if let Ok(encoded) = serde_json::to_string(&notes_snapshot) {
+                save_personal_vault(
+                    &PersonalVaultSaveUi {
+                        notes_json: Some(encoded),
+                        ..Default::default()
+                    },
+                    |_| {},
+                );
+            }
+        }
         new_private_note.set(String::new());
     };
 
@@ -271,7 +402,7 @@ pub fn PatientDemoPage() -> impl IntoView {
             // Top Header
             <header class="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-5">
                 <div class="flex items-center gap-3.5">
-                    <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/40 bg-white/95 p-1.5 shadow-sm">
+                    <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/40 bg-[#01081b] p-1 shadow-sm">
                         <img
                             src="/dabney-elephant.svg"
                             alt="Dabney.moe elephant emblem"
@@ -573,6 +704,20 @@ pub fn PatientDemoPage() -> impl IntoView {
                                             </p>
                                         </div>
 
+                                        {move || {
+                                            llm_status.get().filter(|s| s.enabled).map(|status| {
+                                                view! {
+                                                    <LocalLlmStatusBanner
+                                                        status=status
+                                                        use_local_llm=use_local_llm
+                                                        preparing=llm_preparing
+                                                        prepare_notice=llm_prepare_notice
+                                                        on_prepare=prepare_llm_now
+                                                    />
+                                                }
+                                            })
+                                        }}
+
                                         <form on:submit=on_submit_question class="flex flex-col gap-2.5 sm:flex-row">
                                             <input
                                                 type="text"
@@ -584,9 +729,10 @@ pub fn PatientDemoPage() -> impl IntoView {
                                             />
                                             <button
                                                 type="submit"
-                                                class="min-h-[44px] rounded-full bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
+                                                disabled=move || llm_thinking.get()
+                                                class="min-h-[44px] rounded-full bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50"
                                             >
-                                                "Explain records"
+                                                {move || if llm_thinking.get() { "Synthesizing…" } else { "Explain records" }}
                                             </button>
                                         </form>
 

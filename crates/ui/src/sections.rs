@@ -219,7 +219,7 @@ fn DemoAppTopBar() -> impl IntoView {
                 class="mx-auto flex max-w-4xl items-center justify-between gap-3 px-4 py-3 sm:px-6"
             >
                 <A href="/" attr:class="inline-flex items-center gap-2.5">
-                    <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-emerald-400/40 bg-white/95 p-1 shadow-sm">
+                    <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-emerald-400/40 bg-[#01081b] p-0.5 shadow-sm">
                         <img
                             src="/dabney-elephant.svg"
                             alt="Dabney.moe"

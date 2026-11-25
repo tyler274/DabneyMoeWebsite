@@ -138,6 +138,11 @@ if [ "$CLEAN_INIT" -eq 1 ] || [ ! -f "$APP_GRADLE" ] || ! grep -q "\"$EXPECTED_P
   cargo tauri android init --skip-targets-install
 fi
 
+# Always sync latest generated Android adaptive/mipmap icons (in case src-tauri/icons/ changed after android init).
+if [ -d "$ROOT/src-tauri/icons/android" ]; then
+  cp -rf "$ROOT/src-tauri/icons/android"/. "$ANDROID_DIR/app/src/main/res/"
+fi
+
 # Resolve optional release keystore from file path or base64 env var.
 SIGNED=0
 RESOLVED_KEYSTORE=""

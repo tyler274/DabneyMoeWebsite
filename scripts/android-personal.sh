@@ -89,10 +89,21 @@ if [ "$CLEAN_INIT" -eq 1 ] || [ ! -f "$APP_GRADLE" ] || ! grep -q "\"$EXPECTED_P
   cargo tauri android init --skip-targets-install -c "$PERSONAL_CONFIG"
 fi
 
-# Copy clean-room Kotlin Health Connect plugin & rationale activity into the personal package.
+# Always sync latest generated Android adaptive/mipmap icons (in case src-tauri/icons/ changed after android init).
+if [ -d "$ROOT/src-tauri/icons/android" ]; then
+  cp -rf "$ROOT/src-tauri/icons/android"/. "$ANDROID_DIR/app/src/main/res/"
+fi
+
+# Copy clean-room Kotlin Health Connect, encrypted Personal Vault, and on-device LLM plugins.
 mkdir -p "$JAVA_PKG_DIR"
 cp -f "$KOTLIN_SRC_DIR/HealthConnectPlugin.kt" "$JAVA_PKG_DIR/HealthConnectPlugin.kt"
 cp -f "$KOTLIN_SRC_DIR/PermissionsRationaleActivity.kt" "$JAVA_PKG_DIR/PermissionsRationaleActivity.kt"
+cp -f "$KOTLIN_SRC_DIR/PersonalVaultPlugin.kt" "$JAVA_PKG_DIR/PersonalVaultPlugin.kt"
+cp -f "$KOTLIN_SRC_DIR/LocalLlmPlugin.kt" "$JAVA_PKG_DIR/LocalLlmPlugin.kt"
+
+# Copy personal ProGuard/R8 keep rules for Tauri plugins, ML Kit ComponentRegistrar, and AICore.
+# Tauri's generated app/build.gradle.kts automatically includes every app/**/*.pro file.
+cp -f "$KOTLIN_SRC_DIR/proguard-personal.pro" "$ANDROID_DIR/app/proguard-personal.pro"
 
 # Resolve optional release keystore from file path or base64 env var.
 SIGNED=0
@@ -221,8 +232,10 @@ if signed and 'signingConfig = signingConfigs.getByName("release")' not in gradl
     if count != 1:
         raise SystemExit(f"Could not locate getByName(\"release\") block in {gradle_path}")
 
-# Add Android Health Connect client + Kotlin coroutines dependencies.
+# Add Android Health Connect client, ML Kit GenAI Prompt (AICore / Gemini Nano), and Kotlin coroutines.
+# Pin 1.0.0-beta4 (Kotlin metadata 2.3.0, compatible with Tauri's Kotlin 2.2.x Gradle plugin).
 hc_deps = """    implementation("androidx.health.connect:connect-client:1.1.0")
+    implementation("com.google.mlkit:genai-prompt:1.0.0-beta4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")"""
 if "androidx.health.connect:connect-client" not in gradle:
     gradle, count = re.subn(
@@ -233,6 +246,18 @@ if "androidx.health.connect:connect-client" not in gradle:
     )
     if count != 1:
         raise SystemExit(f"Could not locate dependencies {{ }} block in {gradle_path}")
+elif "com.google.mlkit:genai-prompt" not in gradle:
+    gradle = gradle.replace(
+        'implementation("androidx.health.connect:connect-client:1.1.0")',
+        'implementation("androidx.health.connect:connect-client:1.1.0")\n    implementation("com.google.mlkit:genai-prompt:1.0.0-beta4")',
+        1,
+    )
+else:
+    gradle = re.sub(
+        r'com\.google\.mlkit:genai-prompt:[0-9A-Za-z.\-]+',
+        'com.google.mlkit:genai-prompt:1.0.0-beta4',
+        gradle,
+    )
 
 gradle_path.write_text(gradle, encoding="utf-8")
 
@@ -262,14 +287,21 @@ else:
         1,
     )
 
-# Inject strictly READ_BLOOD_GLUCOSE + <queries> for Health Connect provider.
+# Inject strictly READ_BLOOD_GLUCOSE + <queries> for Health Connect and Android AICore.
 if "android.permission.health.READ_BLOOD_GLUCOSE" not in manifest:
     manifest = manifest.replace(
         "<application",
         '    <uses-permission android:name="android.permission.health.READ_BLOOD_GLUCOSE" />\n'
         '    <queries>\n'
         '        <package android:name="com.google.android.apps.healthdata" />\n'
+        '        <package android:name="com.google.android.aicore" />\n'
         '    </queries>\n\n    <application',
+        1,
+    )
+elif "com.google.android.aicore" not in manifest:
+    manifest = manifest.replace(
+        '<package android:name="com.google.android.apps.healthdata" />',
+        '<package android:name="com.google.android.apps.healthdata" />\n        <package android:name="com.google.android.aicore" />',
         1,
     )
 

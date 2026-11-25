@@ -14,6 +14,12 @@ use leptos::prelude::*;
 use leptos_meta::{Link, Meta, Title};
 use leptos_router::components::A;
 
+use crate::health_bridge::LocalLlmStatusUi;
+#[cfg(any(feature = "csr", feature = "hydrate"))]
+use crate::health_bridge::{
+    build_chart_chat_prompt, generate_local_llm, prepare_local_llm, probe_local_llm,
+};
+use crate::local_ai_chat::LocalLlmStatusBanner;
 use crate::patient_demo::ClinicalSuiteSwitcher;
 use crate::sections::{Footer, NavBar};
 use crate::AppShellMode;
@@ -120,7 +126,7 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
                 <div class="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
                     <div class="max-w-2xl space-y-4">
                         <div class="inline-flex items-center gap-3">
-                            <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/40 bg-white/95 p-1.5 shadow-sm">
+                            <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/40 bg-[#01081b] p-1 shadow-sm">
                                 <img
                                     src="/dabney-elephant.svg"
                                     alt="Dabney.moe elephant emblem"
@@ -361,7 +367,46 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
     let latest_answer = RwSignal::new(initial_answer);
     let draft_state = RwSignal::new(DraftReviewState::PendingReview);
 
+    // Optional on-device Gemini Nano (AICore) synthesis inside `moe.dabney.personal`.
+    let llm_status = RwSignal::new(Option::<LocalLlmStatusUi>::None);
+    let use_local_llm = RwSignal::new(true);
+    let llm_preparing = RwSignal::new(false);
+    let llm_prepare_notice = RwSignal::new(Option::<String>::None);
+    let llm_thinking = RwSignal::new(false);
+    let llm_req_seq = RwSignal::new(0usize);
+
+    Effect::new(move |_| {
+        #[cfg(any(feature = "csr", feature = "hydrate"))]
+        {
+            probe_local_llm(move |status| {
+                llm_status.set(Some(status));
+            });
+        }
+    });
+
+    let prepare_llm_now = Callback::new(move |()| {
+        #[cfg(any(feature = "csr", feature = "hydrate"))]
+        {
+            llm_preparing.set(true);
+            llm_prepare_notice.set(Some(
+                "Requesting Gemini Nano download via Android AICore…".to_string(),
+            ));
+            prepare_local_llm(move |res| {
+                llm_preparing.set(false);
+                match res {
+                    Ok(outcome) => {
+                        llm_prepare_notice.set(Some(outcome.detail));
+                        probe_local_llm(move |status| llm_status.set(Some(status)));
+                    }
+                    Err(err) => llm_prepare_notice.set(Some(err)),
+                }
+            });
+        }
+    });
+
     let select_patient = move |patient_id: String| {
+        llm_req_seq.update(|n| *n += 1);
+        llm_thinking.set(false);
         selected_id.set(patient_id.clone());
         draft_state.set(DraftReviewState::PendingReview);
         let default_q = preset_questions_for_patient(&patient_id)
@@ -385,13 +430,50 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
             return;
         }
         let active_id = selected_id.get();
-        let next_answer = panel.with_value(|charts| {
+        let next_pair = panel.with_value(|charts| {
             charts
                 .iter()
                 .find(|p| p.id == active_id)
-                .map(|p| answer_chart_question(p, &trimmed))
+                .map(|p| (p.display_name.clone(), answer_chart_question(p, &trimmed)))
         });
-        latest_answer.set(next_answer);
+        let Some((patient_name, grounded)) = next_pair else {
+            return;
+        };
+        latest_answer.set(Some(grounded.clone()));
+
+        let req_id = llm_req_seq.get_untracked() + 1;
+        llm_req_seq.set(req_id);
+
+        let should_run_llm = use_local_llm.get_untracked()
+            && !grounded.citations.is_empty()
+            && llm_status
+                .get_untracked()
+                .is_some_and(|s| s.enabled && s.availability == "available");
+
+        #[cfg(any(feature = "csr", feature = "hydrate"))]
+        if should_run_llm {
+            let prompt = build_chart_chat_prompt("physician", &patient_name, &trimmed, &grounded);
+            llm_thinking.set(true);
+            generate_local_llm(&prompt, Some(340), move |res| {
+                if llm_req_seq.get_untracked() != req_id {
+                    return;
+                }
+                llm_thinking.set(false);
+                if let Ok(gen) = res {
+                    let mut enhanced = grounded.clone();
+                    enhanced.answer = gen.text;
+                    enhanced.basis = format!(
+                        "{} (on-device · {} ms) grounded strictly in {} verbatim single-patient citation(s).",
+                        gen.model_name,
+                        gen.latency_ms,
+                        enhanced.citations.len()
+                    );
+                    latest_answer.set(Some(enhanced));
+                }
+            });
+        }
+        #[cfg(not(any(feature = "csr", feature = "hydrate")))]
+        let _ = (patient_name, should_run_llm);
     };
 
     let on_submit_question = move |ev: leptos::ev::SubmitEvent| {
@@ -413,7 +495,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
             // Top bar
             <header class="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-6">
                 <div class="flex items-center gap-4">
-                    <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/40 bg-white/95 p-1.5 shadow-sm">
+                    <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/40 bg-[#01081b] p-1 shadow-sm">
                         <img
                             src="/dabney-elephant.svg"
                             alt="Dabney.moe elephant emblem"
@@ -659,6 +741,20 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                         </p>
                                     </div>
 
+                                    {move || {
+                                        llm_status.get().filter(|s| s.enabled).map(|status| {
+                                            view! {
+                                                <LocalLlmStatusBanner
+                                                    status=status
+                                                    use_local_llm=use_local_llm
+                                                    preparing=llm_preparing
+                                                    prepare_notice=llm_prepare_notice
+                                                    on_prepare=prepare_llm_now
+                                                />
+                                            }
+                                        })
+                                    }}
+
                                     <form on:submit=on_submit_question class="flex flex-col gap-2.5 sm:flex-row">
                                         <input
                                             type="text"
@@ -670,9 +766,10 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                         />
                                         <button
                                             type="submit"
-                                            class="rounded-full bg-cyan-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
+                                            disabled=move || llm_thinking.get()
+                                            class="rounded-full bg-cyan-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50"
                                         >
-                                            "Ask chart"
+                                            {move || if llm_thinking.get() { "Synthesizing…" } else { "Ask chart" }}
                                         </button>
                                     </form>
 
