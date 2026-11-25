@@ -1,0 +1,220 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-11-25T18:48:34Z",
+  "website": {
+    "repo": "DabneyMoeWebsite",
+    "revision": "94b7a2c72fecce18aa841b6dfe2be3838f1c092a",
+    "short_revision": "94b7a2c",
+    "commit_timestamp": "2026-11-25T17:10:44Z",
+    "total_files": 160,
+    "total_lines": 32226,
+    "tyler_lines": 32226,
+    "tyler_pct": 100.0,
+    "external_lines": 0
+  },
+  "upstream": {
+    "name": "dabney-moe",
+    "revision": "a8ff5a873865f350bee06bfa19bd79e68d8197d7",
+    "short_revision": "a8ff5a873",
+    "commit_timestamp": "2026-11-25T18:48:34Z",
+    "source_files": 1641,
+    "source_lines": 654417,
+    "source_tyler_lines": 592139,
+    "source_tyler_pct": 90.5,
+    "source_provenance_adjusted_pct": 91.6,
+    "patients_files": 469,
+    "patients_lines": 198686,
+    "patients_tyler_lines": 177864,
+    "combined_files": 2110,
+    "combined_lines": 853103,
+    "combined_tyler_lines": 770003,
+    "combined_tyler_pct": 90.3,
+    "authors": [
+      {
+        "author": "Tyler Port",
+        "label": "Tyler Port — Combined Surviving Lines (a8ff5a873)",
+        "detail": "592,139 source lines (90.5%) + 177,864 clean-room patient lines (770,003 combined; 91.6% provenance-adjusted source)",
+        "source_lines": 592139,
+        "patients_lines": 177864,
+        "combined_lines": 770003,
+        "pct": 90.3,
+        "color": "#22d3ee"
+      },
+      {
+        "author": "Dev Patale",
+        "label": "Dev Patale (remaining mixed/docs & diff tokens)",
+        "detail": "55,269 source lines · down from 122,840 (-55.0%) + 20,822 coincidental patient JSON matches (3.04M legacy patients purged)",
+        "source_lines": 55269,
+        "patients_lines": 20822,
+        "combined_lines": 76091,
+        "pct": 8.9,
+        "color": "#f59e0b"
+      },
+      {
+        "author": "Elijah Gwynn",
+        "label": "Elijah Gwynn (remaining mixed/diff tokens)",
+        "detail": "6,075 source lines · down from 14,865 (-59.1%)",
+        "source_lines": 6075,
+        "patients_lines": 0,
+        "combined_lines": 6075,
+        "pct": 0.7,
+        "color": "#a78bfa"
+      },
+      {
+        "author": "Other",
+        "label": "Other / Automated Dependency Updates",
+        "detail": "934 lines (automated lockfile & dependency bot updates)",
+        "source_lines": 934,
+        "patients_lines": 0,
+        "combined_lines": 934,
+        "pct": 0.1,
+        "color": "#64748b"
+      }
+    ],
+    "tiers": [
+      {
+        "key": "reclaimed",
+        "label": "Reclaimed Clean-Room · REA reimplemented crates, docs & patients/",
+        "count": 14,
+        "examples": "patients/, harness, clinical-library, ui, public-site, patient-bank, verification/, boundaries, ui-gallery, extension-popup, agent-skills, gmail, nix/, intent/",
+        "color": "#22d3ee"
+      },
+      {
+        "key": "tier1_2",
+        "label": "Tier 1 & 2 · >=90% Tyler-authored crates & ops",
+        "count": 29,
+        "examples": "workspace-tools, duet-api, physician-app, infra/, front-door, physician-demo-api, physician-demo-db, duet-app, duet-client, duet-health, spruce, physician-client, +17 more",
+        "color": "#34d399"
+      },
+      {
+        "key": "tier3",
+        "label": "Tier 3 · 50–89.9% mixed multi-contributor areas",
+        "count": 16,
+        "examples": "local-product, physician-sample, .agents/, root configs, scripts/, physician-auth, physician-wire, mobile, extension/, dev/, .github/, book/, +4 more",
+        "color": "#fbbf24"
+      },
+      {
+        "key": "tier4",
+        "label": "Tier 4 · <50% remaining config/doc areas (0 runtime crates)",
+        "count": 1,
+        "examples": ".cargo/",
+        "color": "#fb7185"
+      }
+    ]
+  },
+  "before_after": [
+    {
+      "label": "Core dabney.moe app crates (ui, web, tauri-ui, nix, terraform)",
+      "before_pct": 100.0,
+      "after_pct": 100.0,
+      "note": "100% @tyler274 since initial commit (June 5, 2026)"
+    },
+    {
+      "label": "Embedded clinical workspace & API (dabney.moe)",
+      "before_pct": 63.7,
+      "after_pct": 100.0,
+      "note": "Removed imported 7-crate slice (-68,131 lines); rebuilt clean-room from REA specs"
+    },
+    {
+      "label": "Hosted site icons, illustrations & gallery assets (dabney.moe)",
+      "before_pct": 55.0,
+      "after_pct": 100.0,
+      "note": "Replaced third-party icon, vendor logos & artist binaries with original @tyler274 assets"
+    },
+    {
+      "label": "Standalone dabney-moe workspace (combined source + patients/)",
+      "before_pct": 14.4,
+      "after_pct": 90.3,
+      "note": "Chinese-wall REA clean-room rewrites across 14 areas + 469 patient files (90.3% combined; 90.5% raw / 91.6% provenance-adjusted source)"
+    }
+  ],
+  "replacement_ledger": [
+    {
+      "category": "Embedded clinical API",
+      "removed": "Imported 7-crate vendor slice (36.3% external lines, incl. 78.4% in harness)",
+      "replacement": "Clean-room crates/clinical-workspace + crates/web/src/clinical_proxy.rs",
+      "owner": "100% @tyler274 (MIT)"
+    },
+    {
+      "category": "Static clinical demo & synthetic data",
+      "removed": "Pre-built static export & imported synthetic patient fixtures",
+      "replacement": "Clean-room Leptos /clinical & /clinical/physician + 4 freshly authored synthetic patients",
+      "owner": "100% @tyler274 (MIT)"
+    },
+    {
+      "category": "Site favicon & Tauri app icons",
+      "removed": "Third-party character icon & copyright notice",
+      "replacement": "Original Caltech Dabney House green elephant emblem (SVG + PNG + Tauri icon set)",
+      "owner": "100% @tyler274"
+    },
+    {
+      "category": "Technical expertise visuals",
+      "removed": "Vendor GPU logo and third-party FPGA development board photo",
+      "replacement": "Original generated dark-slate GPU compute & FPGA silicon fabric illustrations",
+      "owner": "100% @tyler274"
+    },
+    {
+      "category": "Artwork gallery binaries",
+      "removed": "Hosted third-party commissioned character binaries",
+      "replacement": "Original @tyler274 SVG & brand pieces (/dabney-elephant.svg, piece-01..03.svg)",
+      "owner": "100% @tyler274"
+    },
+    {
+      "category": "Container weights & CI lock-in",
+      "removed": "Pre-baked external GGUF weights & single-provider sync workflow",
+      "replacement": "Lean static-musl OCI image + Dockerfile + Gitea/Forgejo/GitLab/SSH/Fly/Cloud deploy kit",
+      "owner": "100% @tyler274 (MIT)"
+    },
+    {
+      "category": "Standalone workspace Wave 1+2 Tier-4 crates & patients (f52931447)",
+      "removed": "9 Tier-4 crates + 3.04M-line synthetic patient dump (-2,852,062 lines)",
+      "replacement": "Two-stage Chinese-wall REA rewrites (96 Evidence JSONs, 26/26 Chromium E2E, 93/93 PG 16 tests)",
+      "owner": "100% clean-room @tyler274"
+    },
+    {
+      "category": "Standalone workspace Wave 3A public-site, gmail & Tier-4 specs/nix (a8ff5a873)",
+      "removed": "Remaining multi-contributor public-site, gmail, intent/, verification/, book/ & Nix configs",
+      "replacement": "Two-stage Chinese-wall REA clean-room reimplementation of public-site, gmail, TLA+ charts, mdbook & flake dev-shell",
+      "owner": "100% clean-room @tyler274"
+    }
+  ],
+  "total_bundles": 99,
+  "rea_evidence": [
+    {
+      "operation": "inspect_sqlite_database",
+      "evidence_id": "ev_b2efc5ea4b1d0d911e4b98887586384c382f00c09f7ad80a0041fe3acd56a243",
+      "bundles": 1,
+      "scope": "16-table schema inventory of shipped demo SQLite artifact (SHA-256 1deb6f01...)"
+    },
+    {
+      "operation": "analyze_javascript_application",
+      "evidence_id": "ev_3ba425daa5c7e9fb43bf43a0c995dbb0ee7fe51e85dc347bb43ba1dc4143052c",
+      "bundles": 1,
+      "scope": "Static JS application graph of shipped web bundle (summary view ev_c5aecc0b...)"
+    },
+    {
+      "operation": "audit_release_exposure",
+      "evidence_id": "ev_fb324872970b189df97901b55126a29a8848c1847f608362f8296300bb71e5a3",
+      "bundles": 1,
+      "scope": "Release exposure audit across 14 shipped artifact members (0 exposed checks)"
+    },
+    {
+      "operation": "inspect_rust_binary + capture_process (Wave 1 · 22 bundles)",
+      "evidence_id": "ev_b3863679beb14dda39100fcbdc422d786eaf59c7b6e9545f4a2a401742dc054a",
+      "bundles": 22,
+      "scope": "Black-box ELF/WASM/process specs for boundaries (24 tests), agent-skills (pure-Rust YAML, 0 unsafe-libyaml), and extension-popup (MV3 CSP)"
+    },
+    {
+      "operation": "inspect_rust_binary + capture_process (Wave 2 UI/Harness · 30 bundles)",
+      "evidence_id": "ev_9720392deb663e70b4da1aab64f1767601ed284addee675f94055bfb202ab8cf",
+      "bundles": 30,
+      "scope": "Black-box specs for ui (215 public items, 26/26 Chromium E2E), ui-gallery (97 components), and harness (166 items, 16 modules, ev_783cdbda...)"
+    },
+    {
+      "operation": "inspect_rust_binary + capture_process (Wave 2 Clinical/Bank · 44 bundles)",
+      "evidence_id": "ev_b2b4cb893a065c384a85e5acbfda4c754305abb6c0588b01286ec3c4e1f4b1b2",
+      "bundles": 44,
+      "scope": "Black-box specs for clinical-library (15 PG tables, 93/93 PG 16 + pgvector tests) and patient-bank + 468 synthetic patients (21,982 FHIR R4 resources, ev_1a23930f...)"
+    }
+  ]
+}
