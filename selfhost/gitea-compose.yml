@@ -1,0 +1,76 @@
+# Self-hosted Gitea (https://github.com/go-gitea/gitea) + Gitea Actions runner
+# overlay for dabney.moe.
+#
+# Gives you a completely self-hosted, GitHub-free Git forge, Actions CI/CD
+# runner, and built-in OCI container registry (`git.dabney.moe`) right beside
+# dabney.moe on the same VPS behind Caddy with automatic Let's Encrypt HTTPS.
+#
+# Quick start on the VPS:
+#   1. Point `git.dabney.moe` A/AAAA record at the same VPS.
+#   2. Set `GITEA_DOMAIN=git.dabney.moe` (and optional `GITEA_RUNNER_REGISTRATION_TOKEN`
+#      from Gitea -> Site Administration -> Actions -> Runners) in `.env`.
+#   3. Launch both dabney.moe and Gitea + Caddy:
+#        docker compose -f docker-compose.yml -f gitea-compose.yml up -d
+#   4. Push your repositories to `ssh://git@git.dabney.moe:2222/tyler274/DabneyMoeWebsite.git`
+#      (or configure push/pull mirrors in Gitea). `.gitea/workflows/deploy.yml`
+#      automatically runs CI, pushes OCI images to `git.dabney.moe/tyler274/dabney-web`,
+#      and deploys via `scripts/deploy.sh`.
+
+services:
+  caddy:
+    environment:
+      GITEA_DOMAIN: ${GITEA_DOMAIN:-git.dabney.moe}
+    volumes:
+      - ./Caddyfile.gitea:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+      - gitea
+
+  gitea:
+    # Official rootless Gitea image (https://github.com/go-gitea/gitea)
+    image: docker.gitea.com/gitea:1-rootless
+    restart: unless-stopped
+    expose:
+      - "3000"
+    ports:
+      # Dedicated Git SSH port so host OpenSSH stays on port 22.
+      - "${GITEA_SSH_PORT:-2222}:2222"
+    environment:
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__server__DOMAIN: ${GITEA_DOMAIN:-git.dabney.moe}
+      GITEA__server__ROOT_URL: https://${GITEA_DOMAIN:-git.dabney.moe}/
+      GITEA__server__SSH_DOMAIN: ${GITEA_DOMAIN:-git.dabney.moe}
+      GITEA__server__SSH_PORT: ${GITEA_SSH_PORT:-2222}
+      GITEA__server__SSH_LISTEN_PORT: "2222"
+      GITEA__actions__ENABLED: "true"
+      GITEA__actions__DEFAULT_ACTIONS_URL: https://gitea.com
+      GITEA__packages__ENABLED: "true"
+      GITEA__service__DISABLE_REGISTRATION: "true"
+    volumes:
+      - gitea_data:/var/lib/gitea
+      - gitea_config:/etc/gitea
+      - /etc/localtime:/etc/localtime:ro
+
+  act-runner:
+    # Optional Gitea Actions runner; activates once GITEA_RUNNER_REGISTRATION_TOKEN is set.
+    image: docker.gitea.com/act_runner:nightly
+    restart: unless-stopped
+    profiles:
+      - runner
+    depends_on:
+      - gitea
+    environment:
+      GITEA_INSTANCE_URL: http://gitea:3000
+      GITEA_RUNNER_REGISTRATION_TOKEN: ${GITEA_RUNNER_REGISTRATION_TOKEN:-}
+      GITEA_RUNNER_NAME: ${GITEA_RUNNER_NAME:-dabney-vps-runner}
+      GITEA_RUNNER_LABELS: "ubuntu-latest:docker://docker.io/catthehacker/ubuntu:act-latest"
+    volumes:
+      - act_runner_data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  gitea_data:
+  gitea_config:
+  act_runner_data:

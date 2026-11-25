@@ -94,6 +94,29 @@ and scale-to-zero (`256mb` shared-cpu VM):
   --image registry.gitlab.com/tyler274/dabney-moe/web:latest --push
 ```
 
+## Self-hosted Gitea (`gitea-compose.yml`)
+
+To host your own GitHub-free Git forge, Gitea Actions CI/CD runner, and built-in
+OCI container registry ([`go-gitea/gitea`](https://github.com/go-gitea/gitea))
+on the same VPS behind Caddy:
+
+1. Point `git.dabney.moe` (or your chosen `GITEA_DOMAIN`) `A`/`AAAA` records at
+   the same host and open TCP port `2222` (Git SSH) alongside `80` + `443`.
+2. Add `GITEA_DOMAIN=git.dabney.moe` to `.env` and start the combined stack:
+   ```bash
+   docker compose -f docker-compose.yml -f gitea-compose.yml up -d
+   ```
+3. Complete first-run admin setup at `https://git.dabney.moe`, grab a runner
+   registration token from **Site Administration → Actions → Runners**, set
+   `GITEA_RUNNER_REGISTRATION_TOKEN` in `.env`, and enable the runner:
+   ```bash
+   docker compose -f docker-compose.yml -f gitea-compose.yml --profile runner up -d
+   ```
+4. Pushing to Gitea automatically runs [`.gitea/workflows/deploy.yml`](../.gitea/workflows/deploy.yml),
+   which defaults `--target oci` to Gitea's built-in OCI container registry
+   (`git.dabney.moe/<owner>/dabney-web`) and supports every `scripts/deploy.sh`
+   target (`oci`, `ssh`, `cloudrun`, `aws`, `azure`, `fly`).
+
 ## Testing without burning rate limits
 
 Let's Encrypt's production CA has

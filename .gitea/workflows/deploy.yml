@@ -1,0 +1,168 @@
+# Native Gitea Actions workflow (https://github.com/go-gitea/gitea) — zero GitHub dependency.
+#
+# Runs `nix run .#ci` on every push and pull request, builds the hardened
+# static-musl OCI image (`nix build .#serverImage`), and on `main` deploys
+# via `scripts/deploy.sh` according to repository variable `DEPLOY_TARGET`
+# (`oci`, `ssh`, `cloudrun`, `aws`, `azure`, or `fly`).
+#
+# Works with both gitea.com and a self-hosted Gitea instance (see
+# `selfhost/gitea-compose.yml` and `docs/deploy.md`). When `DEPLOY_TARGET=oci`
+# and `DEPLOY_IMAGE` is unset, images push directly to this Gitea instance's
+# built-in OCI container registry (`<gitea-host>/<owner>/dabney-web`).
+
+name: CI and Deploy (Gitea)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check-and-deploy:
+    name: Check, build image, and deploy
+    runs-on: ubuntu-latest
+    env:
+      NIX_CONFIG: "experimental-features = nix-command flakes"
+    steps:
+      - name: Check out repository
+        uses: https://gitea.com/actions/checkout@v4
+
+      - name: Ensure Nix is available
+        run: |
+          set -euo pipefail
+          if ! command -v nix >/dev/null 2>&1; then
+            curl -L https://nixos.org/nix/install | sh -s -- --no-daemon --yes
+            echo "${HOME}/.nix-profile/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Run Nix CI checks (format, deny, clippy, tests)
+        run: nix run .#ci
+
+      - name: Build server OCI image
+        run: |
+          set -euo pipefail
+          nix build .#serverImage
+          cp -L result server-image.tar.gz
+          ls -lh server-image.tar.gz
+
+      - name: Deploy on main (when DEPLOY_TARGET is configured)
+        if: ${{ gitea.ref == 'refs/heads/main' && gitea.event_name != 'pull_request' }}
+        env:
+          DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET }}
+          DEPLOY_IMAGE: ${{ vars.DEPLOY_IMAGE }}
+          DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_DIR: ${{ vars.DEPLOY_SSH_DIR }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SITE_DOMAIN: ${{ vars.SITE_DOMAIN }}
+          ACME_EMAIL: ${{ secrets.ACME_EMAIL }}
+          OCI_REGISTRY_USER: ${{ secrets.OCI_REGISTRY_USER }}
+          OCI_REGISTRY_PASS: ${{ secrets.OCI_REGISTRY_PASS }}
+          GITEA_SERVER_URL: ${{ gitea.server_url }}
+          GITEA_REPO_OWNER: ${{ gitea.repository_owner }}
+          GITEA_ACTOR: ${{ gitea.actor }}
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_REGION: ${{ vars.FLY_REGION }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_TARGET:-}" ]; then
+            echo "DEPLOY_TARGET is not set; skipping rollout."
+            exit 0
+          fi
+
+          TAG="$(git rev-parse --short=12 HEAD)"
+          IMAGE="${DEPLOY_IMAGE:-}"
+          if [ -z "$IMAGE" ] && [ "$DEPLOY_TARGET" = "oci" ] && [ -n "${GITEA_SERVER_URL:-}" ]; then
+            REGISTRY_HOST="${GITEA_SERVER_URL#https://}"
+            REGISTRY_HOST="${REGISTRY_HOST#http://}"
+            REGISTRY_HOST="${REGISTRY_HOST%%/*}"
+            OWNER_LOWER="$(printf '%s' "${GITEA_REPO_OWNER}" | tr '[:upper:]' '[:lower:]')"
+            IMAGE="${REGISTRY_HOST}/${OWNER_LOWER}/dabney-web"
+            export OCI_REGISTRY_USER="${OCI_REGISTRY_USER:-${GITEA_ACTOR}}"
+            export OCI_REGISTRY_PASS="${OCI_REGISTRY_PASS:-${GITEA_TOKEN}}"
+          fi
+
+          ARGS=(
+            --build none
+            --target "$DEPLOY_TARGET"
+            --image-archive server-image.tar.gz
+            --tag "$TAG"
+            --domain "${SITE_DOMAIN:-dabney.moe}"
+            --push
+          )
+
+          if [ -n "$IMAGE" ]; then
+            ARGS+=(--image "$IMAGE")
+          fi
+
+          case "$DEPLOY_TARGET" in
+            oci)
+              nix develop .#deploy -c ./scripts/deploy.sh "${ARGS[@]}"
+              ;;
+            ssh)
+              SSH_KEY_FILE="$(mktemp)"
+              trap 'rm -f "$SSH_KEY_FILE"' EXIT
+              chmod 600 "$SSH_KEY_FILE"
+              printf '%s\n' "$DEPLOY_SSH_KEY" > "$SSH_KEY_FILE"
+              ARGS+=(
+                --ssh-host "$DEPLOY_SSH_HOST"
+                --ssh-dir "${DEPLOY_SSH_DIR:-/opt/dabney-moe}"
+                --ssh-key "$SSH_KEY_FILE"
+              )
+              nix develop .#deploy -c ./scripts/deploy.sh "${ARGS[@]}"
+              ;;
+            cloudrun)
+              run_cloudrun() {
+                SA_FILE="$(mktemp)"
+                trap 'rm -f "$SA_FILE"' EXIT
+                printf '%s' "$GCP_SA_KEY" > "$SA_FILE"
+                gcloud auth activate-service-account --key-file="$SA_FILE"
+                gcloud config set project "$GCP_PROJECT_ID"
+                ./scripts/deploy.sh \
+                  --build none \
+                  --target cloudrun \
+                  --image-archive server-image.tar.gz \
+                  --project "$GCP_PROJECT_ID" \
+                  --region "${GCP_REGION:-us-central1}" \
+                  --tag "$TAG" \
+                  --push
+              }
+              if [ -n "${DOPPLER_TOKEN:-}" ]; then
+                nix develop .#deploy -c doppler run -- bash -euo pipefail -c "$(declare -f run_cloudrun); run_cloudrun"
+              else
+                nix develop .#deploy -c bash -euo pipefail -c "$(declare -f run_cloudrun); run_cloudrun"
+              fi
+              ;;
+            aws)
+              if [ -n "${AWS_REGION:-}" ]; then
+                ARGS+=(--region "$AWS_REGION")
+              fi
+              nix develop .#deploy -c ./scripts/deploy.sh "${ARGS[@]}"
+              ;;
+            azure)
+              if [ -n "${AZURE_LOCATION:-}" ]; then
+                ARGS+=(--region "$AZURE_LOCATION")
+              fi
+              nix develop .#deploy -c ./scripts/deploy.sh "${ARGS[@]}"
+              ;;
+            fly)
+              if ! command -v flyctl >/dev/null 2>&1; then
+                nix profile install nixpkgs#flyctl
+              fi
+              if [ -n "${FLY_REGION:-}" ]; then
+                ARGS+=(--region "$FLY_REGION")
+              fi
+              nix develop .#deploy -c ./scripts/deploy.sh "${ARGS[@]}"
+              ;;
+            *)
+              echo "error: unsupported DEPLOY_TARGET '$DEPLOY_TARGET'" >&2
+              exit 1
+              ;;
+          esac

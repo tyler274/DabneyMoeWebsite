@@ -148,8 +148,9 @@ to `scripts/deploy.sh`:
 
 | Forge / CI | Pipeline file | How to configure |
 | --- | --- | --- |
+| **Gitea (`go-gitea/gitea`)** | [`.gitea/workflows/deploy.yml`](../.gitea/workflows/deploy.yml) | Works on `gitea.com` or self-hosted Gitea ([`selfhost/gitea-compose.yml`](../selfhost/gitea-compose.yml)). Uses `https://gitea.com/actions/checkout@v4` (zero GitHub dependency); `DEPLOY_TARGET=oci` defaults to Gitea's built-in OCI container registry (`<gitea-host>/<owner>/dabney-web`). |
+| **Codeberg / Forgejo** | [`.forgejo/workflows/deploy.yml`](../.forgejo/workflows/deploy.yml) | Uses `https://code.forgejo.org/actions/checkout@v4` (zero GitHub dependency). Set variable `DEPLOY_TARGET` and target secrets. |
 | **GitLab CI** | [`.gitlab-ci.yml`](../.gitlab-ci.yml) | Set CI/CD variable `DEPLOY_TARGET` to `oci`, `ssh`, `cloudrun`, or `fly` (plus target credentials). |
-| **Codeberg / Forgejo / Gitea** | [`.forgejo/workflows/deploy.yml`](../.forgejo/workflows/deploy.yml) | Uses `https://code.forgejo.org/actions/checkout@v4` (zero GitHub dependency). Set variable `DEPLOY_TARGET` and target secrets. |
 | **GitHub Actions** (optional) | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | Set `DOPPLER_TOKEN` secret to enable automatic Cloud Run rollout on `main`. |
 
 ## 4. Runtime Environment Variables

@@ -1,0 +1,31 @@
+# Combined Caddyfile for self-hosting dabney.moe + Gitea (git.dabney.moe)
+# behind automatic Let's Encrypt HTTPS. Used by `gitea-compose.yml`.
+{
+	email {$ACME_EMAIL}
+}
+
+{$SITE_DOMAIN:dabney.moe} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=5184000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	reverse_proxy web:8080 {
+		flush_interval -1
+	}
+}
+
+{$GITEA_DOMAIN:git.dabney.moe} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=5184000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	reverse_proxy gitea:3000
+}
