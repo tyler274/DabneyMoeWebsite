@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/clinical-workspace", "crates/ui", "crates/web", "crates/tauri-ui", "crates/icon-gen", "src-tauri"]
+members = ["crates/clinical-workspace", "crates/ui", "crates/web", "crates/tauri-ui", "crates/icon-gen", "crates/forge", "crates/forge-linear-sync", "src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
