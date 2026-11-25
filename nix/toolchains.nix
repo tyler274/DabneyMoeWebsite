@@ -31,4 +31,12 @@ in
       "x86_64-unknown-linux-musl"
     ];
   };
+
+  # The pinned toolchain plus the FreeBSD x86_64 target used to cross-compile
+  # `dabney-forge` (`git.dabney.moe`) for FreeBSD EU hosts such as Serv00.
+  rustToolchainFreebsd = rustToolchain.override {
+    targets = [
+      "x86_64-unknown-freebsd"
+    ];
+  };
 }

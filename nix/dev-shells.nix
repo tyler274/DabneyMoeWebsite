@@ -4,6 +4,7 @@
 { pkgs
 , rustToolchain
 , rustToolchainAndroid
+, rustToolchainFreebsd
 , baseTools
 , tauriDeps
 , pkgConfigPath
@@ -123,6 +124,28 @@
       echo "  init:  cargo tauri android init"
       echo "  build: cargo tauri android build --apk"
       echo "  dev:   cargo tauri android dev"
+    '';
+  };
+
+  # FreeBSD cross-compilation shell for zero-cost EU FreeBSD hosts (e.g. Serv00).
+  # Uses `zig` + `cargo-zigbuild` to link `x86_64-unknown-freebsd` binaries
+  # cleanly from Linux or macOS without needing a FreeBSD sysroot.
+  freebsd = pkgs.mkShell {
+    packages = [
+      rustToolchainFreebsd
+      pkgs.zig
+      pkgs.cargo-zigbuild
+      pkgs.openssh
+      pkgs.file
+    ];
+
+    shellHook = ''
+      echo "dabney.moe FreeBSD cross-compile shell"
+      echo "  $(rustc --version)"
+      echo "  zig $(zig version)"
+      echo ""
+      echo "  build forge: cargo zigbuild --release --target x86_64-unknown-freebsd -p forge --bin dabney-forge"
+      echo "  deploy:      scripts/deploy-serv00.sh --help"
     '';
   };
 }
