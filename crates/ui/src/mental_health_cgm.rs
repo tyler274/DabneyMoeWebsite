@@ -3066,6 +3066,26 @@ mod tests {
         let reparsed = parse_commercial_glucose_input(&exported, None).unwrap();
         assert_eq!(reparsed.readings.len(), import.readings.len());
         assert_eq!(reparsed.monitor, GlucoseMonitor::AbbottLingo);
+
+        // Verified Android Abbott Lingo package ID (`com.abbott.lingo.wellness`) + 55-200 sensor caps
+        let wellness_hc = r#"{
+            "schema": "dabney.health_bridge.v1",
+            "platform": "android_health_connect",
+            "exported_at": "2026-11-25T18:00:00Z",
+            "records": [
+                { "time": "2026-11-25T15:00:00Z", "zoneOffset": "-07:00", "levelMgDl": 54.0, "dataOrigin": "com.abbott.lingo.wellness" },
+                { "time": "2026-11-25T15:05:00Z", "zoneOffset": "-07:00", "levelMgDl": 112.0, "dataOrigin": "com.abbott.lingo.wellness" },
+                { "time": "2026-11-25T15:10:00Z", "zoneOffset": "-07:00", "levelMgDl": 201.0, "dataOrigin": "com.abbott.lingo.wellness" }
+            ]
+        }"#;
+        let wellness_parsed = parse_commercial_glucose_input(wellness_hc, None).unwrap();
+        assert_eq!(wellness_parsed.monitor, GlucoseMonitor::AbbottLingo);
+        assert_eq!(wellness_parsed.diagnostics.bounded_sentinels, 2);
+        assert!(wellness_parsed
+            .diagnostics
+            .checks
+            .iter()
+            .any(|c| c.name == "Biosensor Range & Saturation" && c.level == ValidationLevel::Warn));
     }
 
     #[test]

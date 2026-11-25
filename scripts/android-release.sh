@@ -353,7 +353,8 @@ cargo tauri android build "${BUILD_ARGS[@]}"
 if [ "$MODE" = "aab" ]; then
   ARTIFACT="$(find "$ANDROID_DIR/app/build/outputs/bundle" -name "*.aab" | sort | head -n1)"
 else
-  ARTIFACT="$(find "$ANDROID_DIR/app/build/outputs/apk" -name "*.apk" | sort | head -n1)"
+  # Prefer Gradle's freshly built APK and ignore any leftover emulator-signed artifacts.
+  ARTIFACT="$(find "$ANDROID_DIR/app/build/outputs/apk" -name "*.apk" ! -name "*-emulator.apk" ! -name "*-aligned.apk" | sort | head -n1)"
 fi
 
 if [ -z "$ARTIFACT" ] || [ ! -f "$ARTIFACT" ]; then

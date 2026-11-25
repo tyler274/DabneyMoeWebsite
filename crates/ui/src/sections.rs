@@ -202,6 +202,16 @@ pub fn NavBar() -> impl IntoView {
 
 #[component]
 fn DemoAppTopBar() -> impl IntoView {
+    let personal_mode = RwSignal::new(false);
+    Effect::new(move |_| {
+        #[cfg(any(feature = "csr", feature = "hydrate"))]
+        {
+            crate::health_bridge::probe_personal_health_bridge(move |_| {
+                personal_mode.set(true);
+            });
+        }
+    });
+
     view! {
         <header class="sticky top-0 z-50 border-b border-white/10 bg-slate-950/90 pt-[env(safe-area-inset-top)] backdrop-blur">
             <nav
@@ -219,9 +229,24 @@ fn DemoAppTopBar() -> impl IntoView {
                     <span class="text-sm font-bold tracking-tight text-white sm:text-base">
                         "Dabney.moe"
                     </span>
-                    <span class="rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
-                        "Zero-PHI Demo"
-                    </span>
+                    {move || if personal_mode.get() {
+                        view! {
+                            <span
+                                data-personal-app-badge="true"
+                                class="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-cyan-200"
+                            >
+                                "Personal · On-Device"
+                            </span>
+                        }
+                        .into_any()
+                    } else {
+                        view! {
+                            <span class="rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
+                                "Zero-PHI Demo"
+                            </span>
+                        }
+                        .into_any()
+                    }}
                 </A>
                 <div class="flex items-center gap-2 text-xs">
                     <A
@@ -614,6 +639,15 @@ pub fn Footer() -> impl IntoView {
 #[component]
 fn DemoAppBottomNav() -> impl IntoView {
     let location = use_location();
+    let personal_mode = RwSignal::new(false);
+    Effect::new(move |_| {
+        #[cfg(any(feature = "csr", feature = "hydrate"))]
+        {
+            crate::health_bridge::probe_personal_health_bridge(move |_| {
+                personal_mode.set(true);
+            });
+        }
+    });
     let tab_cls = move |target: &'static str| -> &'static str {
         let current = location.pathname.get();
         let trimmed = current.trim_end_matches('/');
@@ -640,7 +674,11 @@ fn DemoAppBottomNav() -> impl IntoView {
     view! {
         <div class="mx-auto max-w-4xl px-4 pb-28 pt-2 text-center text-[11px] text-slate-400 sm:px-6">
             <p>
-                "Dabney.moe Clinical Demo · 100% synthetic zero-PHI sample data · Not medical advice · "
+                {move || if personal_mode.get() {
+                    "Dabney.moe Personal · Local on-device health analytics (never uploaded) · Not medical advice · "
+                } else {
+                    "Dabney.moe Clinical Demo · 100% synthetic zero-PHI sample data · Not medical advice · "
+                }}
                 <a
                     href="https://dabney.moe/clinical"
                     target="_blank"

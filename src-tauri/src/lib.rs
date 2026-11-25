@@ -1,9 +1,26 @@
 //! Tauri application entry point shared by desktop and mobile targets.
 
+#[cfg(feature = "health-connect")]
+pub mod health_connect;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+
+    #[cfg(all(
+        feature = "health-connect",
+        any(target_os = "android", target_os = "ios")
+    ))]
+    let builder = builder.plugin(health_connect::init_plugin());
+
+    #[cfg(feature = "health-connect")]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        health_connect::health_connect_status,
+        health_connect::health_connect_request_permission,
+        health_connect::health_connect_read_glucose,
+    ]);
+
+    builder
         .run(tauri::generate_context!())
         .expect("error while running the Dabney Tauri application");
 }

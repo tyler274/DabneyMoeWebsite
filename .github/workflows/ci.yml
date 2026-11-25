@@ -309,6 +309,8 @@ jobs:
         run: nix develop -c cargo clippy -p tauri-ui --target wasm32-unknown-unknown -- -D warnings
       - name: "clippy: dabney-app"
         run: nix develop -c cargo clippy -p dabney-app -- -D warnings
+      - name: "clippy: dabney-app (health-connect)"
+        run: nix develop -c cargo clippy -p dabney-app --features health-connect -- -D warnings
       - name: "clippy: icon-gen"
         run: nix develop -c cargo clippy -p icon-gen -- -D warnings
       - name: Prepare Rust cache payload
@@ -546,6 +548,8 @@ jobs:
         run: nix develop -c cargo test -p web --features ssr
       - name: "test: dabney-app (tauri context)"
         run: nix develop -c cargo test -p dabney-app
+      - name: "test: dabney-app (health-connect)"
+        run: nix develop -c cargo test -p dabney-app --features health-connect
       - name: Prepare Rust cache payload
         id: cache-payload
         if: ${{ !env.ACT && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.rust-cache.outputs.cache-hit != 'true' }}

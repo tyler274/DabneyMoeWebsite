@@ -4,6 +4,12 @@ use leptos::prelude::*;
 use leptos_meta::{Link, Meta, Title};
 use leptos_router::components::A;
 
+use crate::health_bridge::HealthBridgeStatusUi;
+#[cfg(any(feature = "hydrate", feature = "csr"))]
+use crate::health_bridge::{
+    invoke_tauri_command, probe_personal_health_bridge, HealthBridgePermissionUi,
+    HealthBridgeReadUi,
+};
 use crate::mental_health_3d::LingoMood3DChart;
 #[cfg(any(feature = "hydrate", feature = "csr"))]
 use crate::mental_health_cgm::monitor_hint_from_filename;
@@ -82,6 +88,14 @@ pub fn MentalHealthPage() -> impl IntoView {
     let window = RwSignal::new(GlucoseWindow::All);
     let loaded_file_label = RwSignal::new(Option::<String>::None);
     let csv_error = RwSignal::new(Option::<String>::None);
+
+    // Native Android Health Connect / iOS Apple HealthKit state (active ONLY inside
+    // `moe.dabney.personal` built with `--features health-connect`; stays `None` on
+    // web browsers and `moe.dabney.demo`).
+    let hc_status = RwSignal::new(Option::<HealthBridgeStatusUi>::None);
+    let hc_busy = RwSignal::new(false);
+    let hc_message = RwSignal::new(Option::<String>::None);
+    let hc_error = RwSignal::new(Option::<String>::None);
 
     let windowed_readings =
         Signal::derive(move || slice_readings_window(&readings.get(), window.get()));
@@ -202,7 +216,126 @@ pub fn MentalHealthPage() -> impl IntoView {
         load_monitor_preset(GlucoseMonitor::AbbottLingo);
         checkins.set(sample_checkins());
         form_status.set(None);
+        hc_message.set(None);
+        hc_error.set(None);
     };
+
+    let refresh_health_connect_status = move || {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            probe_personal_health_bridge(move |status| {
+                hc_status.set(Some(status));
+            });
+        }
+    };
+
+    Effect::new(move |_| {
+        refresh_health_connect_status();
+    });
+
+    let request_health_connect_permission = Callback::new(move |()| {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            let platform_name = hc_status
+                .get()
+                .map(|s| s.platform_kind().display_name())
+                .unwrap_or("Health Connect");
+            hc_busy.set(true);
+            hc_error.set(None);
+            hc_message.set(None);
+            invoke_tauri_command::<HealthBridgePermissionUi, _>(
+                "health_connect_request_permission",
+                None,
+                move |res| {
+                    hc_busy.set(false);
+                    match res {
+                        Ok(outcome) => {
+                            if outcome.granted {
+                                hc_message.set(Some(format!(
+                                    "{platform_name} blood glucose access granted ({} permission{} active).",
+                                    outcome.granted_permissions.len(),
+                                    if outcome.granted_permissions.len() == 1 {
+                                        ""
+                                    } else {
+                                        "s"
+                                    }
+                                )));
+                            } else {
+                                hc_error.set(Some(format!(
+                                    "Blood glucose read access was not granted in {platform_name}."
+                                )));
+                            }
+                            refresh_health_connect_status();
+                        }
+                        Err(err) => {
+                            hc_error.set(Some(err));
+                        }
+                    }
+                },
+            );
+        }
+    });
+
+    let sync_health_connect_days = Callback::new(move |days: u32| {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            use js_sys::{Object, Reflect};
+            use wasm_bindgen::JsValue;
+
+            let platform_kind = hc_status
+                .get()
+                .map(|s| s.platform_kind())
+                .unwrap_or(crate::health_bridge::HealthBridgePlatform::AndroidHealthConnect);
+            let platform_name = platform_kind.display_name();
+
+            hc_busy.set(true);
+            hc_error.set(None);
+            hc_message.set(None);
+
+            let args = Object::new();
+            let _ = Reflect::set(
+                &args,
+                &JsValue::from_str("days"),
+                &JsValue::from_f64(f64::from(days)),
+            );
+
+            invoke_tauri_command::<HealthBridgeReadUi, _>(
+                "health_connect_read_glucose",
+                Some(args),
+                move |res| {
+                    hc_busy.set(false);
+                    match res {
+                        Ok(resp) => {
+                            if resp.record_count == 0 {
+                                hc_message.set(Some(platform_kind.empty_sync_hint(days)));
+                                return;
+                            }
+                            let sources_label = if resp.sources.is_empty() {
+                                platform_name.to_string()
+                            } else {
+                                resp.sources.join(", ")
+                            };
+                            csv_input.set(compact_textarea_preview(&resp.bridge_json));
+                            let banner_label = format!(
+                                "{platform_name} ({} readings · {} · last {days}d · on-device RAM only)",
+                                resp.record_count, sources_label
+                            );
+                            apply_glucose_text(&resp.bridge_json, None, Some(banner_label));
+                            hc_message.set(Some(format!(
+                                "Synced {} blood glucose readings locally from {sources_label} (last {days} days).",
+                                resp.record_count
+                            )));
+                        }
+                        Err(err) => {
+                            hc_error.set(Some(err));
+                        }
+                    }
+                },
+            );
+        }
+        #[cfg(not(any(feature = "hydrate", feature = "csr")))]
+        let _ = days;
+    });
 
     let submit_checkin = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
@@ -311,9 +444,27 @@ pub fn MentalHealthPage() -> impl IntoView {
                 </div>
             </div>
 
-            <div class="mb-8">
+            <div class="mb-6">
                 <ClinicalSuiteSwitcher />
             </div>
+
+            // Opt-in personal mobile health bridge card (Android Health Connect / iOS Apple HealthKit).
+            // Shown above the fold ONLY when running inside `moe.dabney.personal` (`enabled == true`);
+            // renders nothing on web browsers and the public zero-PHI `moe.dabney.demo` app.
+            {move || {
+                hc_status.get().filter(|s| s.enabled).map(|status| {
+                    view! {
+                        <HealthConnectSyncCard
+                            status=status
+                            busy=hc_busy
+                            message=hc_message
+                            error=hc_error
+                            on_request_permission=request_health_connect_permission
+                            on_sync_days=sync_health_connect_days
+                        />
+                    }
+                })
+            }}
 
             // Top-of-page calm Cool-Down banner when activation signals stack up
             <TopCoolDownBanner
@@ -709,12 +860,12 @@ pub fn MentalHealthPage() -> impl IntoView {
                     </p>
                     <details class="mb-3 rounded-xl border border-cyan-400/20 bg-cyan-500/5 px-3.5 py-2.5 text-xs text-slate-300">
                         <summary class="cursor-pointer font-semibold text-cyan-200">
-                            "How to export from Abbott Lingo today (+ Health Connect / HealthKit plan)"
+                            "How to export from Abbott Lingo today (+ Android Health Connect / Apple HealthKit)"
                         </summary>
                         <ol class="mt-2 list-decimal space-y-1 pl-4 text-[11px] leading-relaxed text-slate-300">
                             <li>"Open the Abbott Lingo app → You → Profile → Actions → Export your glucose data → Download file (5-min ISO-8601 CSV)."</li>
                             <li>"Select that `.csv` below (or an iOS Apple Health `export.xml` or Health Connect JSON) — everything parses locally in Rust/WASM and stays in device RAM."</li>
-                            <li>"Future direct Google Health Connect (Android) & Apple HealthKit (iOS) sync will live in the separate personal build (`moe.dabney.personal`) and feed this exact `dabney.health_bridge.v1` JSON schema, keeping the public Play Store demo (`moe.dabney.demo`) strictly zero-PHI."</li>
+                            <li>"Direct Google Health Connect live sync lives strictly inside the separate opt-in personal Android build (`moe.dabney.personal`) and feeds this exact `dabney.health_bridge.v1` JSON schema, keeping the public Play Store demo (`moe.dabney.demo`) strictly zero-PHI."</li>
                         </ol>
                     </details>
                     <div class="mb-3 flex flex-wrap gap-1.5">
@@ -1258,10 +1409,234 @@ fn Phq9Gad7TrendChart(series: Vec<AssessmentPoint>) -> impl IntoView {
     }
 }
 
+#[component]
+fn HealthConnectSyncCard(
+    status: HealthBridgeStatusUi,
+    busy: RwSignal<bool>,
+    message: RwSignal<Option<String>>,
+    error: RwSignal<Option<String>>,
+    on_request_permission: Callback<()>,
+    on_sync_days: Callback<u32>,
+) -> impl IntoView {
+    let platform_kind = status.platform_kind();
+    let platform_name = platform_kind.display_name();
+    let permission_summary = platform_kind.permission_summary();
+    let sdk_available = status.sdk_status == "available";
+    let (badge_label, badge_class) = if !sdk_available {
+        if status.sdk_status == "update_required" {
+            (
+                "Update Health Connect",
+                "border-amber-400/35 bg-amber-500/15 text-amber-200",
+            )
+        } else {
+            (
+                "SDK Unavailable",
+                "border-rose-400/35 bg-rose-500/15 text-rose-200",
+            )
+        }
+    } else if status.has_glucose_permission {
+        (
+            "Connected · Read-only",
+            "border-emerald-400/35 bg-emerald-500/15 text-emerald-200",
+        )
+    } else {
+        (
+            "Permission required",
+            "border-amber-400/35 bg-amber-500/15 text-amber-200",
+        )
+    };
+
+    let package_id = status.package_id.clone();
+    let has_permission = status.has_glucose_permission;
+
+    view! {
+        <div
+            data-health-connect-card="true"
+            class="mb-6 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-4 text-xs text-slate-200"
+        >
+            <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                    <p class="text-[11px] font-semibold uppercase tracking-wider text-emerald-300">
+                        {format!("{platform_name} · Live On-Device Sync")}
+                    </p>
+                    <p class="mt-0.5 text-[11px] text-slate-300">
+                        {format!("Personal package {package_id} · {permission_summary}")}
+                    </p>
+                </div>
+                <span class=format!("rounded-full border px-2.5 py-0.5 text-[11px] font-semibold {badge_class}")>
+                    {badge_label}
+                </span>
+            </div>
+
+            {if !sdk_available {
+                view! {
+                    <p class="text-[11px] leading-relaxed text-amber-200">
+                        {if status.sdk_status == "update_required" {
+                            "Health Connect requires an update on this Android device. Update Health Connect in Google Play or Android System Settings, then reopen Dabney.moe Personal."
+                        } else {
+                            platform_kind.unavailable_hint()
+                        }}
+                    </p>
+                }
+                .into_any()
+            } else {
+                view! {
+                    <div class="flex flex-wrap items-center gap-2">
+                        {if !has_permission {
+                            view! {
+                                <button
+                                    type="button"
+                                    disabled=move || busy.get()
+                                    on:click=move |_| on_request_permission.run(())
+                                    class="rounded-full bg-emerald-400 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:opacity-50"
+                                >
+                                    {move || if busy.get() {
+                                        format!("Opening {platform_name}…")
+                                    } else {
+                                        "Grant Blood Glucose Access".to_string()
+                                    }}
+                                </button>
+                            }
+                            .into_any()
+                        } else {
+                            view! {
+                                <button
+                                    type="button"
+                                    disabled=move || busy.get()
+                                    on:click=move |_| on_sync_days.run(14)
+                                    class="rounded-full bg-emerald-400 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:opacity-50"
+                                >
+                                    {move || if busy.get() { "Syncing…" } else { "Sync Last 14 Days" }}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled=move || busy.get()
+                                    on:click=move |_| on_sync_days.run(90)
+                                    class="rounded-full border border-emerald-300/40 bg-slate-950/60 px-3.5 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/20 disabled:opacity-50"
+                                >
+                                    "Sync Last 90 Days"
+                                </button>
+                            }
+                            .into_any()
+                        }}
+                    </div>
+                }
+                .into_any()
+            }}
+
+            {move || message.get().map(|msg| view! {
+                <p class="mt-2 text-[11px] text-emerald-200">{msg}</p>
+            })}
+            {move || error.get().map(|err| view! {
+                <p class="mt-2 text-[11px] text-rose-300">{err}</p>
+            })}
+        </div>
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::health_bridge::{HealthBridgePermissionUi, HealthBridgeReadUi};
     use leptos::prelude::RenderHtml;
+
+    #[test]
+    fn health_connect_bridge_payloads_and_card_render_cleanly() {
+        let status: HealthBridgeStatusUi = serde_json::from_str(
+            r#"{
+                "enabled": true,
+                "platform": "android_health_connect",
+                "sdk_status": "available",
+                "has_glucose_permission": false,
+                "package_id": "moe.dabney.personal"
+            }"#,
+        )
+        .unwrap();
+        assert!(status.enabled);
+        assert!(!status.has_glucose_permission);
+
+        let perm: HealthBridgePermissionUi = serde_json::from_str(
+            r#"{
+                "granted": true,
+                "granted_permissions": ["android.permission.health.READ_BLOOD_GLUCOSE"]
+            }"#,
+        )
+        .unwrap();
+        assert!(perm.granted);
+        assert_eq!(perm.granted_permissions.len(), 1);
+
+        let read: HealthBridgeReadUi = serde_json::from_str(
+            r#"{
+                "bridge_json": "{\"schema\":\"dabney.health_bridge.v1\",\"records\":[]}",
+                "record_count": 2,
+                "sources": ["com.abbott.lingo"]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(read.record_count, 2);
+        assert_eq!(read.sources, vec!["com.abbott.lingo"]);
+
+        let busy = RwSignal::new(false);
+        let msg = RwSignal::new(None);
+        let err = RwSignal::new(None);
+        let req = Callback::new(|()| {});
+        let sync = Callback::new(|_: u32| {});
+
+        let needs_perm_html = view! {
+            <HealthConnectSyncCard
+                status=status.clone()
+                busy=busy
+                message=msg
+                error=err
+                on_request_permission=req
+                on_sync_days=sync
+            />
+        }
+        .to_html();
+        assert!(needs_perm_html.contains("Android Health Connect"));
+        assert!(needs_perm_html.contains("Grant Blood Glucose Access"));
+        assert!(needs_perm_html.contains("moe.dabney.personal"));
+
+        let connected_status = HealthBridgeStatusUi {
+            has_glucose_permission: true,
+            ..status
+        };
+        let connected_html = view! {
+            <HealthConnectSyncCard
+                status=connected_status
+                busy=busy
+                message=msg
+                error=err
+                on_request_permission=req
+                on_sync_days=sync
+            />
+        }
+        .to_html();
+        assert!(connected_html.contains("Sync Last 14 Days"));
+        assert!(connected_html.contains("Sync Last 90 Days"));
+
+        let ios_status = HealthBridgeStatusUi {
+            enabled: true,
+            platform: "ios_healthkit".to_string(),
+            sdk_status: "available".to_string(),
+            has_glucose_permission: true,
+            package_id: "moe.dabney.personal".to_string(),
+        };
+        let ios_html = view! {
+            <HealthConnectSyncCard
+                status=ios_status
+                busy=busy
+                message=msg
+                error=err
+                on_request_permission=req
+                on_sync_days=sync
+            />
+        }
+        .to_html();
+        assert!(ios_html.contains("Apple HealthKit"));
+        assert!(ios_html.contains("HKQuantityTypeIdentifierBloodGlucose"));
+        assert!(ios_html.contains("Sync Last 14 Days"));
+    }
 
     #[test]
     fn mental_health_chart_and_metrics_render_cleanly() {

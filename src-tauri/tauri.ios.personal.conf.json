@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Dabney.moe Personal",
+  "version": "1.0.0",
+  "identifier": "moe.dabney.personal",
+  "bundle": {
+    "shortDescription": "Opt-in personal clinical & Abbott Lingo Apple HealthKit companion.",
+    "longDescription": "Opt-in personal iOS build of Dabney.moe with read-only Apple HealthKit blood glucose sync processed 100% on-device. Strictly separate from the zero-PHI moe.dabney.demo app.",
+    "iOS": {
+      "minimumSystemVersion": "16.0"
+    }
+  }
+}
