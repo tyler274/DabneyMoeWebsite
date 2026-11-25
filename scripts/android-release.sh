@@ -180,8 +180,9 @@ else
   echo "==> No signing keystore provided; building unsigned artifact (suitable for emulator / smoke tests)"
 fi
 
-# Patch generated Gradle + Manifest for Play Store 16 KB alignment, Nix SDK pinning, release signing, and zero-PHI hygiene.
+# Patch generated Gradle + Manifest for Play Store 16 KB alignment, Nix/F-Droid SDK pinning, release signing, and zero-PHI hygiene.
 python3 - "$ROOT_GRADLE" "$APP_GRADLE" "$MANIFEST" "$SIGNED" "$EXPECTED_PACKAGE" <<'PY'
+import os
 import pathlib
 import re
 import sys
@@ -192,24 +193,28 @@ manifest_path = pathlib.Path(sys.argv[3])
 signed = sys.argv[4] == "1"
 expected_pkg = sys.argv[5]
 
-# Pin buildToolsVersion across all Android subprojects (:app, :tauri-android,
-# :tauri-plugin-opener) to the Nix-provisioned 37.0.0 so AGP never tries to
-# auto-download 36.0.0 into the read-only /nix/store SDK directory.
+# Pin buildToolsVersion across all Android subprojects when the Nix-provisioned
+# 37.0.0 build-tools exist (preventing AGP from trying to download into read-only
+# /nix/store), while allowing standard Android SDK / F-Droid buildservers to use
+# their installed AGP default matching compileSdk = 36.
+android_home = os.environ.get("ANDROID_HOME", "")
+nix_build_tools = "37.0.0" if (android_home and (pathlib.Path(android_home) / "build-tools" / "37.0.0").is_dir()) else ""
+
 root_gradle = root_gradle_path.read_text(encoding="utf-8")
-if 'buildToolsVersion = "37.0.0"' not in root_gradle:
-    root_gradle += """
-subprojects {
-    plugins.withId("com.android.application") {
-        extensions.configure<com.android.build.api.dsl.ApplicationExtension> {
-            buildToolsVersion = "37.0.0"
-        }
-    }
-    plugins.withId("com.android.library") {
-        extensions.configure<com.android.build.api.dsl.LibraryExtension> {
-            buildToolsVersion = "37.0.0"
-        }
-    }
-}
+if nix_build_tools and f'buildToolsVersion = "{nix_build_tools}"' not in root_gradle:
+    root_gradle += f"""
+subprojects {{
+    plugins.withId("com.android.application") {{
+        extensions.configure<com.android.build.api.dsl.ApplicationExtension> {{
+            buildToolsVersion = "{nix_build_tools}"
+        }}
+    }}
+    plugins.withId("com.android.library") {{
+        extensions.configure<com.android.build.api.dsl.LibraryExtension> {{
+            buildToolsVersion = "{nix_build_tools}"
+        }}
+    }}
+}}
 """
     root_gradle_path.write_text(root_gradle, encoding="utf-8")
 
@@ -217,13 +222,13 @@ gradle = gradle_path.read_text(encoding="utf-8")
 if f'"{expected_pkg}"' not in gradle:
     raise SystemExit(f"Expected applicationId/namespace {expected_pkg!r} in {gradle_path}")
 
-# Pin compileSdk / targetSdk to the Nix-provisioned API 36 (meets Google Play 2026 targetSdk requirements).
+# Pin compileSdk / targetSdk to API 36 (meets Google Play 2026 targetSdk requirements).
 gradle = re.sub(r"compileSdk\s*=\s*\d+", "compileSdk = 36", gradle)
 gradle = re.sub(r"targetSdk\s*=\s*\d+", "targetSdk = 36", gradle)
-if "buildToolsVersion" not in gradle:
+if nix_build_tools and "buildToolsVersion" not in gradle:
     gradle = re.sub(
         r"(compileSdk\s*=\s*36)",
-        r'\1\n    buildToolsVersion = "37.0.0"',
+        rf'\1\n    buildToolsVersion = "{nix_build_tools}"',
         gradle,
         count=1,
     )
@@ -452,7 +457,7 @@ if [ "$SIGNED" -eq 1 ]; then
   else
     jarsigner -verify "$ARTIFACT"
   fi
-elif [ "$MODE" = "apk" ] && [[ "$ARTIFACT" == *-unsigned.apk ]]; then
+elif [ "$MODE" = "apk" ] && [[ "$ARTIFACT" == *-unsigned.apk ]] && [ "${SKIP_DEBUG_SIGN:-0}" != "1" ]; then
   DEBUG_KS="${HOME}/.android/debug.keystore"
   if [ ! -f "$DEBUG_KS" ]; then
     mkdir -p "$(dirname "$DEBUG_KS")"
@@ -494,6 +499,8 @@ if [ "$MODE" = "aab" ]; then
 else
   if [ "$SIGNED" -eq 1 ]; then
     OUT_FILE="$RELEASE_OUT_DIR/dabney-demo-release.apk"
+  elif [ "${SKIP_DEBUG_SIGN:-0}" = "1" ]; then
+    OUT_FILE="$RELEASE_OUT_DIR/dabney-demo-unsigned.apk"
   else
     OUT_FILE="$RELEASE_OUT_DIR/dabney-demo-emulator.apk"
   fi
