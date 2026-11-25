@@ -6,6 +6,7 @@
 
 use leptos::prelude::*;
 
+use crate::mental_health_cgm::{downsample_readings_for_chart, select_notable_spike_peaks};
 use crate::mental_health_lingo::{LingoReading, MentalHealthCheckIn};
 
 /// Interleaved `[x, y, z, r, g, b, a]` geometry buffers ready for WebGL2 upload.
@@ -125,10 +126,12 @@ pub fn build_lingo_3d_scene(
         [0.20, 0.83, 0.60, 0.14],
     );
 
-    // 3. 3D Glucose ribbon + translucent curtain + spike diamonds
+    // 3. 3D Glucose ribbon + translucent curtain + spike diamonds (bounded for multi-week traces)
+    let plot_readings = downsample_readings_for_chart(readings, 320);
+    let spike_peaks = select_notable_spike_peaks(readings, 36);
     let z_front = 0.08_f32;
     let z_back = -0.08_f32;
-    for pair in readings.windows(2) {
+    for pair in plot_readings.windows(2) {
         let a = &pair[0];
         let b = &pair[1];
         let x0 = x_for(a.hour_offset);
@@ -179,7 +182,7 @@ pub fn build_lingo_3d_scene(
         );
     }
 
-    for r in readings.iter().filter(|r| r.glucose_mg_dl > 140.0) {
+    for r in &spike_peaks {
         let x = x_for(r.hour_offset);
         let y = y_for_g(r.glucose_mg_dl);
         push_octahedron(

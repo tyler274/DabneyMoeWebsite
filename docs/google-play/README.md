@@ -139,3 +139,11 @@ Add these secrets to your CI environment (GitHub Actions / Gitea Actions):
 
 Remember to increment `bundle.android.versionCode` (and `version`) in
 `src-tauri/tauri.android.conf.json` for every subsequent Play Console upload.
+
+## 6. Future Google Health Connect / Apple HealthKit (Separate Personal Build)
+
+Keep `moe.dabney.demo` strictly zero-PHI with zero Health Connect permissions.
+For personal Abbott Lingo CGM validation today (via local `.csv` / Apple Health
+`export.xml` / `dabney.health_bridge.v1` JSON) and the future opt-in
+`moe.dabney.personal` Health Connect / HealthKit architecture, see
+[`../health-connect-setup.md`](../health-connect-setup.md).

@@ -124,6 +124,12 @@ See [`docs/google-play/README.md`](docs/google-play/README.md) for upload
 keystore generation, Google Play Console Data Safety & Health Apps declarations,
 and store listing copy.
 
+For validating a personal **Abbott Lingo** CGM export locally (`.csv`, Apple
+Health `export.xml`, or Health Connect JSON) and for the future **Google Health
+Connect** / **Apple HealthKit** personal build architecture (`moe.dabney.personal`,
+kept separate from the zero-PHI public demo `moe.dabney.demo`), see
+[`docs/health-connect-setup.md`](docs/health-connect-setup.md).
+
 iOS still needs Xcode (macOS only): `cargo tauri ios init && cargo tauri ios dev`.
 
 ## Testing & CI

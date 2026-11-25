@@ -5,9 +5,14 @@ use leptos_meta::{Link, Meta, Title};
 use leptos_router::components::A;
 
 use crate::mental_health_3d::LingoMood3DChart;
+#[cfg(any(feature = "hydrate", feature = "csr"))]
+use crate::mental_health_cgm::monitor_hint_from_filename;
 use crate::mental_health_cgm::{
-    parse_commercial_glucose_csv, sample_csv_for_monitor, summarize_commercial_glucose,
-    AdaTimeInRangeBar, AgpPercentileChart, GlucoseMonitor, GlucoseUnit, MeasurementMethod,
+    downsample_readings_for_chart, parse_commercial_glucose_input, sample_csv_for_monitor,
+    select_notable_spike_peaks, slice_readings_window, summarize_commercial_glucose,
+    AdaTimeInRangeBar, AgpPercentileChart, GlucoseImportDiagnostics, GlucoseMonitor, GlucoseUnit,
+    GlucoseWindow, MeasurementMethod, ValidationLevel, SAMPLE_APPLE_HEALTH_XML,
+    SAMPLE_HEALTH_BRIDGE_JSON,
 };
 use crate::mental_health_episodes::{
     summarize_episode_cadence, EpisodeActivationSection, TopCoolDownBanner,
@@ -37,9 +42,21 @@ const ROSE: &str = "#fb7185";
 const VIOLET: &str = "#a78bfa";
 const SLATE_LIGHT: &str = "#94a3b8";
 
+#[cfg(any(feature = "hydrate", feature = "csr"))]
+fn compact_textarea_preview(raw: &str) -> String {
+    if raw.len() <= 24_576 {
+        return raw.to_string();
+    }
+    let head: String = raw.lines().take(20).collect::<Vec<_>>().join("\n");
+    format!(
+        "{head}\n# … preview truncated ({:.1} KB total; full file parsed locally in memory)",
+        raw.len() as f64 / 1024.0
+    )
+}
+
 #[component]
 pub fn MentalHealthPage() -> impl IntoView {
-    let initial_import = parse_commercial_glucose_csv(SAMPLE_LINGO_CSV, None).ok();
+    let initial_import = parse_commercial_glucose_input(SAMPLE_LINGO_CSV, None).ok();
     let csv_input = RwSignal::new(SAMPLE_LINGO_CSV.to_string());
     let monitor_hint = RwSignal::new(Option::<GlucoseMonitor>::None);
     let detected_monitor = RwSignal::new(
@@ -60,8 +77,14 @@ pub fn MentalHealthPage() -> impl IntoView {
             .map(|i| i.method)
             .unwrap_or(MeasurementMethod::InterstitialCgm),
     );
+    let import_diagnostics = RwSignal::new(initial_import.as_ref().map(|i| i.diagnostics.clone()));
     let readings = RwSignal::new(initial_import.map(|i| i.readings).unwrap_or_default());
+    let window = RwSignal::new(GlucoseWindow::All);
+    let loaded_file_label = RwSignal::new(Option::<String>::None);
     let csv_error = RwSignal::new(Option::<String>::None);
+
+    let windowed_readings =
+        Signal::derive(move || slice_readings_window(&readings.get(), window.get()));
 
     let checkins = RwSignal::new(sample_checkins());
     let chart_mode = RwSignal::new(ChartViewMode::WebGl3D);
@@ -83,24 +106,34 @@ pub fn MentalHealthPage() -> impl IntoView {
     let hour_input = RwSignal::new("18.0".to_string());
     let form_status = RwSignal::new(Option::<String>::None);
 
-    let apply_glucose_text = move |raw: &str, hint: Option<GlucoseMonitor>| {
-        match parse_commercial_glucose_csv(raw, hint) {
-            Ok(parsed) => {
-                detected_monitor.set(parsed.monitor);
-                source_unit.set(parsed.source_unit);
-                measurement_method.set(parsed.method);
-                readings.set(parsed.readings);
-                csv_error.set(None);
+    let apply_glucose_text =
+        move |raw: &str, hint: Option<GlucoseMonitor>, source_label: Option<String>| {
+            match parse_commercial_glucose_input(raw, hint) {
+                Ok(parsed) => {
+                    let span_h = parsed.diagnostics.span_hours;
+                    detected_monitor.set(parsed.monitor);
+                    source_unit.set(parsed.source_unit);
+                    measurement_method.set(parsed.method);
+                    import_diagnostics.set(Some(parsed.diagnostics));
+                    readings.set(parsed.readings);
+                    loaded_file_label.set(source_label);
+                    // Default multi-week personal exports to the ATTD 14-day view so charts & AGP stay crisp.
+                    window.set(if span_h > 360.0 {
+                        GlucoseWindow::Days14
+                    } else {
+                        GlucoseWindow::All
+                    });
+                    csv_error.set(None);
+                }
+                Err(err) => {
+                    csv_error.set(Some(err));
+                }
             }
-            Err(err) => {
-                csv_error.set(Some(err));
-            }
-        }
-    };
+        };
 
     let apply_csv = move |_| {
         let raw = csv_input.get();
-        apply_glucose_text(&raw, monitor_hint.get());
+        apply_glucose_text(&raw, monitor_hint.get(), None);
     };
 
     let on_cgm_file_change = move |ev: leptos::ev::Event| {
@@ -117,6 +150,11 @@ pub fn MentalHealthPage() -> impl IntoView {
                 return;
             };
             let Some(file) = files.get(0) else { return };
+            let file_name = file.name();
+            let file_kb = file.size() / 1024.0;
+            let inferred_hint = monitor_hint
+                .get()
+                .or_else(|| monitor_hint_from_filename(&file_name));
             let Ok(reader) = web_sys::FileReader::new() else {
                 csv_error.set(Some("Could not initialize browser FileReader.".into()));
                 return;
@@ -129,8 +167,10 @@ pub fn MentalHealthPage() -> impl IntoView {
                     };
                     if let Ok(val) = r.result() {
                         if let Some(text) = val.as_string() {
-                            csv_input.set(text.clone());
-                            apply_glucose_text(&text, monitor_hint.get());
+                            csv_input.set(compact_textarea_preview(&text));
+                            let label =
+                                format!("{file_name} ({file_kb:.1} KB · on-device RAM only)");
+                            apply_glucose_text(&text, inferred_hint, Some(label));
                         }
                     }
                 },
@@ -138,7 +178,7 @@ pub fn MentalHealthPage() -> impl IntoView {
             reader.set_onload(Some(onload.as_ref().unchecked_ref()));
             onload.forget();
             if reader.read_as_text(&file).is_err() {
-                csv_error.set(Some("Could not read selected CSV file.".into()));
+                csv_error.set(Some("Could not read selected glucose file.".into()));
             }
         }
         #[cfg(not(any(feature = "hydrate", feature = "csr")))]
@@ -149,7 +189,13 @@ pub fn MentalHealthPage() -> impl IntoView {
         let sample = sample_csv_for_monitor(monitor);
         monitor_hint.set(None);
         csv_input.set(sample.to_string());
-        apply_glucose_text(sample, None);
+        apply_glucose_text(sample, None, None);
+    };
+
+    let load_raw_preset = move |sample: &'static str| {
+        monitor_hint.set(None);
+        csv_input.set(sample.to_string());
+        apply_glucose_text(sample, None, None);
     };
 
     let reset_sample = move |_| {
@@ -284,9 +330,34 @@ pub fn MentalHealthPage() -> impl IntoView {
                 })
             />
 
+            // Local personal file indicator banner (shown only when the user imports a local file)
+            {move || {
+                loaded_file_label.get().map(|label| {
+                    view! {
+                        <div class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-100">
+                            <div class="flex items-center gap-2">
+                                <span class="inline-block h-2 w-2 rounded-full bg-emerald-400"></span>
+                                <span>
+                                    <strong>"Local personal trace loaded: "</strong>
+                                    {label}
+                                    " — never uploaded or stored on any server."
+                                </span>
+                            </div>
+                            <button
+                                type="button"
+                                on:click=reset_sample
+                                class="rounded-full border border-emerald-300/40 bg-slate-950/60 px-3 py-1 font-semibold text-emerald-200 transition hover:bg-emerald-500/20"
+                            >
+                                "Wipe & restore synthetic sample"
+                            </button>
+                        </div>
+                    }
+                })
+            }}
+
             // KPI summary strip (ADA/ATTD clinical metrics across all commercial monitors)
             {move || {
-                let current_readings = readings.get();
+                let current_readings = windowed_readings.get();
                 let current_checkins = checkins.get();
                 let summary = summarize_commercial_glucose(
                     &current_readings,
@@ -352,7 +423,26 @@ pub fn MentalHealthPage() -> impl IntoView {
                             "Explore the 70–140 mg/dL tight zone with mood (emerald) and anxiety (rose) in pure-Rust WebGL2 3D or classic 2D SVG."
                         </p>
                     </div>
-                    <div class="flex flex-wrap items-center gap-4 text-xs text-slate-300">
+                    <div class="flex flex-wrap items-center gap-3 text-xs text-slate-300">
+                        <div class="inline-flex rounded-full border border-white/15 bg-slate-900/80 p-0.5" role="group" aria-label="Time window">
+                            {GlucoseWindow::ALL.into_iter().map(|w| {
+                                view! {
+                                    <button
+                                        type="button"
+                                        on:click=move |_| window.set(w)
+                                        class=move || {
+                                            if window.get() == w {
+                                                "rounded-full bg-emerald-400 px-2.5 py-1 font-semibold text-slate-950 transition"
+                                            } else {
+                                                "rounded-full px-2.5 py-1 font-medium text-slate-300 transition hover:text-white"
+                                            }
+                                        }
+                                    >
+                                        {w.label()}
+                                    </button>
+                                }
+                            }).collect_view()}
+                        </div>
                         <div class="inline-flex rounded-full border border-white/15 bg-slate-900/80 p-0.5">
                             <button
                                 type="button"
@@ -397,10 +487,10 @@ pub fn MentalHealthPage() -> impl IntoView {
                 </div>
                 {move || match chart_mode.get() {
                     ChartViewMode::WebGl3D => view! {
-                        <LingoMood3DChart readings=readings.into() checkins=checkins.into() />
+                        <LingoMood3DChart readings=windowed_readings checkins=checkins.into() />
                     }.into_any(),
                     ChartViewMode::Svg2D => view! {
-                        <LingoMoodTimelineChart readings=readings.get() checkins=checkins.get() />
+                        <LingoMoodTimelineChart readings=windowed_readings.get() checkins=checkins.get() />
                     }.into_any(),
                 }}
             </section>
@@ -408,7 +498,7 @@ pub fn MentalHealthPage() -> impl IntoView {
             // Clinical ADA 5-Band Time-in-Range + 24-Hour Ambulatory Glucose Profile (AGP)
             {move || {
                 summarize_commercial_glucose(
-                    &readings.get(),
+                    &windowed_readings.get(),
                     detected_monitor.get(),
                     source_unit.get(),
                     measurement_method.get(),
@@ -416,10 +506,11 @@ pub fn MentalHealthPage() -> impl IntoView {
                 .map(|summary| {
                     let bins = summary.agp_hourly.clone();
                     let device_badge = format!(
-                        "{} · {} · source {}",
+                        "{} · {} · {} · window {}",
                         summary.monitor.display_name(),
                         summary.method.label(),
                         summary.source_unit.label(),
+                        window.get().label(),
                     );
                     view! {
                         <section class="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-5">
@@ -440,7 +531,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                             <div class="rounded-xl border border-white/10 bg-slate-950/60 p-4">
                                 <div class="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
                                     <span class="font-medium text-slate-200">"24-Hour AGP Percentile Ribbon (p5–p95 outer · p25–p75 IQR · p50 median)"</span>
-                                    <span>"Clock hour (00:00–23:00)"</span>
+                                    <span>"Local clock hour (00:00–23:00)"</span>
                                 </div>
                                 <AgpPercentileChart bins=bins />
                             </div>
@@ -608,14 +699,24 @@ pub fn MentalHealthPage() -> impl IntoView {
 
                 <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
                     <div class="mb-1 flex flex-wrap items-center justify-between gap-2">
-                        <h2 class="text-lg font-semibold text-white">"Commercial CGM & BGM Import"</h2>
+                        <h2 class="text-lg font-semibold text-white">"Abbott Lingo & Commercial CGM Import"</h2>
                         <span class="rounded-full border border-white/10 bg-slate-900 px-2.5 py-0.5 text-[11px] text-cyan-300">
                             {move || format!("{} ({})", detected_monitor.get().display_name(), source_unit.get().label())}
                         </span>
                     </div>
                     <p class="mb-3 text-sm text-slate-400">
-                        "Upload or paste CSV exports from Abbott Lingo, FreeStyle LibreView, Dexcom G6/G7/Stelo Clarity, Medtronic CareLink, Eversense, Tandem, Omnipod/Glooko/Tidepool, or fingerstick BGMs (mg/dL or mmol/L)."
+                        "Load personal exports locally (never uploaded): Abbott Lingo native CSV, Apple Health export.xml, Health Connect JSON (`dabney.health_bridge.v1`), FreeStyle LibreView, Dexcom Clarity/Stelo, Medtronic CareLink, Eversense, Tandem, Glooko/Tidepool, or BGM CSV."
                     </p>
+                    <details class="mb-3 rounded-xl border border-cyan-400/20 bg-cyan-500/5 px-3.5 py-2.5 text-xs text-slate-300">
+                        <summary class="cursor-pointer font-semibold text-cyan-200">
+                            "How to export from Abbott Lingo today (+ Health Connect / HealthKit plan)"
+                        </summary>
+                        <ol class="mt-2 list-decimal space-y-1 pl-4 text-[11px] leading-relaxed text-slate-300">
+                            <li>"Open the Abbott Lingo app → You → Profile → Actions → Export your glucose data → Download file (5-min ISO-8601 CSV)."</li>
+                            <li>"Select that `.csv` below (or an iOS Apple Health `export.xml` or Health Connect JSON) — everything parses locally in Rust/WASM and stays in device RAM."</li>
+                            <li>"Future direct Google Health Connect (Android) & Apple HealthKit (iOS) sync will live in the separate personal build (`moe.dabney.personal`) and feed this exact `dabney.health_bridge.v1` JSON schema, keeping the public Play Store demo (`moe.dabney.demo`) strictly zero-PHI."</li>
+                        </ol>
+                    </details>
                     <div class="mb-3 flex flex-wrap gap-1.5">
                         <button
                             type="button"
@@ -623,6 +724,20 @@ pub fn MentalHealthPage() -> impl IntoView {
                             class="rounded-full border border-white/15 px-2.5 py-1 text-[11px] text-slate-200 transition hover:bg-white/10"
                         >
                             "Abbott Lingo"
+                        </button>
+                        <button
+                            type="button"
+                            on:click=move |_| load_raw_preset(SAMPLE_HEALTH_BRIDGE_JSON)
+                            class="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-200 transition hover:bg-emerald-500/20"
+                        >
+                            "Health Connect JSON"
+                        </button>
+                        <button
+                            type="button"
+                            on:click=move |_| load_raw_preset(SAMPLE_APPLE_HEALTH_XML)
+                            class="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-1 text-[11px] text-cyan-200 transition hover:bg-cyan-500/20"
+                        >
+                            "Apple Health XML"
                         </button>
                         <button
                             type="button"
@@ -670,17 +785,17 @@ pub fn MentalHealthPage() -> impl IntoView {
                             </select>
                         </label>
                         <label class="block text-[11px] text-slate-300">
-                            "Upload CSV file (stays in browser)"
+                            "Select file (.csv, .xml, .json — stays on device)"
                             <input
                                 type="file"
-                                accept=".csv,.txt"
+                                accept=".csv,.txt,.json,.xml,text/csv,application/json,application/xml,text/xml"
                                 on:change=on_cgm_file_change
                                 class="mt-1 block w-full text-xs text-slate-300 file:mr-2 file:rounded-full file:border-0 file:bg-cyan-500 file:px-3 file:py-1 file:text-xs file:font-semibold file:text-slate-950 hover:file:bg-cyan-400"
                             />
                         </label>
                     </div>
                     <textarea
-                        rows="6"
+                        rows="5"
                         prop:value=move || csv_input.get()
                         on:input=move |ev| csv_input.set(event_target_value(&ev))
                         class="w-full rounded-xl border border-white/10 bg-slate-950 p-3 font-mono text-xs text-slate-200"
@@ -691,12 +806,15 @@ pub fn MentalHealthPage() -> impl IntoView {
                             on:click=apply_csv
                             class="rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
                         >
-                            "Parse Glucose CSV"
+                            "Parse & Validate Export"
                         </button>
                         {move || csv_error.get().map(|err| view! {
                             <span class="text-xs text-rose-400">{err}</span>
                         })}
                     </div>
+                    {move || import_diagnostics.get().map(|diag| view! {
+                        <ImportValidationPanel diagnostics=diag />
+                    })}
                 </section>
             </div>
 
@@ -710,7 +828,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                         </p>
                     </div>
                     {move || {
-                        let corr = correlate_glucose_and_mood(&readings.get(), &checkins.get());
+                        let corr = correlate_glucose_and_mood(&windowed_readings.get(), &checkins.get());
                         let href = csv_data_uri(&export_correlations_csv(&corr));
                         view! {
                             <a
@@ -736,7 +854,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                         </thead>
                         <tbody class="divide-y divide-white/5 text-slate-200">
                             {move || {
-                                let corr = correlate_glucose_and_mood(&readings.get(), &checkins.get());
+                                let corr = correlate_glucose_and_mood(&windowed_readings.get(), &checkins.get());
                                 corr.into_iter().map(|row| {
                                     let badge = if row.spike_adjacent {
                                         view! {
@@ -791,7 +909,7 @@ pub fn MentalHealthPage() -> impl IntoView {
             <SupportAndClinicianBriefSection
                 glucose_summary=Signal::derive(move || {
                     summarize_commercial_glucose(
-                        &readings.get(),
+                        &windowed_readings.get(),
                         detected_monitor.get(),
                         source_unit.get(),
                         measurement_method.get(),
@@ -842,6 +960,104 @@ fn MetricCard(
 }
 
 #[component]
+fn ImportValidationPanel(diagnostics: GlucoseImportDiagnostics) -> impl IntoView {
+    let format_label = diagnostics.format.label();
+    let span_text = if diagnostics.span_hours >= 48.0 {
+        format!("{:.1}d", diagnostics.span_hours / 24.0)
+    } else {
+        format!("{:.1}h", diagnostics.span_hours)
+    };
+    let cadence_text = diagnostics
+        .median_interval_minutes
+        .map(|m| format!("{m:.1} min"))
+        .unwrap_or_else(|| "—".to_string());
+    let range_text = match (&diagnostics.first_timestamp, &diagnostics.last_timestamp) {
+        (Some(first), Some(last)) => format!("{first} → {last}"),
+        _ => "—".to_string(),
+    };
+    let sources_text = if diagnostics.detected_sources.is_empty() {
+        None
+    } else {
+        Some(diagnostics.detected_sources.join(", "))
+    };
+    let warnings = diagnostics.sample_warnings;
+    let checks = diagnostics.checks;
+
+    view! {
+        <div class="mt-4 rounded-xl border border-white/10 bg-slate-950/70 p-3.5 space-y-2.5 text-xs">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+                <span class="font-semibold text-white">"Import Validation Report"</span>
+                <span class="rounded-full border border-cyan-400/25 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-medium text-cyan-200">
+                    {format_label}
+                </span>
+            </div>
+            <div class="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
+                <div class="rounded-lg border border-white/5 bg-slate-900/70 px-2.5 py-1.5">
+                    <p class="text-slate-400">"Parsed"</p>
+                    <p class="font-mono font-semibold text-white">{diagnostics.parsed_readings}</p>
+                </div>
+                <div class="rounded-lg border border-white/5 bg-slate-900/70 px-2.5 py-1.5">
+                    <p class="text-slate-400">"Span"</p>
+                    <p class="font-mono font-semibold text-cyan-200">{span_text}</p>
+                </div>
+                <div class="rounded-lg border border-white/5 bg-slate-900/70 px-2.5 py-1.5">
+                    <p class="text-slate-400">"Cadence"</p>
+                    <p class="font-mono font-semibold text-emerald-200">{cadence_text}</p>
+                </div>
+                <div class="rounded-lg border border-white/5 bg-slate-900/70 px-2.5 py-1.5">
+                    <p class="text-slate-400">"Sentinels / Skipped"</p>
+                    <p class="font-mono font-semibold text-amber-200">
+                        {format!("{} / {}", diagnostics.bounded_sentinels, diagnostics.skipped_invalid_rows)}
+                    </p>
+                </div>
+            </div>
+            <p class="font-mono text-[10px] text-slate-400 break-all">{range_text}</p>
+            {sources_text.map(|s| view! {
+                <p class="text-[11px] text-slate-300">
+                    <span class="text-slate-400">"Detected source(s): "</span>
+                    <span class="font-mono text-cyan-200">{s}</span>
+                </p>
+            })}
+            <ul class="space-y-1.5">
+                {checks.into_iter().map(|chk| {
+                    let (badge_cls, badge_txt) = match chk.level {
+                        ValidationLevel::Pass => (
+                            "bg-emerald-500/15 text-emerald-300 border-emerald-400/25",
+                            "PASS",
+                        ),
+                        ValidationLevel::Warn => (
+                            "bg-amber-500/15 text-amber-300 border-amber-400/25",
+                            "WARN",
+                        ),
+                        ValidationLevel::Info => (
+                            "bg-cyan-500/15 text-cyan-200 border-cyan-400/25",
+                            "INFO",
+                        ),
+                    };
+                    view! {
+                        <li class="flex items-start gap-2 text-[11px] text-slate-300">
+                            <span class=format!("mt-0.5 shrink-0 rounded border px-1.5 py-0.5 font-mono text-[9px] font-semibold {badge_cls}")>
+                                {badge_txt}
+                            </span>
+                            <span>
+                                <strong class="text-slate-100">{chk.name}": "</strong>
+                                {chk.detail}
+                            </span>
+                        </li>
+                    }
+                }).collect_view()}
+            </ul>
+            {(!warnings.is_empty()).then(|| view! {
+                <div class="rounded-lg border border-amber-400/25 bg-amber-500/10 p-2 text-[11px] text-amber-200 space-y-0.5">
+                    <p class="font-semibold">"Sample row notices:"</p>
+                    {warnings.into_iter().map(|w| view! { <p class="font-mono text-[10px]">{w}</p> }).collect_view()}
+                </div>
+            })}
+        </div>
+    }
+}
+
+#[component]
 fn LingoMoodTimelineChart(
     readings: Vec<LingoReading>,
     checkins: Vec<MentalHealthCheckIn>,
@@ -882,7 +1098,10 @@ fn LingoMoodTimelineChart(
     let band_bottom = y_for_g(70.0);
     let band_h = (band_bottom - band_top).max(1.0);
 
-    let points: String = readings
+    let plot_readings = downsample_readings_for_chart(&readings, 360);
+    let spike_peaks = select_notable_spike_peaks(&readings, 36);
+
+    let points: String = plot_readings
         .iter()
         .map(|r| {
             format!(
@@ -927,8 +1146,8 @@ fn LingoMoodTimelineChart(
                 points=points
             />
 
-            // Spike markers (> 140 mg/dL)
-            {readings.into_iter().filter(|r| r.glucose_mg_dl > 140.0).map(|r| {
+            // Spike markers (> 140 mg/dL local peaks)
+            {spike_peaks.into_iter().map(|r| {
                 let cx = x_for(r.hour_offset);
                 let cy = y_for_g(r.glucose_mg_dl);
                 view! {
@@ -953,10 +1172,18 @@ fn LingoMoodTimelineChart(
             // X-axis labels
             <text x=pad_l y=height - 8.0 fill=SLATE_LIGHT font-size="10">"0h"</text>
             <text x=pad_l + plot_w / 2.0 y=height - 8.0 text-anchor="middle" fill=SLATE_LIGHT font-size="10">
-                {format!("{:.0}h", max_hour / 2.0)}
+                {if max_hour >= 72.0 {
+                    format!("{:.1}d", (max_hour / 2.0) / 24.0)
+                } else {
+                    format!("{:.0}h", max_hour / 2.0)
+                }}
             </text>
             <text x=width - pad_r y=height - 8.0 text-anchor="end" fill=SLATE_LIGHT font-size="10">
-                {format!("{:.0}h", max_hour)}
+                {if max_hour >= 72.0 {
+                    format!("{:.1}d", max_hour / 24.0)
+                } else {
+                    format!("{:.0}h", max_hour)
+                }}
             </text>
         </svg>
     }
@@ -1038,9 +1265,8 @@ mod tests {
 
     #[test]
     fn mental_health_chart_and_metrics_render_cleanly() {
-        let readings = parse_commercial_glucose_csv(SAMPLE_LINGO_CSV, None)
-            .unwrap()
-            .readings;
+        let import = parse_commercial_glucose_input(SAMPLE_LINGO_CSV, None).unwrap();
+        let readings = import.readings;
         let checkins = sample_checkins();
         let html = view! {
             <LingoMoodTimelineChart readings=readings checkins=checkins />
@@ -1050,6 +1276,13 @@ mod tests {
         assert!(html.contains("<polyline"));
         assert!(html.contains("140"));
         assert!(html.contains("70"));
+
+        let diag_html = view! {
+            <ImportValidationPanel diagnostics=import.diagnostics />
+        }
+        .to_html();
+        assert!(diag_html.contains("Import Validation Report"));
+        assert!(diag_html.contains("Timestamps &amp; Chronology"));
 
         let trend_html = view! {
             <Phq9Gad7TrendChart series=sample_assessment_history() />

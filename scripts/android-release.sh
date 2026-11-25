@@ -274,12 +274,18 @@ if signed and 'signingConfigs' not in gradle:
 if signed and 'signingConfig = signingConfigs.getByName("release")' not in gradle:
     gradle, count = re.subn(
         r'(getByName\("release"\)\s*\{)',
-        r'\1\n            signingConfig = signingConfigs.getByName("release")',
+        r'\1\n            if (rootProject.file("keystore.properties").exists()) {\n                signingConfig = signingConfigs.getByName("release")\n            }',
         gradle,
         count=1,
     )
     if count != 1:
         raise SystemExit(f"Could not locate getByName(\"release\") block in {gradle_path}")
+elif 'if (rootProject.file("keystore.properties").exists())' not in gradle and 'signingConfig = signingConfigs.getByName("release")' in gradle:
+    gradle = gradle.replace(
+        'signingConfig = signingConfigs.getByName("release")',
+        'if (rootProject.file("keystore.properties").exists()) {\n                signingConfig = signingConfigs.getByName("release")\n            }',
+        1,
+    )
 
 gradle_path.write_text(gradle, encoding="utf-8")
 
@@ -411,12 +417,12 @@ PY
 if [ "$MODE" = "apk" ] && command -v aapt2 >/dev/null 2>&1; then
   echo "==> Verifying APK manifest & permissions via aapt2"
   BADGING="$(aapt2 dump badging "$ARTIFACT")"
-  echo "$BADGING" | grep -E "^(package:|sdkVersion:|targetSdkVersion:|application-label:|uses-permission:)" || true
-  if ! echo "$BADGING" | grep -q "package: name='$EXPECTED_PACKAGE'"; then
+  grep -E "^(package:|sdkVersion:|targetSdkVersion:|application-label:|uses-permission:)" <<< "$BADGING" || true
+  if [[ "$BADGING" != *"package: name='$EXPECTED_PACKAGE'"* ]]; then
     echo "Unexpected APK package name (expected $EXPECTED_PACKAGE)" >&2
     exit 1
   fi
-  if echo "$BADGING" | grep -qE "android\.permission\.(health\.|CAMERA|RECORD_AUDIO|ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION|READ_CONTACTS)"; then
+  if grep -qE "android\.permission\.(health\.|CAMERA|RECORD_AUDIO|ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION|READ_CONTACTS)" <<< "$BADGING"; then
     echo "Forbidden permission detected in built APK!" >&2
     exit 1
   fi
@@ -430,8 +436,8 @@ if [ "$SIGNED" -eq 1 ]; then
     # Google Play upload certificates are self-signed (Play App Signing re-signs
     # with Google's distribution key), so omit `-strict` which fails on self-signed certs.
     VERIFY_OUT="$(jarsigner -verify "$ARTIFACT")"
-    echo "$VERIFY_OUT"
-    if ! echo "$VERIFY_OUT" | grep -q "jar verified"; then
+    head -n 10 <<< "$VERIFY_OUT"
+    if [[ "$VERIFY_OUT" != *"jar verified."* ]]; then
       echo "AAB signature verification failed!" >&2
       exit 1
     fi
