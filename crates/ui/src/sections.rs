@@ -620,10 +620,6 @@ pub fn Footer() -> impl IntoView {
                     <span class="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
                         <A href="/privacy" attr:class="hover:text-slate-300">"Privacy"</A>
                         <span class="text-slate-700">"·"</span>
-                        <A href="/community-policy" attr:class="hover:text-slate-300">"Community policy"</A>
-                        <span class="text-slate-700">"·"</span>
-                        <a href="/community-activity" class="hover:text-slate-300">"Community activity"</a>
-                        <span class="text-slate-700">"·"</span>
                         <A href="/creators" attr:class="hover:text-slate-300">"Creators"</A>
                         <span class="text-slate-700">"·"</span>
                         <A href="/ownership" attr:class="hover:text-slate-300">"Code ownership"</A>

@@ -6,16 +6,11 @@
 //! - `hydrate` : browser hydration of the server-rendered HTML.
 //! - `csr`     : pure client-side rendering for the Tauri (Trunk) build.
 
-pub mod activity_snapshot;
-#[cfg(feature = "ssr")]
-pub mod activity_source;
 pub mod analytics;
 pub mod android_download;
 pub mod clinical;
 pub mod commissions;
 pub mod commissions_data;
-pub mod community_activity;
-pub mod community_policy;
 pub mod consent;
 pub mod creators;
 pub mod data;
@@ -48,7 +43,6 @@ use leptos_router::StaticSegment;
 
 use analytics::{AnalyticsHead, AnalyticsRuntime};
 use commissions::{ArtworkPage, LapidaryPage, SongsPage};
-use community_policy::CommunityPolicyPage;
 use consent::{provide_consent_context, ConsentBanner};
 use privacy::PrivacyPage;
 use tools::InvestmentAccountPage;
@@ -149,8 +143,6 @@ pub fn AppWithMode(mode: AppShellMode) -> impl IntoView {
                     <Route path=StaticSegment("mental-health") view=mental_health::MentalHealthPage />
                     <Route path=StaticSegment("ownership") view=ownership::OwnershipReportPage />
                     <Route path=StaticSegment("creators") view=creators::CreatorsPage />
-                    <Route path=StaticSegment("community-policy") view=CommunityPolicyPage />
-                    <Route path=StaticSegment("community-activity") view=community_activity::CommunityActivityPage ssr=leptos_router::SsrMode::Async />
                     <Route
                         path=(StaticSegment("tools"), StaticSegment("investment-account"))
                         view=InvestmentAccountPage

@@ -67,9 +67,6 @@ async fn main() {
 
     let app = web::mount_clinical_api_routes(Router::new(), clinical_api_proxy)
         .merge(site_routes)
-        .layer(axum::middleware::from_fn(
-            web::community_activity::privacy_headers,
-        ))
         .layer(SetRequestIdLayer::new(
             HeaderName::from_static("x-request-id"),
             MakeRequestUuid,

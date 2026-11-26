@@ -6150,7 +6150,6 @@ dependencies = [
  "leptos_router",
  "serde",
  "serde_json",
- "tokio",
  "wasm-bindgen",
  "web-sys",
 ]

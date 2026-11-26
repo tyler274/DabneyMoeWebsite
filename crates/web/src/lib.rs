@@ -7,8 +7,6 @@
 
 #[cfg(feature = "ssr")]
 pub mod clinical_proxy;
-#[cfg(feature = "ssr")]
-pub mod community_activity;
 
 #[cfg(feature = "hydrate")]
 #[wasm_bindgen::prelude::wasm_bindgen]
@@ -32,10 +30,17 @@ where
             "This page has been removed.",
         )
     }
-    router
-        .route("/koizetsu", axum::routing::get(gone))
-        .route("/koizetsu/", axum::routing::get(gone))
+    REMOVED_PAGES.iter().fold(router, |router, page| {
+        router
+            .route(page, axum::routing::get(gone))
+            .route(&format!("{page}/"), axum::routing::get(gone))
+    })
 }
+
+/// Paths of pages taken off the site; each answers 410 Gone, with or without a
+/// trailing slash.
+#[cfg(feature = "ssr")]
+const REMOVED_PAGES: [&str; 3] = ["/koizetsu", "/community-policy", "/community-activity"];
 
 #[cfg(feature = "ssr")]
 pub fn mount_ownership_json<S>(router: axum::Router<S>) -> axum::Router<S>
@@ -102,7 +107,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn removed_creator_page_is_gone_without_content_or_navigation() {
+    async fn removed_pages_are_gone_without_content_or_navigation() {
         use leptos::prelude::LeptosOptions;
         use leptos_axum::LeptosRoutes;
 
@@ -113,7 +118,15 @@ mod tests {
                 move || ui::shell(options.clone())
             })
             .with_state(options);
-        for path in ["/koizetsu", "/koizetsu/", "/koizetsu?source=old-link"] {
+        for path in [
+            "/koizetsu",
+            "/koizetsu/",
+            "/koizetsu?source=old-link",
+            "/community-policy",
+            "/community-policy/",
+            "/community-activity",
+            "/community-activity/",
+        ] {
             for method in [Method::GET, Method::HEAD] {
                 let response = app
                     .clone()
@@ -146,10 +159,15 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
-        assert!(!String::from_utf8(body.to_vec())
-            .unwrap()
-            .to_lowercase()
-            .contains("koizetsu"));
+        let home = String::from_utf8(body.to_vec()).unwrap().to_lowercase();
+        for removed in [
+            "koizetsu",
+            "community-policy",
+            "community-activity",
+            "discord",
+        ] {
+            assert!(!home.contains(removed), "home still mentions {removed}");
+        }
     }
 
     #[tokio::test]
@@ -231,117 +249,6 @@ mod tests {
                 assert!(head.contains("Tyler Port - Freelance Software Engineer"));
                 assert!(head.contains("https://dabney.moe/photos/tyler-dunes.jpg"));
                 assert!(!head.contains("mnnaz05"));
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn community_policy_is_server_rendered_and_linked_from_home() {
-        use leptos::prelude::LeptosOptions;
-        use leptos_axum::LeptosRoutes;
-
-        let options = LeptosOptions::builder().output_name("dabney").build();
-        let app = Router::new()
-            .leptos_routes(&options, generate_route_list(App), {
-                let options = options.clone();
-                move || ui::shell(options.clone())
-            })
-            .with_state(options);
-
-        for path in ["/community-policy", "/"] {
-            let response = app
-                .clone()
-                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK, "{path}");
-            let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
-            let html = String::from_utf8(body.to_vec()).unwrap();
-            assert!(html.contains("href=\"/community-policy\""), "{path}");
-            assert!(html.contains("Community policy"), "{path}");
-            if path == "/community-policy" {
-                for text in [
-                    "Community Data and Sharing Policy",
-                    "outside Discord",
-                    "any previous AI use are not yet documented",
-                    "not a complete data-handling disclosure",
-                    "AI model training or fine-tuning",
-                    "AI retrieval or reference, human training, and memorial preservation",
-                    "intended purposes, not a claim",
-                    "consent controls are implemented",
-                    "Accepting the server rules is permission to archive and publicly publish",
-                    "Remaining in the server without accepting the rules is not consent",
-                    "is not permission to use them for AI",
-                    "impersonate a participant with AI",
-                    "each require separate, affirmative permission",
-                    "Public sharing by accepting the server rules",
-                    "Since November 22, 2026",
-                    "Your Discord display name and user ID",
-                    "which search engines may also index",
-                    "Only messages from authors who have accepted the rules are published",
-                    "consent to publication is not consent to an AI or training use",
-                    "covers messages you posted before accepting",
-                    "Until a member accepts, their earlier messages are not covered",
-                    "continued membership, or silence is not acceptance",
-                    "Public posting rests on acceptance of the server rules",
-                    "private health, legal, or contact",
-                    "Contact server moderators",
-                    "Deletion capabilities and timelines",
-                    "does not promise deletion from every copy",
-                    "model unlearning",
-                    "We cannot guarantee removal",
-                    "new uses require renewed permission",
-                    "Silence is not agreement",
-                    "all server messages are logged",
-                    "logging alone is not permission for public posting or AI uses",
-                    "Community activity dashboard",
-                    "Public dashboard snapshots will not include any of that material",
-                    "Server message logging and the separately tracked searchable archive are not part",
-                    "planned community activity dashboard",
-                    "does not establish that a listener is active",
-                    "message bodies, attachments, searchable conversation archives, tokens",
-                    "private consent records, or backup material",
-                    "separately tracked searchable archive",
-                    "does not authorize posting chats",
-                    "Contributing to aggregate activity statistics",
-                    "Publishing identified message counts",
-                    "Collecting Discord-reported presence",
-                    "Publishing identified presence history",
-                    "Agreement to one scope does not authorize another",
-                    "Participation in the community does not require opting in",
-                    "Public-sharing permission must explicitly cover persistent historical downloads",
-                    "earlier, narrower explanation does not by itself authorize this expanded scope",
-                    "Publication delay and dashboard visibility",
-                    "at least one hour after that observation",
-                    "delay applies before public snapshot uploads to Git LFS",
-                    "rolling seven-day window",
-                    "not a promise to delete previously published data after seven days",
-                    "Presence describes what Discord reported",
-                    "unknown, not as inferred inactivity",
-                    "not reconstruct historical presence from message timestamps",
-                    "suppress aggregates that could expose nonparticipants or unsafe small groups",
-                    "Public snapshots and published history",
-                    "LFS pointers, and LFS objects may remain accessible",
-                    "does not reliably erase the underlying published objects",
-                    "(noindex) do not control historical downloads or prevent copying",
-                    "no automatic seven-day purge of published history",
-                    "do not guarantee that published history will remain available forever",
-                    "Activity withdrawal and removal",
-                    "withdraw any activity scope independently through its announced controls",
-                    "contacting server moderators privately",
-                    "Withdrawal stops the affected collection",
-                    "excludes the affected data from future published snapshots",
-                    "remove affected individual information from the current dashboard",
-                    "invalidate its current serving caches",
-                    "must not reinstate withdrawn permission",
-                    "Withdrawal does not reliably erase snapshots already published",
-                    "Those copies may remain accessible after withdrawal",
-                    "does not authorize AI training, AI retrieval, impersonation, public conversations",
-                    "Material expansions require renewed affirmative permission",
-                    "href=\"https://github.com/tyler274/DabneyMoeWebsite\"",
-                ] {
-                    assert!(html.contains(text), "missing policy text: {text}");
-                }
             }
         }
     }
