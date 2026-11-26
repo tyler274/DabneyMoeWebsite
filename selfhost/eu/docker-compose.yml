@@ -9,7 +9,7 @@
 #   valkey         Valkey 8, in-memory only
 #   attic          Nix binary cache
 #   pocket-id      OIDC provider with passkeys
-#   physician-sample, physician-worker, duet-api   Curie demo (profile "curie")
+#   physician-sample, physician-worker, mobile-api   Curie demo (profile "curie")
 #
 # Public, demo and non-PHI only: nothing in this stack may receive protected
 # health information.
@@ -26,7 +26,7 @@
 #   secrets/attic.env      attic database URL + RS256 token signing key
 #   secrets/curie.env       Curie demo DB URLs + MAIL_SMTP_* (consumed by
 #                          dabney-moe's mail-relay binary and by physician-sample /
-#                          duet-api once wired to SmtpRelayConfig::from_env)
+#                          mobile-api once wired to SmtpRelayConfig::from_env)
 #
 # Networks:
 #   edge      Caddy and its HTTP upstreams only
@@ -123,7 +123,7 @@ services:
     environment:
       # POSTGRES_PASSWORD and the per-service *_DB_PASSWORD values come from
       # secrets/postgres.env; postgres-init creates one database and role per service.
-      POSTGRES_SERVICE_DATABASES: forge attic pocketid physician duet
+      POSTGRES_SERVICE_DATABASES: forge attic pocketid physician mobile
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
@@ -232,18 +232,18 @@ services:
       valkey:
         condition: service_healthy
 
-  duet-api:
+  mobile-api:
     <<: *restart
     profiles: ["curie"]
-    image: ${DUET_IMAGE:-duet-api:latest}
+    image: ${MOBILE_API_IMAGE:-mobile-api:latest}
     env_file:
       - path: ./secrets/curie.env
         required: false
     expose:
       - "8080"
     environment:
-      DUET_LISTEN_ADDR: 0.0.0.0:8080
-      DUET_PUBLIC_ORIGIN: https://api.${SITE_DOMAIN:-dabney.moe}
+      MOBILE_LISTEN_ADDR: 0.0.0.0:8080
+      MOBILE_PUBLIC_ORIGIN: https://api.${SITE_DOMAIN:-dabney.moe}
     networks:
       - edge
       - internal

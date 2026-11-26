@@ -82,5 +82,5 @@ app.{$SITE_DOMAIN:dabney.moe} {
 
 api.{$SITE_DOMAIN:dabney.moe} {
 	import common
-	reverse_proxy duet-api:8080
+	reverse_proxy mobile-api:8080
 }
