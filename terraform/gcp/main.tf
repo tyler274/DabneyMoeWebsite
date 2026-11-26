@@ -18,19 +18,27 @@ terraform {
       source  = "grafana/grafana"
       version = "~> 3.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 }
 
 provider "google" {
-  project = var.project_id
-  region  = var.region
+  project                         = var.project_id
+  region                          = var.region
+  billing_project                 = var.project_id
+  user_project_override           = true
+  add_terraform_attribution_label = false
 }
 
 # DNS for the custom domain lives in Cloudflare. The token only needs
-# Zone:DNS:Edit on the dabney.moe zone. When enable_cloudflare_dns = false the
-# token may be empty (no Cloudflare resources are created).
+# Zone:DNS:Edit on the dabney.moe zone (plus Zone Settings, Cache Rules, Single
+# Redirect, Zone WAF, and Bot Management when enable_cloudflare_edge_protection
+# is true). When enable_cloudflare_dns = false the token may be empty.
 provider "cloudflare" {
-  api_token = var.cloudflare_api_token
+  api_token = var.enable_cloudflare_dns && nonsensitive(var.cloudflare_api_token != "") ? var.cloudflare_api_token : null
 }
 
 # Doppler is the system of record for the deploy/runtime secrets. Authenticated
@@ -39,17 +47,20 @@ provider "cloudflare" {
 # TF_VAR_* (kept out of VCS); thereafter they can be read back into Terraform
 # with `doppler run --name-transformer tf-var -- tofu apply`.
 provider "doppler" {
-  doppler_token = var.doppler_token
+  doppler_token = local.doppler_enabled ? var.doppler_token : "disabled"
 }
 
 locals {
   # Runtime env for the SSR server. LEPTOS_SITE_ROOT is intentionally NOT set
   # here: the Nix image already points it at the in-store asset bundle. We only
   # pin the values that should be visible/overridable at the infra layer.
+  # When Anubis fronts ingress on :8080, dabney-web listens on internal port
+  # 3039 (bound to 0.0.0.0 so Cloud Run's TCP startup probe can reach it;
+  # Cloud Run only exposes the ingress container's port externally).
   leptos_env = merge({
     LEPTOS_OUTPUT_NAME  = "dabney"
     LEPTOS_SITE_PKG_DIR = "pkg"
-    LEPTOS_SITE_ADDR    = "0.0.0.0:8080"
+    LEPTOS_SITE_ADDR    = var.enable_anubis ? "0.0.0.0:${local.anubis_app_port}" : "0.0.0.0:8080"
     LEPTOS_ENV          = "PROD"
     RUST_LOG            = "info"
     }, var.ga4_measurement_id != "" ? {
@@ -62,23 +73,31 @@ locals {
 module "site" {
   source = "../modules/gcp-cloudrun"
 
-  project_id    = var.project_id
-  region        = var.region
-  image         = var.image
-  env           = local.leptos_env
-  secret_env    = local.cloudrun_secret_env
+  project_id            = var.project_id
+  region                = var.region
+  image                 = var.image
+  cpu                   = var.enable_anubis ? "750m" : "1"
+  memory                = "512Mi"
+  max_instances         = var.max_instances
+  env                   = local.leptos_env
+  secret_env            = local.cloudrun_secret_env
+  anubis                = local.cloudrun_anubis_config
   service_account_email = length(google_service_account.web_runtime) > 0 ? google_service_account.web_runtime[0].email : ""
-  custom_domain = var.custom_domain
+  custom_domain         = var.custom_domain
   # DNS is managed in Cloudflare below, not Cloud DNS, so the module's own
   # Cloud DNS zone stays off regardless of var.manage_dns intent.
   manage_dns = false
   dns_root   = var.dns_root
 
-  # Cloud Run references Secret Manager versions; wait until Loki values exist.
+  # Cloud Run references Secret Manager versions; wait until secret versions
+  # and runtime SA secretAccessor IAM exist before rolling the revision.
   depends_on = [
+    google_project_iam_member.web_runtime_secret_accessor,
     google_secret_manager_secret_version.loki_url,
     google_secret_manager_secret_version.loki_user,
     google_secret_manager_secret_version.loki_token,
+    google_secret_manager_secret_version.anubis_signing_key,
+    google_secret_manager_secret_version.anubis_policy,
   ]
 }
 
@@ -111,8 +130,8 @@ resource "cloudflare_dns_record" "mapping" {
   name    = each.value.name
   type    = each.value.type
   content = each.value.content
-  ttl     = 300
-  proxied = false
+  ttl     = var.cloudflare_proxied ? 1 : 300
+  proxied = var.cloudflare_proxied
   comment = "dabney.moe Cloud Run domain mapping"
 }
 

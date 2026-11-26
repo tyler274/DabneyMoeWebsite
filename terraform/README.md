@@ -88,6 +88,31 @@ CI automates this for GCP on green `main` (see `.github/workflows/ci.yml`).
 
 - **GCP**: needs `project_id`. Enables the `run`/`artifactregistry`/`dns` APIs
   (toggle `enable_apis`). Public access is granted to `allUsers` by default.
+  With `enable_anubis = true` (off by default as a one-flag fallback behind
+  Cloudflare Free edge protection), Cloud Run deploys a multi-container
+  Gen2 revision with [Anubis](https://anubis.techaro.lol/) (`anubis` container on
+  port `8080`, mirrored into Artifact Registry as `anubis:<anubis_version>` since
+  Cloud Run disallows mixing `ghcr.io` and `pkg.dev` images in one service)
+  fronting `dabney-web` (`web` sidecar on internal port `3039`), a
+  persistent Ed25519 signing key in Secret Manager (`anubis-ed25519-key`), and
+  [`anubis/botPolicies.yaml`](../anubis/botPolicies.yaml) mounted at
+  `/etc/anubis/botPolicies.yaml` (`anubis-bot-policies`). Cloud Run
+  `session_affinity` keeps the short PoW handshake on one instance while signed
+  verification cookies validate statelessly across instances and scale-to-zero.
+  Cloud Run runs with `cpu_idle = true` (request-based billing), `max_instances = 1`
+  (80 concurrent requests), `timeout = 60s`, and `default_uri_disabled = true`
+  (when `custom_domain` is set, forcing traffic through Cloudflare).
+  Artifact Registry cleanup policies automatically retain tagged `anubis` images
+  and the 2 most recent `web` builds while pruning images older than 1 hour to
+  stay within GCP's 0.5 GiB free tier. Set `billing_account_id` (and optional
+  `monthly_budget_usd`, default `5`) to provision a GCP monthly billing budget
+  alert in [`terraform/gcp/budget.tf`](gcp/budget.tf).
+  To layer **Cloudflare Free edge protection** (unmetered DDoS, Custom WAF AI
+  scraper/scanner blocking + Managed Challenge, edge static asset caching,
+  ACME-safe HTTPS redirect, free rate limiting, and Bot Fight Mode) in front of
+  Cloud Run once Google's managed TLS cert is active, set
+  `cloudflare_proxied = true` and `enable_cloudflare_edge_protection = true`
+  (or run [`scripts/setup-cloudflare-edge.sh`](../scripts/setup-cloudflare-edge.sh)).
 - **AWS**: creates the IAM build-access role App Runner needs to pull from a
   private ECR repo.
 - **Azure**: creates a resource group, ACR (admin enabled), Log Analytics, and

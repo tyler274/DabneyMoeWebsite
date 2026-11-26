@@ -1,0 +1,58 @@
+# Anubis bot policy for dabney.moe (balanced profile).
+#
+# Mounted into the Cloud Run Anubis ingress sidecar at /etc/anubis/botPolicies.yaml
+# via GCP Secret Manager (see terraform/gcp/anubis.tf).
+#
+# Evaluation order:
+#   1. Upstream default rules: block pathological scrapers & aggressive AI bots,
+#      allow verified search engines (Google, Bing, Apple, DuckDuckGo, Kagi,
+#      Archive.org, etc.), allow /.well-known/*, /robots.txt, /favicon.ico, and
+#      weigh generic browser UAs (+10).
+#   2. Allow dabney.moe's favicon and OpenGraph preview image so link previews
+#      render cleanly on Discord, Slack, Twitter/X, LinkedIn, etc.
+#   3. Weigh unverified non-browser clients (curl/scripts/headless scrapers)
+#      that were not explicitly allowed above so they cannot bypass PoW to hit
+#      SSR pages, /coda/physician/api/*, or /api/telemetry/errors.
+
+bots:
+  - import: (data)/meta/default-config.yaml
+
+  - name: allow-og-and-favicon
+    path_regex: ^/(favicon\.png|photos/tyler-dunes\.jpg)$
+    action: ALLOW
+
+  - name: unverified-non-browser
+    expression: '!(userAgent.contains("Mozilla") || userAgent.contains("Opera"))'
+    action: WEIGH
+    weight:
+      adjust: 10
+
+# Fetch and cache OpenGraph <meta> tags from dabney-web and inject them into
+# the challenge page so social link previews work without bypassing Anubis.
+openGraph:
+  enabled: true
+  considerHost: false
+  ttl: 24h
+
+store:
+  backend: memory
+  parameters: {}
+
+thresholds:
+  - name: minimal-suspicion
+    expression: weight <= 0
+    action: ALLOW
+
+  - name: moderate-suspicion
+    expression: weight > 0 && weight < 20
+    action: CHALLENGE
+    challenge:
+      algorithm: fast
+      difficulty: 4
+
+  - name: extreme-suspicion
+    expression: weight >= 20
+    action: CHALLENGE
+    challenge:
+      algorithm: fast
+      difficulty: 6

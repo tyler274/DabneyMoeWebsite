@@ -9,6 +9,24 @@ variable "region" {
   default     = "us-central1"
 }
 
+variable "max_instances" {
+  type        = number
+  description = "Maximum Cloud Run instances (caps worst-case compute spend; 1 instance handles 80 concurrent requests)."
+  default     = 1
+}
+
+variable "billing_account_id" {
+  type        = string
+  description = "Optional GCP billing account ID (e.g. 01A29E-334D38-0B8604) to create a monthly budget alert. Empty skips budget creation."
+  default     = ""
+}
+
+variable "monthly_budget_usd" {
+  type        = number
+  description = "Monthly GCP spend alert threshold in USD when billing_account_id is set."
+  default     = 5
+}
+
 variable "image" {
   type        = string
   description = "SSR image reference incl. tag. May be empty for the phase-1 (registry-only) apply."
@@ -39,6 +57,18 @@ variable "enable_cloudflare_dns" {
   type        = bool
   description = "Create the Cloud Run domain-mapping records (and optional verification TXT) in Cloudflare."
   default     = true
+}
+
+variable "cloudflare_proxied" {
+  type        = bool
+  description = "Orange-cloud proxy dabney.moe DNS records through Cloudflare (free DDoS, CDN caching, edge rate limit). Only enable after Cloud Run's Google-managed TLS cert is active; also configures Anubis to read CF-Connecting-IP."
+  default     = false
+}
+
+variable "enable_cloudflare_edge_protection" {
+  type        = bool
+  description = "Manage Cloudflare Free-tier SSL (Full strict), ACME-safe HTTPS redirect, Anubis-safe cache rules, Custom WAF, edge rate limit, and Bot Fight Mode via Terraform."
+  default     = false
 }
 
 variable "cloudflare_api_token" {
@@ -114,8 +144,58 @@ variable "ga4_property_id" {
   default     = ""
 }
 
+variable "attach_existing_loki_secrets" {
+  type        = bool
+  description = "Attach pre-existing loki-url/loki-user/loki-token Secret Manager secrets to Cloud Run even when grafana_cloud_access_policy_token is omitted."
+  default     = false
+}
+
 variable "clinical_api_url" {
   type        = string
   description = "Optional HTTPS origin of an external clinical workspace API proxied under /clinical/api. Empty uses the embedded in-process synthetic clinical workspace API."
   default     = ""
+}
+
+# --- Anubis (PoW bot protection fallback) ------------------------------------
+
+variable "enable_anubis" {
+  type        = bool
+  description = "Optional Anubis proof-of-work ingress sidecar on Cloud Run (kept as a one-flag fallback behind Cloudflare Free edge protection)."
+  default     = false
+}
+
+variable "anubis_version" {
+  type        = string
+  description = "Anubis tag mirrored into this project's Artifact Registry repo (Cloud Run does not allow mixing ghcr.io and pkg.dev images in one multi-container service)."
+  default     = "v1.28.2"
+}
+
+variable "anubis_image" {
+  type        = string
+  description = "Optional full Artifact Registry image reference for Anubis. Empty defaults to <region>-docker.pkg.dev/<project_id>/dabney/anubis:<anubis_version>."
+  default     = ""
+}
+
+variable "anubis_cpu" {
+  type        = string
+  description = "CPU limit for the Anubis ingress container (web gets 750m when Anubis is enabled so total instance CPU stays 1 vCPU)."
+  default     = "250m"
+}
+
+variable "anubis_memory" {
+  type        = string
+  description = "Memory limit for the Anubis ingress container."
+  default     = "256Mi"
+}
+
+variable "anubis_difficulty" {
+  type        = number
+  description = "Default SHA-256 proof-of-work difficulty for Anubis challenges."
+  default     = 4
+}
+
+variable "anubis_webmaster_email" {
+  type        = string
+  description = "Contact email shown on Anubis reject pages for human appeals. Empty omits it."
+  default     = "tp@dabney.moe"
 }

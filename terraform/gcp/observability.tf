@@ -1,9 +1,10 @@
 # Grafana Cloud (EU) + GCP Secret Manager wiring for Loki log push and BigQuery analytics.
 
 locals {
-  observability_enabled = nonsensitive(var.grafana_cloud_access_policy_token != "")
-  adopt_grafana_stack   = local.observability_enabled && var.grafana_cloud_existing_stack_slug != ""
-  create_grafana_stack  = local.observability_enabled && !local.adopt_grafana_stack
+  observability_enabled  = nonsensitive(var.grafana_cloud_access_policy_token != "")
+  web_runtime_sa_enabled = local.observability_enabled || var.attach_existing_loki_secrets || var.enable_anubis
+  adopt_grafana_stack    = local.observability_enabled && var.grafana_cloud_existing_stack_slug != ""
+  create_grafana_stack   = local.observability_enabled && !local.adopt_grafana_stack
 
   grafana_stack_id = local.observability_enabled ? (
     local.adopt_grafana_stack ? data.grafana_cloud_stack.existing[0].id : grafana_cloud_stack.observability[0].id
@@ -29,7 +30,11 @@ locals {
     LOKI_URL   = { secret_id = google_secret_manager_secret.loki_url[0].secret_id }
     LOKI_USER  = { secret_id = google_secret_manager_secret.loki_user[0].secret_id }
     LOKI_TOKEN = { secret_id = google_secret_manager_secret.loki_token[0].secret_id }
-  } : {}
+  } : (var.attach_existing_loki_secrets ? {
+    LOKI_URL   = { secret_id = "loki-url" }
+    LOKI_USER  = { secret_id = "loki-user" }
+    LOKI_TOKEN = { secret_id = "loki-token" }
+  } : {})
 }
 
 provider "grafana" {
@@ -108,10 +113,10 @@ resource "grafana_cloud_stack_service_account_token" "observability" {
 # --- GCP APIs for Secret Manager + BigQuery ----------------------------------
 
 resource "google_project_service" "observability" {
-  for_each = local.observability_enabled || var.ga4_measurement_id != "" ? toset([
-    "secretmanager.googleapis.com",
-    "bigquery.googleapis.com",
-  ]) : toset([])
+  for_each = toset(concat(
+    local.observability_enabled || var.ga4_measurement_id != "" || var.attach_existing_loki_secrets || var.enable_anubis ? ["secretmanager.googleapis.com"] : [],
+    local.observability_enabled || var.ga4_measurement_id != "" ? ["bigquery.googleapis.com"] : [],
+  ))
 
   project            = var.project_id
   service            = each.value
@@ -121,7 +126,7 @@ resource "google_project_service" "observability" {
 # --- Cloud Run runtime service account -----------------------------------------
 
 resource "google_service_account" "web_runtime" {
-  count = local.observability_enabled ? 1 : 0
+  count = local.web_runtime_sa_enabled ? 1 : 0
 
   project      = var.project_id
   account_id   = "web-runtime"
@@ -129,7 +134,7 @@ resource "google_service_account" "web_runtime" {
 }
 
 resource "google_project_iam_member" "web_runtime_secret_accessor" {
-  count = local.observability_enabled ? 1 : 0
+  count = local.web_runtime_sa_enabled ? 1 : 0
 
   project = var.project_id
   role    = "roles/secretmanager.secretAccessor"
