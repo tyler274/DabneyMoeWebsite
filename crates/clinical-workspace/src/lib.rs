@@ -6,12 +6,36 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod ehr_portal;
 pub mod harness;
+pub mod passport;
+pub mod roi;
 
+pub use ehr_portal::{
+    build_smart_authorize_url, data_download_uri, default_allergies_for_patient,
+    find_portal_organization, html_escape, ingest_fhir_r4_bundle, merge_fhir_import_into_chart,
+    percent_encode, pkce_s256_challenge, portal_directory, sandbox_fhir_bundle_for_org,
+    search_portal_directory, sha256_hex, validate_smart_endpoint_url, AllergyEntry,
+    FhirImportResult, FhirResourceWarning, LinkedPortalConnection, MergeCounts,
+    PortalConnectionMode, PortalConnectionStatus, PortalOrganization, PortalVendor,
+    SmartPkceSession, SMART_READ_ONLY_SCOPES,
+};
 pub use harness::{
     build_harness_llm_prompt, format_sse_events, run_agent_turn, tool_catalog, AgentAudience,
     AgentChatRequest, AgentEvent, AgentRunOptions, AgentStep, AgentThread, AgentTool, AgentTurn,
     CitedValue, HarnessOutcome, RunBudget, ToolExecutionStatus, ToolSpec, WorkingNote,
+};
+pub use passport::{
+    build_health_passport, parse_health_passport_json, render_passport_fhir_ips_bundle,
+    render_passport_html, render_passport_markdown, HealthPassport, PassportAudience,
+    PassportPortalSummary, HEALTH_PASSPORT_SCHEMA,
+};
+pub use roi::{
+    build_roi_mailto_uri, default_roi_requests_for_patient, dispatch_roi_batch,
+    dispatch_roi_request, render_roi_cover_text, render_roi_followup_letter, render_roi_form_html,
+    revoke_roi_request, sign_roi_request, validate_roi_request, RoiBatchDispatchReport,
+    RoiDateRange, RoiDeliveryChannel, RoiDispatchItemOutcome, RoiElectronicFormat, RoiLegalBasis,
+    RoiRecipient, RoiRecordCategory, RoiRequest, RoiStatus,
 };
 
 /// Category of an individual record inside a synthetic patient chart.
@@ -1350,31 +1374,87 @@ pub mod api {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
 
-    use axum::extract::{Path, State};
+    use axum::extract::{Path, Query, State};
     use axum::http::{header, HeaderValue, StatusCode};
     use axum::response::{IntoResponse, Response};
     use axum::routing::{get, post};
     use axum::{Json, Router};
+    use serde::Deserialize;
     use tower_http::limit::RequestBodyLimitLayer;
 
     use crate::{
-        answer_chart_question, build_doctor_share_preview, default_patient_demo_state,
-        find_patient, format_sse_events, run_agent_turn, synthetic_panel, today_overview,
-        tool_catalog, AgentAudience, AgentChatRequest, AgentRunOptions, ChatRequest,
-        DemoSessionResponse, HealthResponse, PatientDemoSnapshot, RunBudget,
+        answer_chart_question, build_doctor_share_preview, build_health_passport,
+        build_roi_mailto_uri, build_smart_authorize_url, default_allergies_for_patient,
+        default_patient_demo_state, dispatch_roi_batch, find_patient, find_portal_organization,
+        format_sse_events, ingest_fhir_r4_bundle, render_passport_fhir_ips_bundle,
+        render_passport_html, render_passport_markdown, render_roi_cover_text,
+        render_roi_form_html, run_agent_turn, search_portal_directory, synthetic_panel,
+        today_overview, tool_catalog, validate_roi_request, AgentAudience, AgentChatRequest,
+        AgentRunOptions, ChatRequest, DemoSessionResponse, HealthResponse, PassportAudience,
+        PatientDemoSnapshot, PortalOrganization, PortalVendor, RoiRequest, RunBudget,
     };
 
     const CHAT_BODY_LIMIT: usize = 64 * 1024;
+    const FHIR_BODY_LIMIT: usize = 512 * 1024;
 
     #[derive(Default)]
     struct ApiState {
         session_counter: AtomicU64,
     }
 
+    #[derive(Deserialize)]
+    struct PortalDirectoryQuery {
+        #[serde(default)]
+        q: String,
+        #[serde(default)]
+        vendor: Option<PortalVendor>,
+    }
+
+    #[derive(Deserialize)]
+    struct SmartLaunchRequest {
+        #[serde(default)]
+        organization_id: Option<String>,
+        #[serde(default)]
+        custom_organization: Option<PortalOrganization>,
+        client_id: String,
+        redirect_uri: String,
+        #[serde(default)]
+        scopes: Option<String>,
+        state: String,
+        code_verifier: String,
+    }
+
+    #[derive(Deserialize)]
+    struct FhirIngestRequest {
+        source_label: String,
+        portal_id: String,
+        bundle_json: String,
+    }
+
+    #[derive(Deserialize)]
+    struct PassportExportRequest {
+        patient_id: String,
+        #[serde(default)]
+        audience: PassportAudience,
+        #[serde(default)]
+        emergency_note: String,
+        #[serde(default)]
+        selected_record_ids: Option<Vec<String>>,
+    }
+
+    #[derive(Deserialize)]
+    struct RoiDispatchBatchRequest {
+        requests: Vec<RoiRequest>,
+        #[serde(default)]
+        dispatched_at: Option<String>,
+        #[serde(default)]
+        due_by_30d: Option<String>,
+    }
+
     /// Builds the clean-room clinical workspace API router mounted at `/clinical/api`.
     pub fn router() -> Router {
         let state = Arc::new(ApiState::default());
-        Router::new()
+        let standard = Router::new()
             .route("/health", get(health))
             .route("/tools", get(agent_tools))
             .route("/auth/demo-session", post(demo_session))
@@ -1388,8 +1468,18 @@ pub mod api {
                 post(patient_agent_chat_stream),
             )
             .route("/patient-demo/{id}", get(patient_demo_snapshot))
-            .layer(RequestBodyLimitLayer::new(CHAT_BODY_LIMIT))
-            .with_state(state)
+            .route("/portals/directory", get(portal_directory_handler))
+            .route("/portals/smart-launch", post(portal_smart_launch))
+            .route("/passport/export", post(passport_export))
+            .route("/roi/render", post(roi_render))
+            .route("/roi/dispatch", post(roi_dispatch))
+            .layer(RequestBodyLimitLayer::new(CHAT_BODY_LIMIT));
+
+        let fhir_ingest = Router::new()
+            .route("/portals/ingest-fhir", post(portal_ingest_fhir))
+            .layer(RequestBodyLimitLayer::new(FHIR_BODY_LIMIT));
+
+        standard.merge(fhir_ingest).with_state(state)
     }
 
     fn json_no_store<T: serde::Serialize>(status: StatusCode, body: &T) -> Response {
@@ -1590,6 +1680,132 @@ pub mod api {
             )
                 .into_response(),
         }
+    }
+
+    async fn portal_directory_handler(Query(query): Query<PortalDirectoryQuery>) -> Response {
+        let orgs = search_portal_directory(&query.q, query.vendor);
+        json_no_store(
+            StatusCode::OK,
+            &serde_json::json!({
+                "organizations": orgs,
+                "read_only_scopes": crate::SMART_READ_ONLY_SCOPES,
+            }),
+        )
+    }
+
+    async fn portal_smart_launch(Json(req): Json<SmartLaunchRequest>) -> Response {
+        let org = match (req.custom_organization, req.organization_id.as_deref()) {
+            (Some(custom), _) => custom,
+            (None, Some(id)) => match find_portal_organization(id) {
+                Some(found) => found,
+                None => {
+                    return error_no_store((StatusCode::NOT_FOUND, "portal organization not found"))
+                }
+            },
+            (None, None) => {
+                return error_no_store((
+                    StatusCode::BAD_REQUEST,
+                    "provide organization_id or custom_organization",
+                ));
+            }
+        };
+
+        match build_smart_authorize_url(
+            &org,
+            &req.client_id,
+            &req.redirect_uri,
+            req.scopes.as_deref(),
+            &req.state,
+            &req.code_verifier,
+        ) {
+            Ok(session) => json_no_store(StatusCode::OK, &session),
+            Err(err) => json_no_store(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({ "error": err }),
+            ),
+        }
+    }
+
+    async fn portal_ingest_fhir(Json(req): Json<FhirIngestRequest>) -> Response {
+        match ingest_fhir_r4_bundle(&req.source_label, &req.portal_id, &req.bundle_json) {
+            Ok(imported) => json_no_store(StatusCode::OK, &imported),
+            Err(err) => json_no_store(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({ "error": err }),
+            ),
+        }
+    }
+
+    async fn passport_export(Json(req): Json<PassportExportRequest>) -> Response {
+        let Some(patient) = find_patient(&req.patient_id) else {
+            return error_no_store((StatusCode::NOT_FOUND, "patient not found"));
+        };
+        let mut state = default_patient_demo_state(&patient);
+        if let Some(ids) = req.selected_record_ids {
+            state.selected_record_ids = ids;
+        }
+        let allergies = default_allergies_for_patient(&patient.id);
+        let passport = build_health_passport(
+            &patient,
+            &state,
+            &allergies,
+            &[],
+            req.audience,
+            &req.emergency_note,
+            "2026-11-26T04:30:00Z",
+        );
+        let fhir_ips = render_passport_fhir_ips_bundle(&passport);
+        let html = render_passport_html(&passport);
+        let markdown = render_passport_markdown(&passport);
+        json_no_store(
+            StatusCode::OK,
+            &serde_json::json!({
+                "passport": passport,
+                "fhir_ips_bundle": fhir_ips,
+                "html": html,
+                "markdown": markdown,
+            }),
+        )
+    }
+
+    async fn roi_render(Json(req): Json<RoiRequest>) -> Response {
+        if let Err(err) = validate_roi_request(&req) {
+            return json_no_store(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({ "error": err }),
+            );
+        }
+        json_no_store(
+            StatusCode::OK,
+            &serde_json::json!({
+                "request_id": req.id,
+                "html": render_roi_form_html(&req),
+                "cover_text": render_roi_cover_text(&req),
+                "mailto_uri": build_roi_mailto_uri(&req),
+            }),
+        )
+    }
+
+    async fn roi_dispatch(Json(mut req): Json<RoiDispatchBatchRequest>) -> Response {
+        let dispatched_at = req
+            .dispatched_at
+            .as_deref()
+            .unwrap_or("2026-11-26T04:30:00Z");
+        let due_by_30d = req.due_by_30d.as_deref().unwrap_or("2026-12-26");
+        let report = dispatch_roi_batch(
+            &mut req.requests,
+            dispatched_at,
+            due_by_30d,
+            "Embedded local sandbox dispatch (zero external PHI egress)",
+        );
+        json_no_store(
+            StatusCode::OK,
+            &serde_json::json!({
+                "mode": "local_sandbox",
+                "report": report,
+                "requests": req.requests,
+            }),
+        )
     }
 }
 

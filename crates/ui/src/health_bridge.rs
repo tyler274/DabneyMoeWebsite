@@ -134,6 +134,10 @@ pub struct PersonalVaultSnapshotUi {
     pub checkins_json: Option<String>,
     pub notes_json: Option<String>,
     pub chat_history_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passport_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roi_requests_json: Option<String>,
 }
 
 /// Partial update merged into `personal_vault_save`.
@@ -152,6 +156,10 @@ pub struct PersonalVaultSaveUi {
     pub notes_json: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_history_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passport_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roi_requests_json: Option<String>,
 }
 
 /// Availability classification of the native on-device LLM backend.

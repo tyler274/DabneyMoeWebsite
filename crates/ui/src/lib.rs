@@ -30,6 +30,7 @@ pub mod mental_health_lingo;
 pub mod mental_health_support;
 pub mod ownership;
 pub mod patient_demo;
+pub mod patient_ehr;
 pub mod portfolio;
 pub mod portfolio_chart;
 pub mod privacy;

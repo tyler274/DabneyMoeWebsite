@@ -9,6 +9,8 @@
 pub mod clinical_proxy;
 #[cfg(feature = "ssr")]
 pub mod community_activity;
+#[cfg(feature = "ssr")]
+pub mod ehr_roi_api;
 
 #[cfg(feature = "hydrate")]
 #[wasm_bindgen::prelude::wasm_bindgen]
@@ -101,10 +103,22 @@ where
 {
     match api_proxy {
         Some(cfg) => router.merge(clinical_proxy::clinical_api_proxy_router(cfg)),
-        None => router.nest_service(
-            clinical_proxy::CLINICAL_API_PREFIX,
-            clinical_workspace::api::router(),
-        ),
+        None => {
+            let roi_webhook =
+                ehr_roi_api::RoiWebhookConfig::from_env(|key| std::env::var(key).ok())
+                    .unwrap_or_else(|err| {
+                        tracing::warn!(error = %err, "ignoring invalid ROI_DISPATCH_WEBHOOK_URL");
+                        None
+                    });
+            let is_prod = std::env::var("K_SERVICE").is_ok()
+                || std::env::var("LEPTOS_ENV")
+                    .ok()
+                    .as_deref()
+                    .is_some_and(|v| v.eq_ignore_ascii_case("PROD"));
+            let combined =
+                clinical_workspace::api::router().merge(ehr_roi_api::router(roi_webhook, !is_prod));
+            router.nest_service(clinical_proxy::CLINICAL_API_PREFIX, combined)
+        }
     }
 }
 
@@ -115,7 +129,7 @@ mod tests {
     use axum::http::{header, Method, Request, StatusCode};
     use axum::response::IntoResponse;
     use axum::routing::{get, post};
-    use axum::Router;
+    use axum::{Json, Router};
     use futures_util::stream;
     use leptos_axum::generate_route_list;
     use std::convert::Infallible;
@@ -1096,5 +1110,249 @@ mod tests {
             "application/json; charset=utf-8"
         );
         assert_eq!(head.headers()[header::CACHE_CONTROL], "public, max-age=300");
+    }
+
+    #[tokio::test]
+    async fn ehr_portals_passport_and_roi_endpoints_work_end_to_end() {
+        let app = mount_clinical_api_routes(Router::<()>::new(), None);
+
+        // 1. Searchable EHR portal directory
+        let dir = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/clinical/api/portals/directory?q=stanford")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(dir.status(), StatusCode::OK);
+        assert_eq!(
+            dir.headers()[header::CACHE_CONTROL],
+            "private, no-store, max-age=0"
+        );
+        let dir_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(dir.into_body(), 64 * 1024).await.unwrap()).unwrap();
+        assert_eq!(dir_json["organizations"].as_array().unwrap().len(), 1);
+        assert!(dir_json["organizations"][0]["name"]
+            .as_str()
+            .unwrap()
+            .contains("Stanford"));
+
+        // 2. SMART on FHIR R4 PKCE S256 launch URL generation
+        let launch = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/clinical/api/portals/smart-launch")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "organization_id": "org-epic-sandbox",
+                            "client_id": "dabney-patient-demo",
+                            "redirect_uri": "https://dabney.moe/clinical/patient",
+                            "state": "state-abcdef12",
+                            "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(launch.status(), StatusCode::OK);
+        let launch_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(launch.into_body(), 64 * 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(launch_json["code_challenge_method"], "S256");
+        assert_eq!(
+            launch_json["code_challenge"],
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+        );
+
+        // 3. FHIR R4 Bundle ingestion
+        let nadia = clinical_workspace::find_patient("pt-nadia-kulkarni").unwrap();
+        let bundle = clinical_workspace::sandbox_fhir_bundle_for_org("org-epic-sandbox", &nadia);
+        let ingest = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/clinical/api/portals/ingest-fhir")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "source_label": "Epic MyChart Sandbox",
+                            "portal_id": "org-epic-sandbox",
+                            "bundle_json": bundle,
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ingest.status(), StatusCode::OK);
+        let ingest_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(ingest.into_body(), 128 * 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(ingest_json["records"].as_array().unwrap().len(), 4);
+        assert_eq!(ingest_json["medications"].as_array().unwrap().len(), 1);
+
+        // 4. Portable Health Passport export (JSON + FHIR IPS + HTML + Markdown)
+        let export = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/clinical/api/passport/export")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"patient_id":"pt-nadia-kulkarni","audience":"emergency_card","emergency_note":"Sulfa rash"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(export.status(), StatusCode::OK);
+        let export_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(export.into_body(), 256 * 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(
+            export_json["passport"]["schema_version"],
+            clinical_workspace::HEALTH_PASSPORT_SCHEMA
+        );
+        assert_eq!(export_json["fhir_ips_bundle"]["resourceType"], "Bundle");
+        assert!(export_json["html"]
+            .as_str()
+            .unwrap()
+            .contains("Emergency / Urgent Care Card"));
+
+        // 5. Automated ROI batch dispatch (dispatches signed req, keeps draft unsigned)
+        let reqs = clinical_workspace::default_roi_requests_for_patient(&nadia);
+        let roi_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/clinical/api/roi/dispatch-live")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "requests": reqs }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(roi_resp.status(), StatusCode::OK);
+        let roi_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(roi_resp.into_body(), 128 * 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(roi_json["mode"], "local_sandbox");
+        assert_eq!(roi_json["report"]["dispatched_count"], 1);
+
+        // 6. SMART discovery SSRF guard rejects private metadata hosts and plain HTTP
+        let ssrf = app
+            .oneshot(
+                Request::builder()
+                    .uri("/clinical/api/portals/smart-discover?iss=http://169.254.169.254/latest")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ssrf.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn smart_discover_and_roi_webhook_relay_preserve_errors_and_deliver_signed_packets() {
+        let mock_server = Router::new()
+            .route(
+                "/fhir/.well-known/smart-configuration",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "authorization_endpoint": "https://portal.example.org/oauth2/authorize",
+                        "token_endpoint": "https://portal.example.org/oauth2/token",
+                        "capabilities": ["launch-standalone", "client-public", "permission-patient"]
+                    }))
+                }),
+            )
+            .route(
+                "/roi-hook",
+                post(|req: AxumRequest| async move {
+                    assert_eq!(
+                        req.headers()
+                            .get(header::AUTHORIZATION)
+                            .and_then(|v| v.to_str().ok()),
+                        Some("Bearer roi-secret-tok")
+                    );
+                    (StatusCode::ACCEPTED, Json(serde_json::json!({"ok": true})))
+                }),
+            );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, mock_server).await.unwrap();
+        });
+
+        let webhook = super::ehr_roi_api::RoiWebhookConfig::from_env(|key| match key {
+            "ROI_DISPATCH_WEBHOOK_URL" => {
+                Some(format!("http://127.0.0.1:{}/roi-hook", addr.port()))
+            }
+            "ROI_DISPATCH_BEARER_TOKEN" => Some("roi-secret-tok".to_string()),
+            _ => None,
+        })
+        .unwrap();
+        let router = super::ehr_roi_api::router(webhook, true);
+
+        let disc = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/portals/smart-discover?iss=http%3A%2F%2F127.0.0.1%3A{}%2Ffhir",
+                        addr.port()
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(disc.status(), StatusCode::OK);
+        let disc_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(disc.into_body(), 64 * 1024).await.unwrap()).unwrap();
+        assert_eq!(
+            disc_json["authorization_endpoint"],
+            "https://portal.example.org/oauth2/authorize"
+        );
+
+        let nadia = clinical_workspace::find_patient("pt-nadia-kulkarni").unwrap();
+        let reqs = clinical_workspace::default_roi_requests_for_patient(&nadia);
+        let dispatch = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/roi/dispatch-live")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "requests": reqs }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(dispatch.status(), StatusCode::OK);
+        let dispatch_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(dispatch.into_body(), 128 * 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(dispatch_json["mode"], "webhook_gateway");
+        assert_eq!(dispatch_json["report"]["dispatched_count"], 1);
+        assert_eq!(
+            dispatch_json["requests"][0]["status"]["state"],
+            "dispatched"
+        );
+        assert_eq!(dispatch_json["requests"][1]["status"]["state"], "draft");
     }
 }
