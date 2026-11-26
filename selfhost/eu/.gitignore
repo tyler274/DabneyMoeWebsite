@@ -2,4 +2,4 @@
 secrets.env
 secrets/*.env
 !secrets/*.sops.env
-coda-site/
+curie-site/

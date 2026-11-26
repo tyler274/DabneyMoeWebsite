@@ -33,7 +33,7 @@
     },
     {
       "forge": "gitea",
-      "path": "tyler274/coda-rust",
+      "path": "tyler274/dabney-moe",
       "authority": "external",
       "default_branch": "main",
       "secret_envs": [
@@ -42,7 +42,7 @@
     },
     {
       "forge": "gitlab",
-      "path": "tyler274/coda-rust",
+      "path": "tyler274/dabney-moe",
       "authority": "external",
       "default_branch": "main",
       "secret_envs": [

@@ -600,7 +600,7 @@ async fn multi_repo_webhooks_and_backfill_against_dabney_forge() {
         },
         RepoConfig {
             forge: ForgeKind::Dabney,
-            path: RepoPath::parse("tyler/coda-rust").unwrap(),
+            path: RepoPath::parse("tyler/dabney-moe").unwrap(),
             authority: Authority::Canonical,
             default_branch: "main".into(),
             secrets: vec![Secret::new(HOOK_SECRET)],
@@ -633,13 +633,13 @@ async fn multi_repo_webhooks_and_backfill_against_dabney_forge() {
     let site = app
         .create_repo(&RepoName::parse("tyler/site").unwrap(), false, "main")
         .unwrap();
-    let coda = app
-        .create_repo(&RepoName::parse("tyler/coda-rust").unwrap(), false, "main")
+    let curie = app
+        .create_repo(&RepoName::parse("tyler/dabney-moe").unwrap(), false, "main")
         .unwrap();
     app.db.add_collaborator(site.id, "bob").unwrap();
-    app.db.add_collaborator(coda.id, "bob").unwrap();
+    app.db.add_collaborator(curie.id, "bob").unwrap();
     app.db.set_repo_policy(site.id, 1, &[]).unwrap();
-    app.db.set_repo_policy(coda.id, 1, &[]).unwrap();
+    app.db.set_repo_policy(curie.id, 1, &[]).unwrap();
     let tyler = issue_token(
         &app.db,
         "tyler",
@@ -671,7 +671,7 @@ async fn multi_repo_webhooks_and_backfill_against_dabney_forge() {
             "site-work",
             vec![("b1", "f1.txt"), ("b2", "f2.txt"), ("b3", "f3.txt")],
         ),
-        ("tyler/coda-rust", "coda-work", vec![("c1", "c1.txt")]),
+        ("tyler/dabney-moe", "curie-work", vec![("c1", "c1.txt")]),
     ] {
         let url = format!("http://tyler:{tyler}@{addr}/{name}.git");
         git.ok(root, &["clone", &url, dir]);
@@ -689,7 +689,7 @@ async fn multi_repo_webhooks_and_backfill_against_dabney_forge() {
         }
     }
 
-    // Open 3 PRs in repo 1 (`tyler/site`) and 1 PR in repo 2 (`tyler/coda-rust`).
+    // Open 3 PRs in repo 1 (`tyler/site`) and 1 PR in repo 2 (`tyler/dabney-moe`).
     let site_pulls = "/api/v1/repos/tyler/site/pulls";
     assert_eq!(
         api.post(
@@ -723,7 +723,7 @@ async fn multi_repo_webhooks_and_backfill_against_dabney_forge() {
     );
     assert_eq!(
         api.post(
-            "/api/v1/repos/tyler/coda-rust/pulls",
+            "/api/v1/repos/tyler/dabney-moe/pulls",
             Some(&tyler),
             json!({"title": "COD-204: second repo pr", "head": "c1"})
         )
@@ -732,7 +732,7 @@ async fn multi_repo_webhooks_and_backfill_against_dabney_forge() {
         201
     );
 
-    // Approve + merge PR #1 in site, close PR #2, approve + merge PR #1 in coda-rust.
+    // Approve + merge PR #1 in site, close PR #2, approve + merge PR #1 in dabney-moe.
     assert_eq!(
         api.post(
             &format!("{site_pulls}/1/reviews"),
@@ -757,7 +757,7 @@ async fn multi_repo_webhooks_and_backfill_against_dabney_forge() {
     );
     assert_eq!(
         api.post(
-            "/api/v1/repos/tyler/coda-rust/pulls/1/reviews",
+            "/api/v1/repos/tyler/dabney-moe/pulls/1/reviews",
             Some(&bob),
             json!({"event": "APPROVE"})
         )
@@ -767,7 +767,7 @@ async fn multi_repo_webhooks_and_backfill_against_dabney_forge() {
     );
     assert_eq!(
         api.post(
-            "/api/v1/repos/tyler/coda-rust/pulls/1/merge",
+            "/api/v1/repos/tyler/dabney-moe/pulls/1/merge",
             Some(&tyler),
             json!({})
         )
@@ -776,7 +776,7 @@ async fn multi_repo_webhooks_and_backfill_against_dabney_forge() {
         200
     );
 
-    // Second repo (`tyler/coda-rust`) MUST reach Done without `RepoMismatch`!
+    // Second repo (`tyler/dabney-moe`) MUST reach Done without `RepoMismatch`!
     wait_for("COD-204 from second repo to reach Done", || {
         linear.issue_state("COD-204") == "Done"
     })

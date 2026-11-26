@@ -1,10 +1,10 @@
 output "server_ipv4" {
-  description = "Tier 1 VPS IPv4 (feed to coda-rust infra/eu server_ipv4)."
+  description = "Tier 1 VPS IPv4 (feed to dabney-moe infra/eu server_ipv4)."
   value       = var.enable_vps ? hcloud_server.app[0].ipv4_address : null
 }
 
 output "server_ipv6" {
-  description = "Tier 1 VPS IPv6 (feed to coda-rust infra/eu server_ipv6)."
+  description = "Tier 1 VPS IPv6 (feed to dabney-moe infra/eu server_ipv6)."
   value       = var.enable_vps ? hcloud_server.app[0].ipv6_address : null
 }
 
