@@ -106,16 +106,16 @@ pub const PROJECTS: &[Project] = &[
     Project {
         name: "Curie (Dabney.moe Clinical)",
         blurb: "Clean-room local-first Rust & WebAssembly clinical suite hosted on dabney.moe — \
-                patient EHR portal link-through (SMART on FHIR R4 + PKCE), portable shareable \
-                health passport, automated HIPAA Release of Information dispatch, bounded \
-                multi-step agentic clinical chat harness with verbatim citations, embedded Axum \
-                JSON & SSE clinical API, and commercial CGM & mental health analytics.",
+                patient medical portal sign-in (SMART on FHIR), portable shareable health \
+                passport, automated HIPAA records release, grounded clinical AI chat with \
+                verbatim citations, embedded Axum clinical API, and glucose & mental health \
+                analytics.",
         tags: &[
             "Rust",
             "Leptos",
             "Axum",
-            "WASM",
-            "SMART FHIR",
+            "WebAssembly",
+            "FHIR",
             "Agent Harness",
         ],
         href: "https://dabney.moe/clinical",
@@ -162,16 +162,17 @@ pub const EXPERIENCE: &[Role] = &[
         period: "October 2026 - November 2026",
         points: &[
             "Built Coda Health's full-stack Rust clinical platform to MVP in under two months \
-             before moving on to focus on my own vision: WASM clinician and patient web \
-             interfaces, Axum services, PostgreSQL with pgvector RLS, Valkey SSE fan-out, \
-             zero-PHI push notifications, and Swift HealthKit / Kotlin Health Connect bridges.",
-            "Engineered the platform's bounded LLM tool-execution harness, offline BGE semantic \
-             encoder, Poppler/Tesseract OCR pipeline, PKCE FHIR R4 & EHR/Chrome adapters, and \
-             synchronized care workflows backed by TLA+ model checks, PostgreSQL crash-recovery \
-             suites, headless Android emulator tests, and Chromium E2E qualification.",
-            "Automated Nix distroless OCI images, OpenTofu/Terraform GCP infrastructure (Cloud \
-             Run, GKE, Cloud SQL, IAP, Doppler), OpenTelemetry/Datadog/Langfuse observability, \
-             and Firecracker sandboxed CI.",
+             before moving on to focus on my own vision: clinician and patient web apps, \
+             Axum backend services, multi-tenant PostgreSQL with vector search, real-time \
+             event streaming, privacy-preserving push notifications, and Apple Health / \
+             Android Health Connect bridges.",
+            "Engineered the platform's tool-calling AI assistant, local semantic search, \
+             medical document extraction pipeline, health-portal and browser integrations, \
+             and synchronized care workflows backed by TLA+ formal models, PostgreSQL \
+             crash-recovery suites, Android emulator tests, and automated browser verification.",
+            "Automated reproducible Nix containers, Google Cloud infrastructure in OpenTofu \
+             (Cloud Run, Kubernetes, Cloud SQL, secrets management), OpenTelemetry and \
+             Datadog observability, and Firecracker-sandboxed CI.",
         ],
     },
     Role {
