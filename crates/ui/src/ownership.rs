@@ -424,11 +424,13 @@ pub fn OwnershipReportPage() -> impl IntoView {
                             " is the sole owner of the live site."
                         </p>
                     </div>
-                    <img
-                        src="/dabney-elephant.svg"
-                        alt="Dabney House green elephant emblem"
-                        class="h-20 w-20 shrink-0 rounded-2xl border border-emerald-400/20 bg-slate-900 p-3"
-                    />
+                    <div class="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/40 bg-[#01081b] p-2 shadow-lg shadow-emerald-500/10">
+                        <img
+                            src="/dabney-elephant.svg"
+                            alt="Dabney House green elephant emblem"
+                            class="h-full w-full object-contain"
+                        />
+                    </div>
                 </div>
 
                 // Automated CI freshness badge + machine-readable JSON link

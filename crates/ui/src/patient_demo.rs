@@ -6,21 +6,25 @@
 
 use std::collections::{HashMap, HashSet};
 
+#[cfg(any(feature = "csr", feature = "hydrate"))]
+use clinical_workspace::build_harness_llm_prompt;
 use clinical_workspace::{
-    answer_patient_question, build_doctor_share_preview, default_patient_demo_state,
-    default_patient_questions, synthetic_panel, ChartRecord, ChatAnswer, DemoConnectionState,
-    PatientChart, PatientVisitNote, RecordKind, ShareDeliveryStatus, SharePacketPreview,
+    build_doctor_share_preview, default_patient_demo_state, default_patient_questions,
+    run_agent_turn, synthetic_panel, AgentAudience, AgentRunOptions, AgentThread, ChartRecord,
+    DemoConnectionState, PatientChart, PatientVisitNote, RecordKind, RunBudget,
+    ShareDeliveryStatus, SharePacketPreview,
 };
 use leptos::prelude::*;
 use leptos_meta::{Link, Meta, Title};
 use leptos_router::components::A;
 use leptos_router::hooks::use_location;
 
+use crate::agent_chat::{AgentToolCatalogBar, AgenticThreadView};
 use crate::health_bridge::LocalLlmStatusUi;
 #[cfg(any(feature = "csr", feature = "hydrate"))]
 use crate::health_bridge::{
-    build_chart_chat_prompt, generate_local_llm, load_personal_vault, prepare_local_llm,
-    probe_local_llm, probe_personal_vault, save_personal_vault, PersonalVaultSaveUi,
+    generate_local_llm, load_personal_vault, prepare_local_llm, probe_local_llm,
+    probe_personal_vault, save_personal_vault, PersonalVaultSaveUi,
 };
 use crate::local_ai_chat::LocalLlmStatusBanner;
 #[cfg(any(feature = "csr", feature = "hydrate"))]
@@ -104,9 +108,10 @@ pub fn PatientDemoPage() -> impl IntoView {
     let app_mode = use_context::<AppShellMode>().unwrap_or(AppShellMode::Website);
     let panel = StoredValue::new(synthetic_panel());
 
-    let (initial_id, initial_states, initial_question, initial_answer) =
+    let (initial_id, initial_states, initial_question, initial_threads) =
         panel.with_value(|charts| {
             let mut states = HashMap::new();
+            let mut threads = HashMap::new();
             for chart in charts {
                 states.insert(chart.id.clone(), default_patient_demo_state(chart));
             }
@@ -116,10 +121,20 @@ pub fn PatientDemoPage() -> impl IntoView {
                     .copied()
                     .unwrap_or("Summarize my recent synthetic records")
                     .to_string();
-                let ans = answer_patient_question(first, &q);
-                (first.id.clone(), states, q, Some(ans))
+                let mut thread = AgentThread::new(&first.id, AgentAudience::Patient);
+                let turn = run_agent_turn(
+                    first,
+                    &q,
+                    AgentAudience::Patient,
+                    thread.next_turn_index(),
+                    &thread.working_notes,
+                    AgentRunOptions::default(),
+                );
+                thread.record_turn(turn);
+                threads.insert(first.id.clone(), thread);
+                (first.id.clone(), states, q, threads)
             } else {
-                (String::new(), states, String::new(), None)
+                (String::new(), states, String::new(), threads)
             }
         });
 
@@ -127,7 +142,9 @@ pub fn PatientDemoPage() -> impl IntoView {
     let active_tab = RwSignal::new(PatientTab::You);
     let demo_states = RwSignal::new(initial_states);
     let question_input = RwSignal::new(initial_question);
-    let latest_answer = RwSignal::new(initial_answer);
+    let threads = RwSignal::new(initial_threads);
+    let step_budget = RwSignal::new(RunBudget::default().max_steps);
+    let active_record = RwSignal::new(Option::<String>::None);
     let new_private_note = RwSignal::new(String::new());
     let new_visit_question = RwSignal::new(String::new());
     let next_note_seq = RwSignal::new(2usize);
@@ -199,6 +216,7 @@ pub fn PatientDemoPage() -> impl IntoView {
     let select_profile = move |patient_id: String| {
         llm_req_seq.update(|n| *n += 1);
         llm_thinking.set(false);
+        active_record.set(None);
         selected_id.set(patient_id.clone());
         let default_q = default_patient_questions(&patient_id)
             .first()
@@ -206,13 +224,51 @@ pub fn PatientDemoPage() -> impl IntoView {
             .unwrap_or("Summarize my recent synthetic records")
             .to_string();
         question_input.set(default_q.clone());
-        let next_answer = panel.with_value(|charts| {
-            charts
-                .iter()
-                .find(|p| p.id == patient_id)
-                .map(|p| answer_patient_question(p, &default_q))
+        let has_existing = threads.with_untracked(|map| {
+            map.get(&patient_id)
+                .is_some_and(|thread| !thread.turns.is_empty())
         });
-        latest_answer.set(next_answer);
+        if !has_existing {
+            let max_steps = step_budget.get_untracked();
+            if let Some(seeded) = panel.with_value(|charts| {
+                charts.iter().find(|p| p.id == patient_id).map(|p| {
+                    let mut thread = AgentThread::new(&p.id, AgentAudience::Patient);
+                    let turn = run_agent_turn(
+                        p,
+                        &default_q,
+                        AgentAudience::Patient,
+                        thread.next_turn_index(),
+                        &thread.working_notes,
+                        AgentRunOptions {
+                            budget: RunBudget {
+                                max_steps,
+                                max_tool_calls: max_steps,
+                                max_citations: 4,
+                            },
+                            stop_after_step: None,
+                        },
+                    );
+                    thread.record_turn(turn);
+                    thread
+                })
+            }) {
+                threads.update(|map| {
+                    map.insert(patient_id, seeded);
+                });
+            }
+        }
+    };
+
+    let clear_active_thread = move |_| {
+        llm_req_seq.update(|n| *n += 1);
+        llm_thinking.set(false);
+        active_record.set(None);
+        let active_id = selected_id.get_untracked();
+        threads.update(|map| {
+            if let Some(thread) = map.get_mut(&active_id) {
+                thread.clear();
+            }
+        });
     };
 
     let ask_patient_question = move |raw_q: String| {
@@ -220,30 +276,56 @@ pub fn PatientDemoPage() -> impl IntoView {
         if trimmed.is_empty() {
             return;
         }
+        active_record.set(None);
         let active_id = selected_id.get();
-        let next_pair = panel.with_value(|charts| {
-            charts
-                .iter()
-                .find(|p| p.id == active_id)
-                .map(|p| (p.display_name.clone(), answer_patient_question(p, &trimmed)))
+        let max_steps = step_budget.get_untracked();
+        let (turn_index, prior_notes) = threads.with_untracked(|map| {
+            map.get(&active_id)
+                .map(|t| (t.next_turn_index(), t.working_notes.clone()))
+                .unwrap_or((1, Vec::new()))
         });
-        let Some((patient_name, grounded)) = next_pair else {
+        let next_pair = panel.with_value(|charts| {
+            charts.iter().find(|p| p.id == active_id).map(|p| {
+                let turn = run_agent_turn(
+                    p,
+                    &trimmed,
+                    AgentAudience::Patient,
+                    turn_index,
+                    &prior_notes,
+                    AgentRunOptions {
+                        budget: RunBudget {
+                            max_steps,
+                            max_tool_calls: max_steps,
+                            max_citations: 4,
+                        },
+                        stop_after_step: None,
+                    },
+                );
+                (p.clone(), turn)
+            })
+        });
+        let Some((patient_chart, turn)) = next_pair else {
             return;
         };
-        latest_answer.set(Some(grounded.clone()));
+        threads.update(|map| {
+            map.entry(active_id.clone())
+                .or_insert_with(|| AgentThread::new(&active_id, AgentAudience::Patient))
+                .record_turn(turn.clone());
+        });
 
         let req_id = llm_req_seq.get_untracked() + 1;
         llm_req_seq.set(req_id);
 
         let should_run_llm = use_local_llm.get_untracked()
-            && !grounded.citations.is_empty()
+            && turn.grounded
             && llm_status
                 .get_untracked()
                 .is_some_and(|s| s.enabled && s.availability == "available");
 
         #[cfg(any(feature = "csr", feature = "hydrate"))]
         if should_run_llm {
-            let prompt = build_chart_chat_prompt("patient", &patient_name, &trimmed, &grounded);
+            let prompt = build_harness_llm_prompt(&patient_chart, &turn);
+            let target_pid = active_id;
             llm_thinking.set(true);
             generate_local_llm(&prompt, Some(320), move |res| {
                 if llm_req_seq.get_untracked() != req_id {
@@ -251,20 +333,29 @@ pub fn PatientDemoPage() -> impl IntoView {
                 }
                 llm_thinking.set(false);
                 if let Ok(gen) = res {
-                    let mut enhanced = grounded.clone();
+                    let mut enhanced = turn.clone();
                     enhanced.answer = gen.text;
+                    enhanced.engine_label = format!(
+                        "Agentic Harness + {} ({} ms)",
+                        gen.model_name, gen.latency_ms
+                    );
                     enhanced.basis = format!(
-                        "{} (on-device · {} ms) grounded strictly in {} verbatim citation(s) from this profile.",
+                        "{} (on-device · {} ms) grounded strictly in {} harness tool step(s) and {} verbatim citation(s).",
                         gen.model_name,
                         gen.latency_ms,
-                        enhanced.citations.len()
+                        enhanced.steps.len(),
+                        enhanced.citations.len(),
                     );
-                    latest_answer.set(Some(enhanced));
+                    threads.update(|map| {
+                        if let Some(thread) = map.get_mut(&target_pid) {
+                            thread.replace_turn(enhanced);
+                        }
+                    });
                 }
             });
         }
         #[cfg(not(any(feature = "csr", feature = "hydrate")))]
-        let _ = (patient_name, should_run_llm);
+        let _ = (patient_chart, should_run_llm);
     };
 
     let toggle_record_selection = move |record_id: String| {
@@ -572,12 +663,14 @@ pub fn PatientDemoPage() -> impl IntoView {
                         </div>
 
                         {if active_tab.get() == PatientTab::You {
-                            let active_answer = latest_answer
+                            let active_thread = threads
                                 .get()
-                                .filter(|ans| ans.patient_id == patient.id);
-                            let cited_ids: HashSet<String> = active_answer
+                                .get(&patient.id)
+                                .filter(|t| !t.turns.is_empty())
+                                .cloned();
+                            let cited_ids: HashSet<String> = active_thread
                                 .as_ref()
-                                .map(|ans| ans.citations.iter().map(|c| c.record_id.clone()).collect())
+                                .map(AgentThread::latest_cited_ids)
                                 .unwrap_or_default();
                             let selected_set: HashSet<String> =
                                 state.selected_record_ids.iter().cloned().collect();
@@ -689,20 +782,50 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         </section>
                                     </div>
 
-                                    // Ask About Your Synthetic Records
+                                    // Ask About Your Synthetic Records (Bounded Agentic Chat Harness)
                                     <section class="rounded-2xl border border-cyan-400/25 bg-slate-900/50 p-5 space-y-4">
-                                        <div>
-                                            <p class="text-xs font-semibold uppercase tracking-widest text-cyan-300">
-                                                "Record-Grounded Explanation (Local Demo)"
-                                            </p>
-                                            <h3 class="mt-1 text-lg font-semibold text-white">
-                                                "Ask About These Synthetic Records"
-                                            </h3>
-                                            <p class="mt-1 text-xs text-slate-300">
-                                                "Answers quote verbatim from this sample profile's own records on-device. "
-                                                "Unmatched questions honestly report zero citations."
-                                            </p>
+                                        <div class="flex flex-wrap items-start justify-between gap-3">
+                                            <div>
+                                                <p class="text-xs font-semibold uppercase tracking-widest text-cyan-300">
+                                                    "Bounded Agentic Chat Harness (Patient Mode)"
+                                                </p>
+                                                <h3 class="mt-1 text-lg font-semibold text-white">
+                                                    "Ask About These Synthetic Records"
+                                                </h3>
+                                                <p class="mt-1 text-xs text-slate-300">
+                                                    "Multi-step tool-calling explanation scoped strictly to this sample profile on-device. "
+                                                    "Clinician-only review drafts remain hidden and unmatched questions cite nothing."
+                                                </p>
+                                            </div>
+                                            <div class="flex flex-wrap items-center gap-2 text-xs">
+                                                <label class="inline-flex items-center gap-1.5 text-slate-300">
+                                                    <span class="text-[11px] text-slate-400">"Step budget"</span>
+                                                    <select
+                                                        aria-label="Patient agent step budget"
+                                                        class="rounded-lg border border-white/15 bg-slate-950 px-2 py-1 font-mono text-[11px] text-slate-200 focus:border-emerald-400/60 focus:outline-none"
+                                                        prop:value=move || step_budget.get().to_string()
+                                                        on:change=move |ev| {
+                                                            if let Ok(parsed) = event_target_value(&ev).parse::<usize>() {
+                                                                step_budget.set(parsed.clamp(2, 6));
+                                                            }
+                                                        }
+                                                    >
+                                                        <option value="2">"2 steps"</option>
+                                                        <option value="4">"4 steps"</option>
+                                                        <option value="6">"6 steps"</option>
+                                                    </select>
+                                                </label>
+                                                <button
+                                                    type="button"
+                                                    on:click=clear_active_thread
+                                                    class="rounded-full border border-white/15 px-3 py-1 text-[11px] text-slate-300 transition hover:border-emerald-400/40 hover:text-white"
+                                                >
+                                                    "Clear thread"
+                                                </button>
+                                            </div>
                                         </div>
+
+                                        <AgentToolCatalogBar audience=AgentAudience::Patient />
 
                                         {move || {
                                             llm_status.get().filter(|s| s.enabled).map(|status| {
@@ -722,24 +845,29 @@ pub fn PatientDemoPage() -> impl IntoView {
                                             <input
                                                 type="text"
                                                 aria-label="Ask a question about these synthetic sample records"
-                                                placeholder="Ask about labs, glucose trends, or notes (no real PHI)..."
+                                                placeholder="Ask about labs, glucose trends, medications, or recap (no real PHI)..."
                                                 prop:value=move || question_input.get()
                                                 on:input=move |ev| question_input.set(event_target_value(&ev))
-                                                class="min-h-[44px] flex-1 rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-emerald-400/60 focus:outline-none focus:ring-1 focus:ring-emerald-400/50"
+                                                class="min-h-[44px] flex-1 rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder:text-slate-400 focus:border-emerald-400/60 focus:outline-none focus:ring-1 focus:ring-emerald-400/50"
                                             />
                                             <button
                                                 type="submit"
                                                 disabled=move || llm_thinking.get()
                                                 class="min-h-[44px] rounded-full bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50"
                                             >
-                                                {move || if llm_thinking.get() { "Synthesizing…" } else { "Explain records" }}
+                                                {move || if llm_thinking.get() { "Synthesizing…" } else { "Run harness" }}
                                             </button>
                                         </form>
 
                                         <div class="flex flex-wrap gap-2">
                                             {presets
                                                 .iter()
-                                                .map(|&preset| {
+                                                .copied()
+                                                .chain([
+                                                    "Explain my active medications and next visit",
+                                                    "Recap earlier working notes",
+                                                ])
+                                                .map(|preset| {
                                                     view! {
                                                         <button
                                                             type="button"
@@ -757,8 +885,13 @@ pub fn PatientDemoPage() -> impl IntoView {
                                                 .collect_view()}
                                         </div>
 
-                                        <div aria-live="polite">
-                                            {active_answer.map(|ans| view! { <PatientGroundedAnswer answer=ans /> })}
+                                        <div aria-live="polite" aria-label="Patient record answer">
+                                            {active_thread.map(|thread| view! {
+                                                <AgenticThreadView
+                                                    thread=thread
+                                                    active_record=active_record
+                                                />
+                                            })}
                                         </div>
                                     </section>
 
@@ -792,6 +925,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                                             record=rec
                                                             is_selected=is_selected
                                                             is_cited=is_cited
+                                                            active_record=active_record
                                                             on_toggle=Callback::new(move |_| toggle_record_selection(rec_id_toggle.clone()))
                                                         />
                                                     }
@@ -1079,84 +1213,31 @@ pub fn PatientDemoPage() -> impl IntoView {
 }
 
 #[component]
-fn PatientGroundedAnswer(answer: ChatAnswer) -> impl IntoView {
-    view! {
-        <div class="rounded-xl border border-white/10 bg-slate-950/80 p-4 space-y-3">
-            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2.5">
-                <p class="text-xs font-medium text-cyan-300">
-                    {format!("Q: {}", answer.question)}
-                </p>
-                <span class=if answer.citations.is_empty() {
-                    "rounded-full border border-amber-400/35 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-medium text-amber-200"
-                } else {
-                    "rounded-full border border-emerald-400/35 bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-300"
-                }>
-                    {format!("{} cited record(s)", answer.citations.len())}
-                </span>
-            </div>
-
-            <p class="whitespace-pre-line text-sm leading-relaxed text-slate-200">
-                {answer.answer}
-            </p>
-
-            {(!answer.citations.is_empty()).then(|| view! {
-                <div class="grid gap-2.5 sm:grid-cols-2">
-                    {answer
-                        .citations
-                        .into_iter()
-                        .map(|cite| {
-                            let kind_cls = record_kind_badge_class(cite.kind);
-                            view! {
-                                <div class="rounded-xl border border-emerald-400/35 bg-emerald-500/[0.07] p-3">
-                                    <div class="flex flex-wrap items-center justify-between gap-1.5">
-                                        <span class="rounded bg-emerald-500/20 px-2 py-0.5 font-mono text-[11px] font-semibold text-emerald-200">
-                                            {cite.record_id}
-                                        </span>
-                                        <span class=format!("rounded-full border px-2 py-0.5 text-[10px] font-semibold {kind_cls}")>
-                                            {cite.kind.label()}
-                                        </span>
-                                    </div>
-                                    <p class="mt-1.5 text-xs font-semibold text-white">
-                                        {cite.title}
-                                        <span class="ml-1.5 font-mono font-normal text-slate-400">
-                                            {cite.recorded_at}
-                                        </span>
-                                    </p>
-                                    <p class="mt-1 text-xs leading-relaxed text-slate-300">
-                                        {cite.excerpt}
-                                    </p>
-                                </div>
-                            }
-                        })
-                        .collect_view()}
-                </div>
-            })}
-
-            <p class="border-t border-white/10 pt-2 font-mono text-[11px] text-slate-400">
-                {answer.basis}
-            </p>
-        </div>
-    }
-}
-
-#[component]
 fn PatientRecordCard(
     record: ChartRecord,
     is_selected: bool,
     is_cited: bool,
+    active_record: RwSignal<Option<String>>,
     on_toggle: Callback<()>,
 ) -> impl IntoView {
     let kind_cls = record_kind_badge_class(record.kind);
-    let container_cls = if is_selected {
-        "rounded-xl border border-emerald-400/50 bg-emerald-500/[0.07] p-4 transition"
-    } else if is_cited {
-        "rounded-xl border border-cyan-400/50 bg-cyan-500/[0.06] p-4 transition"
-    } else {
-        "rounded-xl border border-white/10 bg-slate-950/60 p-4 transition"
+    let anchor_id = format!("record-{}", record.id);
+    let active_key = record.id.clone();
+    let container_cls = move || {
+        let is_active = active_record.with(|active| active.as_deref() == Some(active_key.as_str()));
+        if is_active {
+            "scroll-mt-24 rounded-xl border border-cyan-300 bg-cyan-500/[0.14] p-4 ring-2 ring-cyan-300/60 transition"
+        } else if is_selected {
+            "scroll-mt-24 rounded-xl border border-emerald-400/50 bg-emerald-500/[0.07] p-4 transition"
+        } else if is_cited {
+            "scroll-mt-24 rounded-xl border border-cyan-400/50 bg-cyan-500/[0.06] p-4 transition"
+        } else {
+            "scroll-mt-24 rounded-xl border border-white/10 bg-slate-950/60 p-4 transition"
+        }
     };
 
     view! {
-        <article class=container_cls>
+        <article id=anchor_id class=container_cls>
             <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="flex flex-wrap items-center gap-2">
                     <span class="rounded bg-white/10 px-2 py-0.5 font-mono text-xs font-medium text-slate-200">
@@ -1460,6 +1541,10 @@ mod tests {
         assert!(html.contains("For My Doctor"));
         assert!(html.contains("Private Notes (Never Shared)"));
         assert!(html.contains("Included for doctor"));
+        assert!(html.contains("Bounded Agentic Chat Harness (Patient Mode)"));
+        assert!(html.contains("chart_search"));
+        assert!(html.contains("working_note_save"));
+        assert!(html.contains(r#"id="record-nk-cgm-01""#));
         let legacy_brand = ["co", "da"].concat();
         assert!(
             !html.to_ascii_lowercase().contains(&legacy_brand),

@@ -34,6 +34,7 @@ pub struct Project {
     pub tags: &'static [&'static str],
     pub href: &'static str,
     pub demo_href: Option<&'static str>,
+    pub icon: Option<&'static str>,
 }
 
 pub const PROFILE_PHOTO: &str = "/photos/tyler-dunes.jpg";
@@ -106,13 +107,14 @@ pub const PROJECTS: &[Project] = &[
         name: "Dabney.moe Clinical Workspace",
         blurb:
             "Clean-room local-first Rust & WebAssembly clinical workspace hosted on dabney.moe — \
-                interactive synthetic zero-PHI physician chart review with verbatim record-cited Q&A, \
-                embedded Axum clinical API with optional same-origin streaming reverse proxy, \
-                comprehensive commercial CGM & mental health analytics, Nix OCI images, and \
-                provider-agnostic infrastructure.",
-        tags: &["Rust", "Leptos", "Axum", "WASM", "Nix", "Terraform"],
+                bounded multi-step agentic clinical chat harness with verifiable tool traces and \
+                verbatim record citations, embedded Axum JSON & SSE clinical API, comprehensive \
+                commercial CGM & mental health analytics, Nix OCI images, and provider-agnostic \
+                infrastructure.",
+        tags: &["Rust", "Leptos", "Axum", "WASM", "Agent Harness", "Nix"],
         href: "https://dabney.moe/clinical",
         demo_href: Some("/clinical/physician"),
+        icon: Some("/favicon.png"),
     },
     Project {
         name: "Elysian Studio",
@@ -122,6 +124,7 @@ pub const PROJECTS: &[Project] = &[
         tags: &["Rust", "wgpu", "Vulkan", "iced", "3D printing"],
         href: "https://github.com/tyler274/elysian-studio",
         demo_href: None,
+        icon: None,
     },
     Project {
         name: "ElyMalloc",
@@ -131,6 +134,7 @@ pub const PROJECTS: &[Project] = &[
         tags: &["Rust", "allocators", "mimalloc", "NixOS", "WASM"],
         href: "https://github.com/tyler274/ElyMalloc",
         demo_href: None,
+        icon: None,
     },
     Project {
         name: "ElyLD",
@@ -140,6 +144,7 @@ pub const PROJECTS: &[Project] = &[
         tags: &["Rust", "ELF", "linkers", "Linux kernel", "NixOS"],
         href: "https://github.com/tyler274/ElyLD",
         demo_href: None,
+        icon: None,
     },
 ];
 

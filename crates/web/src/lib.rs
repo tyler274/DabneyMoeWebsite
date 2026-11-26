@@ -671,6 +671,7 @@ mod tests {
             .is_some_and(|cites| !cites.is_empty()));
 
         let missing = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .uri("/clinical/api/patients/pt-unknown")
@@ -684,6 +685,92 @@ mod tests {
             missing.headers()[header::CACHE_CONTROL],
             "private, no-store, max-age=0"
         );
+
+        let tools = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/clinical/api/tools")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(tools.status(), StatusCode::OK);
+        let tools_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(tools.into_body(), 64 * 1024).await.unwrap()).unwrap();
+        assert!(tools_json["physician"]
+            .as_array()
+            .is_some_and(|list| list.len() >= 5));
+        assert!(tools_json["patient"]
+            .as_array()
+            .is_some_and(|list| list.len() >= 5));
+
+        let agent_json_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/clinical/api/patients/pt-nadia-kulkarni/agent-chat")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"question":"Summarize her latest HbA1c, CGM time in range, and medications","audience":"physician","max_steps":6}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(agent_json_resp.status(), StatusCode::OK);
+        assert_eq!(
+            agent_json_resp.headers()[header::CACHE_CONTROL],
+            "private, no-store, max-age=0"
+        );
+        let agent_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(agent_json_resp.into_body(), 128 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(agent_json["patient_id"], "pt-nadia-kulkarni");
+        assert_eq!(agent_json["outcome"]["state"], "finished");
+        assert!(agent_json["steps"]
+            .as_array()
+            .is_some_and(|steps| steps.len() >= 3));
+
+        let agent_sse_resp = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/clinical/api/patients/pt-nadia-kulkarni/agent-chat/stream")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"question":"What does my CGM show?","audience":"patient","max_steps":4}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(agent_sse_resp.status(), StatusCode::OK);
+        assert_eq!(
+            agent_sse_resp.headers()[header::CONTENT_TYPE],
+            "text/event-stream; charset=utf-8"
+        );
+        assert_eq!(
+            agent_sse_resp.headers()[header::CACHE_CONTROL],
+            "private, no-store, max-age=0"
+        );
+        let sse_text = String::from_utf8(
+            to_bytes(agent_sse_resp.into_body(), 128 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(sse_text.contains("event: run_started"));
+        assert!(sse_text.contains("event: tool_called"));
+        assert!(sse_text.contains("event: tool_completed"));
+        assert!(sse_text.contains("event: answer_ready"));
+        assert!(sse_text.contains("event: run_finished"));
     }
 
     #[tokio::test]

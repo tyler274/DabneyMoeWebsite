@@ -6,6 +6,14 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod harness;
+
+pub use harness::{
+    build_harness_llm_prompt, format_sse_events, run_agent_turn, tool_catalog, AgentAudience,
+    AgentChatRequest, AgentEvent, AgentRunOptions, AgentStep, AgentThread, AgentTool, AgentTurn,
+    CitedValue, HarnessOutcome, RunBudget, ToolExecutionStatus, ToolSpec, WorkingNote,
+};
+
 /// Category of an individual record inside a synthetic patient chart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -669,7 +677,7 @@ const STOP_WORDS: &[&str] = &[
 
 impl RecordKind {
     /// Words a physician uses to ask for this kind of record.
-    const fn query_words(self) -> &'static [&'static str] {
+    pub(crate) const fn query_words(self) -> &'static [&'static str] {
         match self {
             Self::LabResult => &["lab", "labs", "panel", "result", "results", "bloodwork"],
             Self::ProgressNote => &["note", "notes", "progress", "visit"],
@@ -680,7 +688,7 @@ impl RecordKind {
     }
 
     /// Body text weight: clinical documentation outranks a patient's own words.
-    const fn body_weight(self) -> u32 {
+    pub(crate) const fn body_weight(self) -> u32 {
         match self {
             Self::PatientMessage => weight::MESSAGE_BODY,
             Self::LabResult | Self::ProgressNote | Self::CgmSummary | Self::Imaging => {
@@ -704,7 +712,7 @@ const CLINICAL_SYNONYMS: &[(&str, &str)] = &[("a1c", "hba1c")];
 
 /// Whether a query term names the same word as `word`, allowing plurals and
 /// recognized clinical shorthand pairs (such as `A1c` ↔ `HbA1c`).
-fn same_word(term: &str, word: &str) -> bool {
+pub(crate) fn same_word(term: &str, word: &str) -> bool {
     word == term
         || word.strip_suffix('s') == Some(term)
         || term.strip_suffix('s') == Some(word)
@@ -714,13 +722,13 @@ fn same_word(term: &str, word: &str) -> bool {
             .any(|&(a, b)| (term == a && word == b) || (term == b && word == a))
 }
 
-fn mentions(text: &str, term: &str) -> bool {
+pub(crate) fn mentions(text: &str, term: &str) -> bool {
     words(text).any(|w| same_word(term, &w))
 }
 
 /// The meaningful search terms of a question: whole words, minus stop words
 /// and bare numbers, without duplicates.
-fn query_terms(question: &str) -> Vec<String> {
+pub(crate) fn query_terms(question: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for word in words(question) {
         let meaningful = word.len() >= 2
@@ -734,7 +742,7 @@ fn query_terms(question: &str) -> Vec<String> {
 }
 
 /// Weight of the strongest place `term` appears in `rec`, or 0 when absent.
-fn term_weight(rec: &ChartRecord, term: &str) -> u32 {
+pub(crate) fn term_weight(rec: &ChartRecord, term: &str) -> u32 {
     let in_kind = rec.kind.query_words().iter().any(|w| same_word(term, w))
         || mentions(rec.kind.label(), term);
     [
@@ -801,7 +809,7 @@ fn sentences(body: &str) -> Vec<&str> {
 /// The parts of a matched record that answer the question: body sentences
 /// and key values naming a query term, falling back to the opening sentence
 /// when the record matched only by its title or kind.
-fn relevant_excerpt(rec: &ChartRecord, terms: &[String]) -> String {
+pub(crate) fn relevant_excerpt(rec: &ChartRecord, terms: &[String]) -> String {
     let hits = |text: &str| terms.iter().any(|t| mentions(text, t));
     let body_sentences = sentences(&rec.body);
     let mut parts: Vec<String> = body_sentences
@@ -1351,8 +1359,9 @@ pub mod api {
 
     use crate::{
         answer_chart_question, build_doctor_share_preview, default_patient_demo_state,
-        find_patient, synthetic_panel, today_overview, ChatRequest, DemoSessionResponse,
-        HealthResponse, PatientDemoSnapshot,
+        find_patient, format_sse_events, run_agent_turn, synthetic_panel, today_overview,
+        tool_catalog, AgentAudience, AgentChatRequest, AgentRunOptions, ChatRequest,
+        DemoSessionResponse, HealthResponse, PatientDemoSnapshot, RunBudget,
     };
 
     const CHAT_BODY_LIMIT: usize = 64 * 1024;
@@ -1367,11 +1376,17 @@ pub mod api {
         let state = Arc::new(ApiState::default());
         Router::new()
             .route("/health", get(health))
+            .route("/tools", get(agent_tools))
             .route("/auth/demo-session", post(demo_session))
             .route("/today", get(today))
             .route("/patients", get(patients))
             .route("/patients/{id}", get(patient_detail))
             .route("/patients/{id}/chat", post(patient_chat))
+            .route("/patients/{id}/agent-chat", post(patient_agent_chat))
+            .route(
+                "/patients/{id}/agent-chat/stream",
+                post(patient_agent_chat_stream),
+            )
             .route("/patient-demo/{id}", get(patient_demo_snapshot))
             .layer(RequestBodyLimitLayer::new(CHAT_BODY_LIMIT))
             .with_state(state)
@@ -1457,6 +1472,98 @@ pub mod api {
             )
                 .into_response(),
         }
+    }
+
+    async fn agent_tools() -> Response {
+        json_no_store(
+            StatusCode::OK,
+            &serde_json::json!({
+                "physician": tool_catalog(AgentAudience::Physician),
+                "patient": tool_catalog(AgentAudience::Patient),
+            }),
+        )
+    }
+
+    fn execute_agent_request(
+        id: &str,
+        req: &AgentChatRequest,
+    ) -> Result<crate::AgentTurn, (StatusCode, &'static str)> {
+        if req.question.trim().is_empty() {
+            return Err((StatusCode::BAD_REQUEST, "question must not be empty"));
+        }
+        let Some(chart) = find_patient(id) else {
+            return Err((StatusCode::NOT_FOUND, "patient not found"));
+        };
+        let mut budget = RunBudget::default();
+        if let Some(max_steps) = req.max_steps {
+            budget.max_steps = max_steps;
+            budget.max_tool_calls = max_steps;
+        }
+        let turn_index = req.prior_working_notes.len() + 1;
+        Ok(run_agent_turn(
+            &chart,
+            &req.question,
+            req.audience,
+            turn_index,
+            &req.prior_working_notes,
+            AgentRunOptions {
+                budget,
+                stop_after_step: req.stop_after_step,
+            },
+        ))
+    }
+
+    fn error_no_store((status, message): (StatusCode, &'static str)) -> Response {
+        (
+            status,
+            [(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("private, no-store, max-age=0"),
+            )],
+            Json(serde_json::json!({ "error": message })),
+        )
+            .into_response()
+    }
+
+    async fn patient_agent_chat(
+        Path(id): Path<String>,
+        Json(req): Json<AgentChatRequest>,
+    ) -> Response {
+        match execute_agent_request(&id, &req) {
+            Ok(turn) => json_no_store(StatusCode::OK, &turn),
+            Err(err) => error_no_store(err),
+        }
+    }
+
+    async fn patient_agent_chat_stream(
+        Path(id): Path<String>,
+        Json(req): Json<AgentChatRequest>,
+    ) -> Response {
+        let turn = match execute_agent_request(&id, &req) {
+            Ok(turn) => turn,
+            Err(err) => return error_no_store(err),
+        };
+        let body = format_sse_events(&turn.events);
+        (
+            StatusCode::OK,
+            [
+                (
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("text/event-stream; charset=utf-8"),
+                ),
+                (
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static("private, no-store, max-age=0"),
+                ),
+                (
+                    header::HeaderName::from_static("x-accel-buffering"),
+                    HeaderValue::from_static("no"),
+                ),
+                (header::VARY, HeaderValue::from_static("*")),
+            ],
+            body,
+        )
+            .into_response()
     }
 
     async fn patient_demo_snapshot(Path(id): Path<String>) -> Response {
@@ -1875,6 +1982,7 @@ mod tests {
         assert!(!snapshot.preview.shared_records.is_empty());
 
         let missing = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .uri("/patient-demo/pt-nonexistent")
@@ -1884,5 +1992,71 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+        let tools = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/tools")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(tools.status(), StatusCode::OK);
+        let tools_body = to_bytes(tools.into_body(), 64 * 1024).await.unwrap();
+        let tools_json: serde_json::Value = serde_json::from_slice(&tools_body).unwrap();
+        assert_eq!(tools_json["physician"].as_array().unwrap().len(), 6);
+
+        let agent_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/patients/pt-nadia-kulkarni/agent-chat")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"question":"What is her HbA1c, TIR, and active medications?","audience":"physician"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(agent_resp.status(), StatusCode::OK);
+        assert_eq!(
+            agent_resp.headers()[header::CACHE_CONTROL],
+            "private, no-store, max-age=0"
+        );
+        let agent_body = to_bytes(agent_resp.into_body(), 128 * 1024).await.unwrap();
+        let turn: AgentTurn = serde_json::from_slice(&agent_body).unwrap();
+        assert_eq!(turn.outcome, HarnessOutcome::Finished);
+        assert!(turn.grounded);
+        assert!(turn.steps.len() >= 3);
+        assert!(!turn.cited_values.is_empty());
+
+        let sse_resp = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/patients/pt-nadia-kulkarni/agent-chat/stream")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"question":"What is her potassium?","audience":"physician"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(sse_resp.status(), StatusCode::OK);
+        assert_eq!(
+            sse_resp.headers()[header::CONTENT_TYPE],
+            "text/event-stream; charset=utf-8"
+        );
+        let sse_body = to_bytes(sse_resp.into_body(), 128 * 1024).await.unwrap();
+        let sse_text = String::from_utf8(sse_body.to_vec()).unwrap();
+        assert!(sse_text.contains("event: run_started\n"));
+        assert!(sse_text.contains("event: tool_called\n"));
+        assert!(sse_text.contains("event: tool_completed\n"));
+        assert!(sse_text.contains("event: run_finished\n"));
     }
 }

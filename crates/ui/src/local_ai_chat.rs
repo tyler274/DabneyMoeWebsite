@@ -274,6 +274,52 @@ pub fn PersonalCgmAiChatSection(
                                     <p class="whitespace-pre-line text-sm leading-relaxed text-slate-200">
                                         {turn.answer}
                                     </p>
+                                    {(!turn.tool_steps.is_empty()).then(|| {
+                                        let step_count = turn.tool_steps.len();
+                                        let step_word = if step_count == 1 { "step" } else { "steps" };
+                                        view! {
+                                            <details class="rounded-lg border border-white/10 bg-slate-900/60 px-3 py-2">
+                                                <summary class="cursor-pointer select-none text-[11px] font-medium text-cyan-300 transition hover:text-cyan-200">
+                                                    {format!("Agent trace · {step_count} local tool {step_word}")}
+                                                </summary>
+                                                <ol class="mt-2 space-y-1.5 border-t border-white/10 pt-2">
+                                                    {turn
+                                                        .tool_steps
+                                                        .into_iter()
+                                                        .enumerate()
+                                                        .map(|(idx, step)| {
+                                                            let badge_cls = if step.status == "ok" {
+                                                                "border-emerald-400/35 bg-emerald-500/10 text-emerald-200"
+                                                            } else {
+                                                                "border-amber-400/35 bg-amber-500/10 text-amber-200"
+                                                            };
+                                                            view! {
+                                                                <li class="rounded-md border border-white/5 bg-slate-950/75 px-2.5 py-1.5 text-[11px]">
+                                                                    <div class="flex flex-wrap items-center justify-between gap-1.5">
+                                                                        <div class="flex items-center gap-1.5">
+                                                                            <span class="font-mono text-[10px] text-slate-400">
+                                                                                {format!("#{}", idx + 1)}
+                                                                            </span>
+                                                                            <span class="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-cyan-200">
+                                                                                {step.tool_name}
+                                                                            </span>
+                                                                            <span class="font-medium text-slate-200">
+                                                                                {step.label}
+                                                                            </span>
+                                                                        </div>
+                                                                        <span class=format!("rounded-full border px-2 py-0.5 font-mono text-[10px] {badge_cls}")>
+                                                                            {step.status}
+                                                                        </span>
+                                                                    </div>
+                                                                    <p class="mt-1 text-slate-300">{step.summary}</p>
+                                                                </li>
+                                                            }
+                                                        })
+                                                        .collect_view()}
+                                                </ol>
+                                            </details>
+                                        }
+                                    })}
                                     {(!turn.grounding_facts.is_empty()).then(|| view! {
                                         <div class="flex flex-wrap gap-1.5 border-t border-white/5 pt-2">
                                             {turn
@@ -372,5 +418,38 @@ mod tests {
         }
         .to_html();
         assert!(fb_html.contains("Grounded Rust Fallback"));
+
+        let chat_turns = RwSignal::new(vec![LocalChatTurn {
+            id: "cgm-chat-1".to_string(),
+            question: "Summarize my glucose stability".to_string(),
+            answer: "Mean glucose is 104 mg/dL with 96% TIR.".to_string(),
+            engine_label: "Grounded Rust · On-Device".to_string(),
+            latency_ms: None,
+            grounding_facts: vec!["TIR 70–180: 96%".to_string()],
+            tool_steps: vec![crate::health_bridge::LocalToolTraceStep {
+                tool_name: "cgm_window_metrics".to_string(),
+                label: "Compute CGM window metrics".to_string(),
+                status: "ok".to_string(),
+                summary: "Abbott Lingo · 144 readings".to_string(),
+            }],
+        }]);
+        let chat_html = view! {
+            <PersonalCgmAiChatSection
+                llm_status=RwSignal::new(None)
+                use_local_llm=use_llm
+                llm_preparing=prep
+                llm_prepare_notice=prep_notice
+                chat_input=RwSignal::new(String::new())
+                chat_turns=chat_turns
+                chat_busy=RwSignal::new(false)
+                chat_error=RwSignal::new(None)
+                on_prepare_llm=on_prep
+                on_send_question=Callback::new(|_| {})
+                on_clear_chat=Callback::new(|()| {})
+            />
+        }
+        .to_html();
+        assert!(chat_html.contains("Agent trace · 1 local tool step"));
+        assert!(chat_html.contains("cgm_window_metrics"));
     }
 }
