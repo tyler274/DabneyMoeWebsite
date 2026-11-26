@@ -7,13 +7,14 @@ use leptos_router::components::A;
 #[cfg(any(feature = "hydrate", feature = "csr"))]
 use crate::health_bridge::{
     build_personal_cgm_chat_prompt_with_analytics, generate_local_llm, invoke_tauri_command,
-    load_personal_vault, prepare_local_llm, probe_local_llm, probe_personal_health_bridge,
-    probe_personal_vault, save_personal_vault, wipe_personal_vault, HealthBridgePermissionUi,
-    HealthBridgeReadUi, PersonalVaultSaveUi,
+    load_personal_vault, prepare_local_llm, probe_app_alerts, probe_local_llm,
+    probe_personal_health_bridge, probe_personal_vault, request_app_alert_permission,
+    save_personal_vault, send_app_alert_notification, wipe_personal_vault, AppAlertNotificationUi,
+    HealthBridgePermissionUi, HealthBridgeReadUi, PersonalVaultSaveUi,
 };
 use crate::health_bridge::{
     collect_cgm_grounding_facts_with_analytics, synthesize_grounded_cgm_answer_with_analytics,
-    HealthBridgeStatusUi, LocalChatTurn, LocalLlmStatusUi, PersonalVaultStatusUi,
+    AppAlertStatusUi, HealthBridgeStatusUi, LocalChatTurn, LocalLlmStatusUi, PersonalVaultStatusUi,
 };
 use crate::local_ai_chat::{PersonalCgmAiChatSection, PersonalVaultBar};
 use crate::mental_health_3d::LingoMood3DChart;
@@ -26,6 +27,17 @@ use crate::mental_health_cgm::{
     CommercialGlucoseImport, GlucoseImportDiagnostics, GlucoseMonitor, GlucoseUnit, GlucoseWindow,
     MeasurementMethod, ValidationLevel, SAMPLE_APPLE_HEALTH_XML, SAMPLE_HEALTH_BRIDGE_JSON,
 };
+#[cfg(any(feature = "hydrate", feature = "csr"))]
+use crate::mental_health_cgm_alerts::{
+    build_test_alert_event, dispatch_browser_notification, evaluate_latest_reading_alert,
+    load_alert_config_from_storage, query_browser_notification_permission,
+    request_browser_notification_permission, save_alert_config_to_storage, GlucoseAlertEvent,
+};
+use crate::mental_health_cgm_alerts::{
+    evaluate_window_range_alerts, AlertDispatchState, BrowserNotificationPermission,
+    GlucoseAlertConfig,
+};
+use crate::mental_health_cgm_alerts_view::GlucoseRangeAlertsCard;
 use crate::mental_health_cgm_analytics::{
     analyze_glucose_trace, downsample_segments_for_chart, DEFAULT_CHART_GAP_HOURS,
 };
@@ -115,6 +127,15 @@ pub fn MentalHealthPage() -> impl IntoView {
     let vault_busy = RwSignal::new(false);
     let vault_notice = RwSignal::new(Option::<String>::None);
 
+    // Configurable automated target-range glucose alerts (SSR starts with deterministic
+    // clinical defaults; client mount effect hydrates saved localStorage preferences &
+    // browser / native notification permissions without hydration mismatch).
+    let alert_config = RwSignal::new(GlucoseAlertConfig::default());
+    let alert_dispatch_state = RwSignal::new(AlertDispatchState::default());
+    let browser_notif_perm = RwSignal::new(BrowserNotificationPermission::Unsupported);
+    let app_alert_status = RwSignal::new(Option::<AppAlertStatusUi>::None);
+    let alert_feedback = RwSignal::new(Option::<String>::None);
+
     // On-device LLM (Android AICore / Gemini Nano) + local CGM/mood chat state.
     let llm_status = RwSignal::new(Option::<LocalLlmStatusUi>::None);
     let use_local_llm = RwSignal::new(true);
@@ -128,6 +149,23 @@ pub fn MentalHealthPage() -> impl IntoView {
 
     let windowed_readings =
         Memo::new(move |_| readings.with(|r| slice_readings_window(r, window.get())));
+    let range_alert_summary = Memo::new(move |_| {
+        windowed_readings.with(|sliced| {
+            alert_config.with(|cfg| {
+                alert_dispatch_state.with(|st| evaluate_window_range_alerts(sliced, cfg, st))
+            })
+        })
+    });
+    let target_range_signal = Signal::derive(move || {
+        let cfg = alert_config.get().sanitized();
+        (cfg.low_mg_dl, cfg.high_mg_dl)
+    });
+    let health_connect_ready = Signal::derive(move || {
+        hc_status
+            .get()
+            .is_some_and(|s| s.enabled && s.has_glucose_permission)
+    });
+    let personal_data_loaded = Signal::derive(move || loaded_file_label.get().is_some());
     let glucose_summary = Memo::new(move |_| {
         let nominal_h = readings.with(|full| nominal_window_hours_for_trace(full, window.get()));
         windowed_readings.with(|sliced| {
@@ -331,6 +369,8 @@ pub fn MentalHealthPage() -> impl IntoView {
         form_status.set(None);
         hc_message.set(None);
         hc_error.set(None);
+        alert_dispatch_state.set(AlertDispatchState::default());
+        alert_feedback.set(None);
     };
 
     let refresh_health_connect_status = move || {
@@ -351,6 +391,105 @@ pub fn MentalHealthPage() -> impl IntoView {
         }
     };
 
+    let refresh_app_alert_status = move || {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            probe_app_alerts(move |status| {
+                app_alert_status.set(Some(status));
+            });
+        }
+    };
+
+    #[cfg(any(feature = "hydrate", feature = "csr"))]
+    let dispatch_alert_to_os = move |event: &GlucoseAlertEvent,
+                                     cfg: &GlucoseAlertConfig,
+                                     is_test: bool|
+          -> bool {
+        let native_status = app_alert_status.get_untracked().filter(|s| s.enabled);
+        if let Some(status) = native_status {
+            if status.permission_granted && (is_test || cfg.app_notifications_enabled) {
+                let payload = AppAlertNotificationUi {
+                    title: event.os_title.clone(),
+                    body: event.os_body.clone(),
+                    severity: if event.severity.is_urgent() {
+                        "urgent".to_string()
+                    } else {
+                        "standard".to_string()
+                    },
+                    tag: event.tag.clone(),
+                };
+                send_app_alert_notification(&payload, move |res| match res {
+                    Ok(outcome) if outcome.delivered => {
+                        alert_feedback.set(Some(if is_test {
+                            format!(
+                                "Dispatched test native alert notification ({}).",
+                                outcome.detail
+                            )
+                        } else {
+                            format!("Dispatched native alert notification ({}).", outcome.detail)
+                        }));
+                    }
+                    Ok(outcome) => {
+                        alert_feedback.set(Some(format!(
+                            "Native alert notification not delivered: {}",
+                            outcome.detail
+                        )));
+                    }
+                    Err(err) => {
+                        alert_feedback.set(Some(format!("Native alert notification error: {err}")));
+                    }
+                });
+                return true;
+            }
+            if is_test {
+                alert_feedback.set(Some(
+                    "Grant notification access first using \"Enable App Notifications\"."
+                        .to_string(),
+                ));
+            }
+            return false;
+        }
+
+        let perm = query_browser_notification_permission();
+        browser_notif_perm.set(perm);
+        if perm == BrowserNotificationPermission::Granted
+            && (is_test || cfg.browser_notifications_enabled)
+        {
+            match dispatch_browser_notification(event) {
+                Ok(()) => {
+                    alert_feedback.set(Some(if is_test {
+                        "Dispatched test browser notification.".to_string()
+                    } else {
+                        "Dispatched browser notification.".to_string()
+                    }));
+                    return true;
+                }
+                Err(err) => {
+                    alert_feedback.set(Some(err));
+                    return false;
+                }
+            }
+        }
+        if is_test {
+            let note = match perm {
+                BrowserNotificationPermission::Default => {
+                    "Click \"Enable Browser Notifications\" first to allow test alerts."
+                }
+                BrowserNotificationPermission::Denied => {
+                    "Browser notifications are blocked in browser site settings."
+                }
+                BrowserNotificationPermission::Unsupported => {
+                    "Browser Notifications API is not supported in this browser."
+                }
+                BrowserNotificationPermission::Granted => {
+                    "Browser notification permission is granted; enable notifications to test."
+                }
+            };
+            alert_feedback.set(Some(note.to_string()));
+        }
+        false
+    };
+
     #[cfg(any(feature = "hydrate", feature = "csr"))]
     let persist_vault_update = move |payload: PersonalVaultSaveUi, saved_note: &'static str| {
         if vault_status.get_untracked().is_some_and(|v| v.enabled) {
@@ -369,8 +508,11 @@ pub fn MentalHealthPage() -> impl IntoView {
     Effect::new(move |_| {
         refresh_health_connect_status();
         refresh_local_llm_status();
+        refresh_app_alert_status();
         #[cfg(any(feature = "hydrate", feature = "csr"))]
         {
+            alert_config.set(load_alert_config_from_storage());
+            browser_notif_perm.set(query_browser_notification_permission());
             probe_personal_vault(move |status| {
                 let has_saved_data = status.has_cgm_snapshot
                     || status.checkin_count > 0
@@ -422,6 +564,261 @@ pub fn MentalHealthPage() -> impl IntoView {
         }
     });
 
+    // Automated OS/browser alert dispatch: strictly gated on loaded/synced personal data
+    // (`loaded_file_label.is_some()`), NEVER auto-fired for the built-in synthetic sample.
+    #[cfg(any(feature = "hydrate", feature = "csr"))]
+    Effect::new(move |_| {
+        let is_personal = loaded_file_label.with(|l| l.is_some());
+        let cfg = alert_config.get().sanitized();
+        let native_status = app_alert_status.get();
+        let browser_perm = browser_notif_perm.get();
+        if !is_personal || !cfg.enabled {
+            return;
+        }
+        let native_enabled = native_status.as_ref().is_some_and(|s| s.enabled);
+        let can_dispatch_channel = if native_enabled {
+            native_status.as_ref().is_some_and(|s| s.permission_granted)
+                && cfg.app_notifications_enabled
+        } else {
+            browser_perm == BrowserNotificationPermission::Granted
+                && cfg.browser_notifications_enabled
+        };
+        if !can_dispatch_channel {
+            return;
+        }
+        let prev_state = alert_dispatch_state.get_untracked();
+        let check = readings.with(|r| evaluate_latest_reading_alert(r, &cfg, &prev_state));
+        if check.should_dispatch_os {
+            if let Some(event) = check.active_alert.as_ref() {
+                if dispatch_alert_to_os(event, &cfg, false) {
+                    alert_dispatch_state.set(check.next_dispatch_state);
+                }
+            }
+        }
+    });
+
+    // Automated periodic foreground Health Connect sync (`moe.dabney.personal` only):
+    // cleanly tracks & clears the JS interval handle on setting changes and unmount so
+    // intervals never leak or double-register.
+    #[cfg(any(feature = "hydrate", feature = "csr"))]
+    {
+        use std::cell::RefCell;
+        use wasm_bindgen::closure::Closure;
+        use wasm_bindgen::JsCast;
+
+        let auto_poll_interval_id = RwSignal::new(Option::<i32>::None);
+        let auto_poll_closure =
+            StoredValue::new_local(RefCell::new(Option::<Closure<dyn FnMut()>>::None));
+
+        let clear_auto_poll_interval = move || {
+            if let Some(id) = auto_poll_interval_id.get_untracked() {
+                if let Some(win) = web_sys::window() {
+                    win.clear_interval_with_handle(id);
+                }
+                auto_poll_interval_id.set(None);
+            }
+            auto_poll_closure.with_value(|slot| {
+                slot.borrow_mut().take();
+            });
+        };
+
+        on_cleanup(move || {
+            clear_auto_poll_interval();
+        });
+
+        let auto_poll_schedule = Memo::new(move |_| {
+            let ready = health_connect_ready.get();
+            let cfg = alert_config.get().sanitized();
+            (ready, cfg.enabled, cfg.auto_poll_minutes)
+        });
+
+        Effect::new(move |_| {
+            let (ready, enabled, poll_minutes) = auto_poll_schedule.get();
+            clear_auto_poll_interval();
+            if !(ready && enabled && poll_minutes > 0) {
+                return;
+            }
+            let Some(win) = web_sys::window() else {
+                return;
+            };
+            let interval_ms = (poll_minutes as i32).saturating_mul(60_000);
+            let callback = Closure::<dyn FnMut()>::new(move || {
+                if hc_busy.get_untracked() {
+                    return;
+                }
+                let platform_kind = hc_status
+                    .get_untracked()
+                    .map(|s| s.platform_kind())
+                    .unwrap_or(crate::health_bridge::HealthBridgePlatform::AndroidHealthConnect);
+                let platform_name = platform_kind.display_name();
+
+                let args = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(
+                    &args,
+                    &wasm_bindgen::JsValue::from_str("days"),
+                    &wasm_bindgen::JsValue::from_f64(1.0),
+                );
+                hc_busy.set(true);
+                invoke_tauri_command::<HealthBridgeReadUi, _>(
+                    "health_connect_read_glucose",
+                    Some(args),
+                    move |res| {
+                        hc_busy.set(false);
+                        if let Ok(resp) = res {
+                            if resp.record_count == 0 {
+                                return;
+                            }
+                            if let Ok(parsed) =
+                                parse_commercial_glucose_input(&resp.bridge_json, None)
+                            {
+                                let already_personal = loaded_file_label.get_untracked().is_some();
+                                let existing_span_h =
+                                    readings.with_untracked(|r| match (r.first(), r.last()) {
+                                        (Some(a), Some(b)) => {
+                                            (b.hour_offset - a.hour_offset).max(0.0)
+                                        }
+                                        _ => 0.0,
+                                    });
+                                if !already_personal || existing_span_h <= 30.0 {
+                                    let sources_label = if resp.sources.is_empty() {
+                                        platform_name.to_string()
+                                    } else {
+                                        resp.sources.join(", ")
+                                    };
+                                    let banner_label = format!(
+                                        "{platform_name} ({} readings · {} · auto-check 24h · on-device)",
+                                        resp.record_count, sources_label
+                                    );
+                                    apply_parsed_glucose(parsed, Some(banner_label));
+                                } else {
+                                    // Preserve multi-day personal trace while appending strictly newer readings.
+                                    let existing_bounds = readings.with_untracked(|r| {
+                                        let first_utc = r
+                                            .first()
+                                            .and_then(|x| parse_timestamp(&x.timestamp, None))
+                                            .map(|p| p.utc_minutes);
+                                        let last_utc = r
+                                            .last()
+                                            .and_then(|x| parse_timestamp(&x.timestamp, None))
+                                            .map(|p| p.utc_minutes);
+                                        (first_utc, last_utc)
+                                    });
+                                    if let (Some(first_utc), Some(last_utc)) = existing_bounds {
+                                        let newer: Vec<LingoReading> = parsed
+                                            .readings
+                                            .into_iter()
+                                            .filter_map(|mut rd| {
+                                                let utc = parse_timestamp(&rd.timestamp, None)?
+                                                    .utc_minutes;
+                                                if utc > last_utc + 1e-6 {
+                                                    rd.hour_offset = (utc - first_utc) / 60.0;
+                                                    Some(rd)
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .collect();
+                                        if !newer.is_empty() {
+                                            readings.update(|list| list.extend(newer));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                );
+            });
+
+            if let Ok(id) = win.set_interval_with_callback_and_timeout_and_arguments_0(
+                callback.as_ref().unchecked_ref(),
+                interval_ms,
+            ) {
+                auto_poll_interval_id.set(Some(id));
+                auto_poll_closure.with_value(|slot| {
+                    *slot.borrow_mut() = Some(callback);
+                });
+            }
+        });
+    }
+
+    let request_browser_alerts_permission = Callback::new(move |()| {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            request_browser_notification_permission(move |perm| {
+                browser_notif_perm.set(perm);
+                match perm {
+                    BrowserNotificationPermission::Granted => {
+                        let mut next = alert_config.get_untracked();
+                        next.browser_notifications_enabled = true;
+                        let sanitized = next.sanitized();
+                        alert_config.set(sanitized.clone());
+                        save_alert_config_to_storage(&sanitized);
+                        alert_feedback.set(Some(
+                            "Browser notifications enabled for personal glucose range alerts."
+                                .to_string(),
+                        ));
+                    }
+                    BrowserNotificationPermission::Denied => {
+                        alert_feedback.set(Some(
+                            "Browser notifications are blocked in site settings.".to_string(),
+                        ));
+                    }
+                    BrowserNotificationPermission::Default => {
+                        alert_feedback.set(Some(
+                            "Browser notification permission request was dismissed.".to_string(),
+                        ));
+                    }
+                    BrowserNotificationPermission::Unsupported => {
+                        alert_feedback.set(Some(
+                            "Browser Notifications API is unsupported in this browser.".to_string(),
+                        ));
+                    }
+                }
+            });
+        }
+    });
+
+    let request_native_app_alerts_permission = Callback::new(move |()| {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            request_app_alert_permission(move |res| match res {
+                Ok(outcome) => {
+                    if outcome.granted {
+                        let mut next = alert_config.get_untracked();
+                        next.app_notifications_enabled = true;
+                        let sanitized = next.sanitized();
+                        alert_config.set(sanitized.clone());
+                        save_alert_config_to_storage(&sanitized);
+                        alert_feedback.set(Some(
+                            "Native app notifications enabled for personal glucose alerts."
+                                .to_string(),
+                        ));
+                    } else {
+                        alert_feedback.set(Some(format!(
+                            "Native app notification permission not granted ({}).",
+                            outcome.status
+                        )));
+                    }
+                    refresh_app_alert_status();
+                }
+                Err(err) => {
+                    alert_feedback.set(Some(format!(
+                        "Could not request app notification permission: {err}"
+                    )));
+                }
+            });
+        }
+    });
+
+    let send_test_glucose_alert = Callback::new(move |()| {
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        {
+            let cfg = alert_config.get_untracked().sanitized();
+            let event = build_test_alert_event(&cfg);
+            let _ = dispatch_alert_to_os(&event, &cfg, true);
+        }
+    });
+
     let wipe_vault_now = Callback::new(move |()| {
         #[cfg(any(feature = "hydrate", feature = "csr"))]
         {
@@ -438,6 +835,8 @@ pub fn MentalHealthPage() -> impl IntoView {
                         form_status.set(None);
                         hc_message.set(None);
                         hc_error.set(None);
+                        alert_dispatch_state.set(AlertDispatchState::default());
+                        alert_feedback.set(None);
                         vault_notice.set(Some(
                             "Encrypted vault wiped and Android Keystore master key destroyed."
                                 .to_string(),
@@ -1020,6 +1419,20 @@ pub fn MentalHealthPage() -> impl IntoView {
                 })
             }}
 
+            // User-configurable automated glucose target-range alerts, live status & notification channels
+            <GlucoseRangeAlertsCard
+                config=alert_config
+                summary=range_alert_summary.into()
+                browser_permission=browser_notif_perm.into()
+                app_alert_status=app_alert_status.into()
+                health_connect_ready=health_connect_ready
+                personal_data_loaded=personal_data_loaded
+                alert_feedback=alert_feedback.into()
+                on_request_browser_permission=request_browser_alerts_permission
+                on_request_app_permission=request_native_app_alerts_permission
+                on_send_test_alert=send_test_glucose_alert
+            />
+
             // On-device AI chat grounded in loaded CGM metrics & mood check-ins
             // (Android AICore / Gemini Nano on supported personal devices, grounded Rust fallback elsewhere)
             <PersonalCgmAiChatSection
@@ -1044,7 +1457,13 @@ pub fn MentalHealthPage() -> impl IntoView {
                             {move || format!("{} — Glucose & Mental State Timeline", detected_monitor.get().display_name())}
                         </h2>
                         <p class="text-sm text-slate-400">
-                            "Explore the 70–140 mg/dL tight zone with mood (emerald) and anxiety (rose) in pure-Rust WebGL2 3D or classic 2D SVG."
+                            {move || {
+                                let (low, high) = target_range_signal.get();
+                                format!(
+                                    "Explore your {:.0}–{:.0} mg/dL target zone with mood (emerald) and anxiety (rose) in pure-Rust WebGL2 3D or classic 2D SVG.",
+                                    low, high
+                                )
+                            }}
                         </p>
                     </div>
                     <div class="flex flex-wrap items-center gap-3 text-xs text-slate-300">
@@ -1111,11 +1530,24 @@ pub fn MentalHealthPage() -> impl IntoView {
                 </div>
                 {move || match chart_mode.get() {
                     ChartViewMode::WebGl3D => view! {
-                        <LingoMood3DChart readings=windowed_readings.into() checkins=checkins.into() />
+                        <LingoMood3DChart
+                            readings=windowed_readings.into()
+                            checkins=checkins.into()
+                            target_range=target_range_signal
+                        />
                     }.into_any(),
-                    ChartViewMode::Svg2D => view! {
-                        <LingoMoodTimelineChart readings=windowed_readings.get() checkins=checkins.get() />
-                    }.into_any(),
+                    ChartViewMode::Svg2D => {
+                        let (target_low, target_high) = target_range_signal.get();
+                        view! {
+                            <LingoMoodTimelineChart
+                                readings=windowed_readings.get()
+                                checkins=checkins.get()
+                                target_low_mg_dl=target_low
+                                target_high_mg_dl=target_high
+                            />
+                        }
+                        .into_any()
+                    }
                 }}
             </section>
 
@@ -1768,7 +2200,29 @@ fn timeline_x_axis_labels(readings: &[LingoReading], max_hour: f64) -> (String, 
 fn LingoMoodTimelineChart(
     readings: Vec<LingoReading>,
     checkins: Vec<MentalHealthCheckIn>,
+    #[prop(default = 70.0)] target_low_mg_dl: f64,
+    #[prop(default = 140.0)] target_high_mg_dl: f64,
 ) -> impl IntoView {
+    let mut target_low = if target_low_mg_dl.is_finite() {
+        target_low_mg_dl
+    } else {
+        70.0
+    };
+    let mut target_high = if target_high_mg_dl.is_finite() {
+        target_high_mg_dl
+    } else {
+        140.0
+    };
+    if target_low > target_high {
+        std::mem::swap(&mut target_low, &mut target_high);
+    }
+    target_low = target_low.clamp(45.0, 340.0);
+    target_high = target_high.clamp(55.0, 350.0);
+    if target_high - target_low < 10.0 {
+        target_high = (target_low + 10.0).min(350.0);
+        target_low = target_low.min(target_high - 10.0);
+    }
+
     let width = 760.0_f64;
     let height = 240.0_f64;
     let pad_l = 48.0_f64;
@@ -1790,7 +2244,8 @@ fn LingoMoodTimelineChart(
         .iter()
         .map(|r| r.glucose_mg_dl)
         .fold(190.0_f64, f64::max)
-        .max(190.0);
+        .max(190.0)
+        .max(target_high + 10.0);
 
     let x_for = |h: f64| pad_l + (h / max_hour) * plot_w;
     let y_for_g = |g: f64| {
@@ -1802,14 +2257,24 @@ fn LingoMoodTimelineChart(
         pad_t + plot_h - norm * plot_h
     };
 
-    let band_top = y_for_g(140.0);
-    let band_bottom = y_for_g(70.0);
+    let band_top = y_for_g(target_high);
+    let band_bottom = y_for_g(target_low);
     let band_h = (band_bottom - band_top).max(1.0);
     let y_180 = y_for_g(180.0);
-    let show_max_g_label = (y_180 - pad_t).abs() > 14.0;
+    let show_180_ref = (target_high - 180.0).abs() > 0.5;
+    let show_180_label = show_180_ref && (y_180 - band_top).abs() > 10.0;
+    let top_ref_y = if show_180_ref {
+        y_180.min(band_top)
+    } else {
+        band_top
+    };
+    let show_max_g_label = (top_ref_y - pad_t).abs() > 14.0;
 
     let segments = downsample_segments_for_chart(&readings, 360, DEFAULT_CHART_GAP_HOURS);
-    let spike_peaks = select_notable_spike_peaks(&readings, 36);
+    let spike_peaks: Vec<LingoReading> = select_notable_spike_peaks(&readings, 36)
+        .into_iter()
+        .filter(|r| r.bound.is_ceiling_capped() || r.glucose_mg_dl > target_high)
+        .collect();
     let floor_caps = select_svg_floor_cap_markers(&readings, 24);
     let (x_left, x_mid, x_right) = timeline_x_axis_labels(&readings, max_hour);
 
@@ -1842,7 +2307,7 @@ fn LingoMoodTimelineChart(
             role="img"
             aria-label="Abbott Lingo continuous glucose monitoring and mental health check-in timeline"
         >
-            // Target 70-140 mg/dL shaded metabolic zone
+            // Configurable target-range shaded metabolic zone
             <rect
                 x=pad_l
                 y=band_top
@@ -1850,15 +2315,19 @@ fn LingoMoodTimelineChart(
                 height=band_h
                 fill="rgba(52, 211, 153, 0.10)"
             />
-            // Clinical 180 mg/dL hyperglycemia reference line
-            <line x1=pad_l y1=y_180 x2=width - pad_r y2=y_180 stroke="rgba(251, 191, 36, 0.45)" stroke-dasharray="4 4" />
+            // Clinical 180 mg/dL hyperglycemia reference line (shown whenever target_high != 180)
+            {show_180_ref.then(|| view! {
+                <line x1=pad_l y1=y_180 x2=width - pad_r y2=y_180 stroke="rgba(251, 191, 36, 0.45)" stroke-dasharray="4 4" />
+            })}
             <line x1=pad_l y1=band_top x2=width - pad_r y2=band_top stroke="rgba(52, 211, 153, 0.35)" stroke-dasharray="4 4" />
             <line x1=pad_l y1=band_bottom x2=width - pad_r y2=band_bottom stroke="rgba(52, 211, 153, 0.35)" stroke-dasharray="4 4" />
 
             // Y-axis labels
-            <text x="8" y=y_180 + 4.0 fill=AMBER font-size="10">"180"</text>
-            <text x="8" y=band_top + 4.0 fill=SLATE_LIGHT font-size="10">"140"</text>
-            <text x="8" y=band_bottom + 4.0 fill=SLATE_LIGHT font-size="10">"70"</text>
+            {show_180_label.then(|| view! {
+                <text x="8" y=y_180 + 4.0 fill=AMBER font-size="10">"180"</text>
+            })}
+            <text x="8" y=band_top + 4.0 fill=SLATE_LIGHT font-size="10">{format!("{target_high:.0}")}</text>
+            <text x="8" y=band_bottom + 4.0 fill=SLATE_LIGHT font-size="10">{format!("{target_low:.0}")}</text>
             {show_max_g_label.then(|| view! {
                 <text x="8" y=pad_t + 6.0 fill=SLATE_LIGHT font-size="10">{format!("{:.0}", max_g)}</text>
             })}
@@ -2320,5 +2789,47 @@ mod tests {
         .to_html();
         assert!(html.contains("Cap / OOR / Invalid"));
         assert!(html.contains("0 / 12 / 1"));
+    }
+
+    #[test]
+    fn timeline_svg_tracks_custom_target_band_and_180_reference_line() {
+        let import = parse_commercial_glucose_input(SAMPLE_LINGO_CSV, None).unwrap();
+
+        let ada_html = view! {
+            <LingoMoodTimelineChart
+                readings=import.readings.clone()
+                checkins=Vec::new()
+                target_low_mg_dl=70.0
+                target_high_mg_dl=180.0
+            />
+        }
+        .to_html();
+        assert!(ada_html.contains(">180</text>"));
+        assert!(ada_html.contains(">70</text>"));
+        assert!(
+            !ada_html.contains(">140</text>"),
+            "ADA 70-180 target band should replace 140 band label"
+        );
+        assert!(
+            !ada_html.contains("rgba(251, 191, 36, 0.45)"),
+            "ADA 180 target top should not duplicate the 180 amber reference line"
+        );
+
+        let custom_html = view! {
+            <LingoMoodTimelineChart
+                readings=import.readings
+                checkins=Vec::new()
+                target_low_mg_dl=80.0
+                target_high_mg_dl=150.0
+            />
+        }
+        .to_html();
+        assert!(custom_html.contains(">150</text>"));
+        assert!(custom_html.contains(">80</text>"));
+        assert!(
+            custom_html.contains("rgba(251, 191, 36, 0.45)"),
+            "custom target_high != 180 should keep the 180 mg/dL reference line"
+        );
+        assert!(custom_html.contains(">180</text>"));
     }
 }

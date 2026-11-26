@@ -1470,6 +1470,80 @@ where
     invoke_tauri_json("local_llm_generate", &Args { prompt, max_tokens }, on_done);
 }
 
+/// Native mobile glucose alert bridge status returned by `app_alerts_status`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppAlertStatusUi {
+    pub enabled: bool,
+    pub platform: String,
+    pub permission_granted: bool,
+    pub permission_status: String,
+    pub channel_id: String,
+}
+
+/// Outcome returned by `app_alerts_request_permission`.
+#[cfg(any(feature = "hydrate", feature = "csr", test))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppAlertPermissionUi {
+    pub granted: bool,
+    pub status: String,
+}
+
+/// Notification payload sent to `app_alerts_send_notification`.
+#[cfg(any(feature = "hydrate", feature = "csr", test))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppAlertNotificationUi {
+    pub title: String,
+    pub body: String,
+    pub severity: String,
+    pub tag: String,
+}
+
+/// Outcome returned by `app_alerts_send_notification`.
+#[cfg(any(feature = "hydrate", feature = "csr", test))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppAlertDispatchUi {
+    pub delivered: bool,
+    pub notification_id: i32,
+    pub detail: String,
+}
+
+/// Probe `app_alerts_status` silently; invokes `on_enabled` only when `enabled == true`.
+#[cfg(any(feature = "hydrate", feature = "csr"))]
+pub fn probe_app_alerts<F: FnOnce(AppAlertStatusUi) + 'static>(on_enabled: F) {
+    invoke_tauri_command::<AppAlertStatusUi, _>("app_alerts_status", None, move |res| {
+        if let Ok(status) = res {
+            if status.enabled {
+                on_enabled(status);
+            }
+        }
+    });
+}
+
+/// Request native mobile notification permission via `app_alerts_request_permission`.
+#[cfg(any(feature = "hydrate", feature = "csr"))]
+pub fn request_app_alert_permission<F: FnOnce(Result<AppAlertPermissionUi, String>) + 'static>(
+    on_done: F,
+) {
+    invoke_tauri_command("app_alerts_request_permission", None, on_done);
+}
+
+/// Dispatch an opt-in local glucose alert notification via `app_alerts_send_notification`.
+#[cfg(any(feature = "hydrate", feature = "csr"))]
+pub fn send_app_alert_notification<F: FnOnce(Result<AppAlertDispatchUi, String>) + 'static>(
+    payload: &AppAlertNotificationUi,
+    on_done: F,
+) {
+    #[derive(Serialize)]
+    struct Wrapper<'a> {
+        payload: &'a AppAlertNotificationUi,
+    }
+    invoke_tauri_json(
+        "app_alerts_send_notification",
+        &Wrapper { payload },
+        on_done,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1836,5 +1910,66 @@ mod tests {
         );
         assert!(sat_ans.contains("ceiling-capped >=201"));
         assert!(sat_ans.contains("lower bounds / clipped"));
+    }
+
+    #[test]
+    fn app_alerts_wire_payloads_deserialize_cleanly() {
+        let android_status: AppAlertStatusUi = serde_json::from_str(
+            r#"{
+                "enabled": true,
+                "platform": "android_notification_manager",
+                "permission_granted": true,
+                "permission_status": "granted",
+                "channel_id": "dabney_glucose_alerts"
+            }"#,
+        )
+        .unwrap();
+        assert!(android_status.enabled);
+        assert!(android_status.permission_granted);
+        assert_eq!(android_status.channel_id, "dabney_glucose_alerts");
+
+        let desktop_status: AppAlertStatusUi = serde_json::from_str(
+            r#"{
+                "enabled": false,
+                "platform": "desktop",
+                "permission_granted": false,
+                "permission_status": "webview_fallback",
+                "channel_id": ""
+            }"#,
+        )
+        .unwrap();
+        assert!(!desktop_status.enabled);
+        assert_eq!(desktop_status.permission_status, "webview_fallback");
+
+        let perm: AppAlertPermissionUi = serde_json::from_str(
+            r#"{
+                "granted": true,
+                "status": "granted"
+            }"#,
+        )
+        .unwrap();
+        assert!(perm.granted);
+        assert_eq!(perm.status, "granted");
+
+        let req = AppAlertNotificationUi {
+            title: "Glucose range alert".to_string(),
+            body: "Reading crossed your configured high threshold.".to_string(),
+            severity: "urgent".to_string(),
+            tag: "glucose-high-urgent".to_string(),
+        };
+        let encoded_req = serde_json::to_string(&req).unwrap();
+        let decoded_req: AppAlertNotificationUi = serde_json::from_str(&encoded_req).unwrap();
+        assert_eq!(decoded_req, req);
+
+        let dispatch: AppAlertDispatchUi = serde_json::from_str(
+            r#"{
+                "delivered": true,
+                "notification_id": 123456,
+                "detail": "Posted to dabney_glucose_urgent"
+            }"#,
+        )
+        .unwrap();
+        assert!(dispatch.delivered);
+        assert_eq!(dispatch.notification_id, 123456);
     }
 }

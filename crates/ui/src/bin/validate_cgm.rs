@@ -20,6 +20,10 @@ use ui::mental_health_cgm::{
     summarize_commercial_glucose_with_window, ClinicalGlucoseSummary, GlucoseMonitor,
     GlucoseWindow, ValidationLevel, SAMPLE_APPLE_HEALTH_XML, SAMPLE_HEALTH_BRIDGE_JSON,
 };
+use ui::mental_health_cgm_alerts::{
+    evaluate_window_range_alerts, format_glucose_reading_honestly, AlertDispatchState,
+    GlucoseAlertConfig, RangeBreachEpisode, WindowRangeAlertSummary,
+};
 use ui::mental_health_cgm_analytics::{
     analyze_glucose_trace, AdvancedGlucoseAnalytics, EpisodeKind, GlycemicEpisode,
 };
@@ -45,6 +49,11 @@ Options:
   --episodes                             Print sustained ATTD episodes (>=15m) & 15-min velocity (RoC)
   --sessions                             Print continuous sensor wear sessions & gaps (>=2h)
   --compare                              Print trailing 14-day vs prior 14-day comparison table
+  --alerts                               Print target-range alert evaluation, custom TIR/TBR/TAR & breaches
+  --target-low <mg/dL>                   Override target low alert threshold (default: 70)
+  --target-high <mg/dL>                  Override target high alert threshold (default: 140)
+  --urgent-low <mg/dL>                   Override urgent low alert threshold (default: 55)
+  --urgent-high <mg/dL>                  Override urgent high alert threshold (default: 180)
   --brief <path>                         Write local-only clinician Markdown brief (keep outside Git)
   --export-bridge-json <path>            Write normalized dabney.health_bridge.v1 JSON locally (keep outside Git)
   --json                                 Emit machine-readable JSON diagnostics, summary & analytics to stdout
@@ -363,6 +372,148 @@ fn print_period_comparison(analytics: &AdvancedGlucoseAnalytics) {
     );
 }
 
+fn parse_threshold_arg(raw: &str) -> Option<f64> {
+    let val = raw.trim().parse::<f64>().ok()?;
+    val.is_finite().then_some(val)
+}
+
+fn build_cli_alert_config(
+    target_low: Option<f64>,
+    target_high: Option<f64>,
+    urgent_low: Option<f64>,
+    urgent_high: Option<f64>,
+) -> GlucoseAlertConfig {
+    let mut cfg = GlucoseAlertConfig::default();
+    if let Some(low) = target_low {
+        cfg.low_mg_dl = low;
+    }
+    if let Some(high) = target_high {
+        cfg.high_mg_dl = high;
+    }
+    if let Some(ulow) = urgent_low {
+        cfg.urgent_low_mg_dl = ulow;
+    } else if cfg.low_mg_dl <= cfg.urgent_low_mg_dl {
+        cfg.urgent_low_mg_dl = (cfg.low_mg_dl - 15.0).max(45.0);
+    }
+    if let Some(uhigh) = urgent_high {
+        cfg.urgent_high_mg_dl = uhigh;
+    } else if cfg.high_mg_dl >= cfg.urgent_high_mg_dl {
+        cfg.urgent_high_mg_dl = if (cfg.high_mg_dl - 180.0).abs() < 1e-6 {
+            250.0
+        } else {
+            (cfg.high_mg_dl + 40.0).min(350.0)
+        };
+    }
+    cfg.sanitized()
+}
+
+fn print_range_alerts(summary: &WindowRangeAlertSummary) {
+    println!(
+        "\nTarget-Range Alerts ({:.0}–{:.0} mg/dL · urgent <{:.0} / >{:.0} mg/dL):",
+        summary.target_low_mg_dl,
+        summary.target_high_mg_dl,
+        summary.urgent_low_mg_dl,
+        summary.urgent_high_mg_dl,
+    );
+    println!(
+        "  Custom TIR / TBR / TAR: {:.1}% in-target · {:.1}% below (<{:.0}) · {:.1}% above (>{:.0})",
+        summary.time_in_target_pct,
+        summary.time_below_target_pct,
+        summary.target_low_mg_dl,
+        summary.time_above_target_pct,
+        summary.target_high_mg_dl,
+    );
+    println!(
+        "  Urgent readings:        {} urgent low (<{:.0}) · {} urgent high (>{:.0})",
+        summary.urgent_low_readings,
+        summary.urgent_low_mg_dl,
+        summary.urgent_high_readings,
+        summary.urgent_high_mg_dl,
+    );
+
+    let latest = &summary.latest;
+    if let Some(val) = latest.latest_reading_mg_dl {
+        let formatted = format_glucose_reading_honestly(val, latest.latest_bound);
+        let status = if latest.in_target_range {
+            "In target range"
+        } else {
+            "OUT OF TARGET RANGE"
+        };
+        println!(
+            "  Latest reading:         {} at {} — {}",
+            formatted,
+            latest.latest_timestamp.as_deref().unwrap_or("—"),
+            status
+        );
+    }
+
+    if let Some(alert) = &latest.active_alert {
+        println!(
+            "  Active alert:           [{}] {}",
+            alert.severity.slug().to_ascii_uppercase(),
+            alert.in_app_title
+        );
+        println!("  Detail:                 {}", alert.in_app_detail);
+        println!(
+            "  Lock-screen copy:       {} — {}",
+            alert.os_title, alert.os_body
+        );
+        println!(
+            "  OS dispatch:            {}",
+            if latest.should_dispatch_os {
+                "would notify".to_string()
+            } else {
+                format!(
+                    "suppressed ({})",
+                    latest
+                        .suppressed_reason
+                        .as_deref()
+                        .unwrap_or("cooldown/dedup")
+                )
+            }
+        );
+    } else if let Some(reason) = &latest.suppressed_reason {
+        println!("  Active alert:           None ({reason})");
+    } else {
+        println!("  Active alert:           None (latest reading within target range)");
+    }
+
+    if summary.breaches.is_empty() {
+        println!("  Breach episodes:        0 in this window.");
+    } else {
+        let recent: Vec<&RangeBreachEpisode> = summary.breaches.iter().rev().take(8).collect();
+        println!(
+            "  Breach episodes:        {} total in window (up to 8 most recent):",
+            summary.breaches.len()
+        );
+        println!(
+            "    {:<20} {:<26} {:<26} {:>9} {:>5} {:>7} {:>6}",
+            "Severity", "Start", "End", "Duration", "Rdgs", "Extreme", "Cap"
+        );
+        for b in recent {
+            let cap = if b.sensor_capped {
+                if b.severity.is_low() {
+                    "floor"
+                } else {
+                    "ceil"
+                }
+            } else {
+                "—"
+            };
+            println!(
+                "    {:<20} {:<26} {:<26} {:>9} {:>5} {:>7.0} {:>6}",
+                b.severity.label(),
+                b.start_timestamp,
+                b.end_timestamp,
+                format_duration_minutes(b.duration_minutes),
+                b.reading_count,
+                b.extreme_mg_dl,
+                cap
+            );
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     if args.is_empty() || args.iter().any(|a| a == "-h" || a == "--help") {
@@ -384,6 +535,11 @@ fn main() -> ExitCode {
     let mut show_episodes = false;
     let mut show_sessions = false;
     let mut show_compare = false;
+    let mut show_alerts = false;
+    let mut target_low_override: Option<f64> = None;
+    let mut target_high_override: Option<f64> = None;
+    let mut urgent_low_override: Option<f64> = None;
+    let mut urgent_high_override: Option<f64> = None;
     let mut json_output = false;
 
     let mut i = 0;
@@ -447,6 +603,66 @@ fn main() -> ExitCode {
             "--compare" => {
                 show_compare = true;
                 i += 1;
+            }
+            "--alerts" => {
+                show_alerts = true;
+                i += 1;
+            }
+            "--target-low" => {
+                let Some(val) = args.get(i + 1) else {
+                    eprintln!("Missing value for --target-low");
+                    return ExitCode::from(2);
+                };
+                match parse_threshold_arg(val) {
+                    Some(v) => target_low_override = Some(v),
+                    None => {
+                        eprintln!("Invalid --target-low `{val}` (expected numeric mg/dL).");
+                        return ExitCode::from(2);
+                    }
+                }
+                i += 2;
+            }
+            "--target-high" => {
+                let Some(val) = args.get(i + 1) else {
+                    eprintln!("Missing value for --target-high");
+                    return ExitCode::from(2);
+                };
+                match parse_threshold_arg(val) {
+                    Some(v) => target_high_override = Some(v),
+                    None => {
+                        eprintln!("Invalid --target-high `{val}` (expected numeric mg/dL).");
+                        return ExitCode::from(2);
+                    }
+                }
+                i += 2;
+            }
+            "--urgent-low" => {
+                let Some(val) = args.get(i + 1) else {
+                    eprintln!("Missing value for --urgent-low");
+                    return ExitCode::from(2);
+                };
+                match parse_threshold_arg(val) {
+                    Some(v) => urgent_low_override = Some(v),
+                    None => {
+                        eprintln!("Invalid --urgent-low `{val}` (expected numeric mg/dL).");
+                        return ExitCode::from(2);
+                    }
+                }
+                i += 2;
+            }
+            "--urgent-high" => {
+                let Some(val) = args.get(i + 1) else {
+                    eprintln!("Missing value for --urgent-high");
+                    return ExitCode::from(2);
+                };
+                match parse_threshold_arg(val) {
+                    Some(v) => urgent_high_override = Some(v),
+                    None => {
+                        eprintln!("Invalid --urgent-high `{val}` (expected numeric mg/dL).");
+                        return ExitCode::from(2);
+                    }
+                }
+                i += 2;
             }
             "--brief" => {
                 let Some(val) = args.get(i + 1) else {
@@ -548,6 +764,20 @@ fn main() -> ExitCode {
         Some(&import.readings),
     );
     let sat_caveat = saturation_caveat_text(&summary);
+    let include_range_alerts = show_alerts
+        || target_low_override.is_some()
+        || target_high_override.is_some()
+        || urgent_low_override.is_some()
+        || urgent_high_override.is_some();
+    let range_alerts = include_range_alerts.then(|| {
+        let alert_cfg = build_cli_alert_config(
+            target_low_override,
+            target_high_override,
+            urgent_low_override,
+            urgent_high_override,
+        );
+        evaluate_window_range_alerts(&windowed, &alert_cfg, &AlertDispatchState::default())
+    });
 
     if let Some(out_path) = brief_path {
         // Pass neutral baseline sleep (7.5h) to cadence summary so absent self-reported sleep does
@@ -575,7 +805,7 @@ fn main() -> ExitCode {
     }
 
     if json_output {
-        let report = serde_json::json!({
+        let mut report = serde_json::json!({
             "source": source_name,
             "monitor": import.monitor.display_name(),
             "monitor_slug": import.monitor.slug(),
@@ -612,6 +842,12 @@ fn main() -> ExitCode {
             },
             "analytics": analytics,
         });
+        if let (Some(alerts), Some(obj)) = (&range_alerts, report.as_object_mut()) {
+            obj.insert(
+                "range_alerts".to_string(),
+                serde_json::to_value(alerts).unwrap_or(serde_json::Value::Null),
+            );
+        }
         println!(
             "{}",
             serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string())
@@ -715,6 +951,9 @@ fn main() -> ExitCode {
     print_circadian_summary(&analytics);
     print_episode_counts(&analytics);
 
+    if let Some(alerts) = &range_alerts {
+        print_range_alerts(alerts);
+    }
     if show_episodes {
         print_episodes_detail(&analytics);
     }
@@ -763,5 +1002,30 @@ mod tests {
             saturation_caveat_text(&summary).is_some(),
             summary.has_sensor_saturation()
         );
+    }
+
+    #[test]
+    fn cli_alert_config_builds_sanitized_thresholds_and_promotes_ada_urgent_high() {
+        let default_cfg = build_cli_alert_config(None, None, None, None);
+        assert_eq!(default_cfg.low_mg_dl, 70.0);
+        assert_eq!(default_cfg.high_mg_dl, 140.0);
+        assert_eq!(default_cfg.urgent_low_mg_dl, 55.0);
+        assert_eq!(default_cfg.urgent_high_mg_dl, 180.0);
+
+        let ada_high_cfg = build_cli_alert_config(Some(70.0), Some(180.0), None, None);
+        assert_eq!(ada_high_cfg.low_mg_dl, 70.0);
+        assert_eq!(ada_high_cfg.high_mg_dl, 180.0);
+        assert_eq!(ada_high_cfg.urgent_low_mg_dl, 55.0);
+        assert_eq!(ada_high_cfg.urgent_high_mg_dl, 250.0);
+
+        let custom_cfg = build_cli_alert_config(Some(65.0), Some(150.0), Some(52.0), Some(210.0));
+        assert_eq!(custom_cfg.urgent_low_mg_dl, 52.0);
+        assert_eq!(custom_cfg.low_mg_dl, 65.0);
+        assert_eq!(custom_cfg.high_mg_dl, 150.0);
+        assert_eq!(custom_cfg.urgent_high_mg_dl, 210.0);
+
+        assert_eq!(parse_threshold_arg("70"), Some(70.0));
+        assert_eq!(parse_threshold_arg("NaN"), None);
+        assert_eq!(parse_threshold_arg("abc"), None);
     }
 }

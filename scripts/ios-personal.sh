@@ -53,10 +53,11 @@ if [ "$CLEAN_INIT" -eq 1 ] || [ ! -d "$IOS_GEN_DIR" ]; then
   cargo tauri ios init -c "$PERSONAL_CONFIG"
 fi
 
-# Copy clean-room HealthKit entitlements and Swift plugin source into the generated iOS project.
+# Copy clean-room HealthKit entitlements and Swift plugin sources into the generated iOS project.
 cp -f "$IOS_SRC_DIR/Personal.entitlements" "$IOS_GEN_DIR/dabney-app_iOS/dabney-app_iOS.entitlements"
-mkdir -p "$IOS_GEN_DIR/Sources/dabney-app/HealthKit"
+mkdir -p "$IOS_GEN_DIR/Sources/dabney-app/HealthKit" "$IOS_GEN_DIR/Sources/dabney-app/Alerts"
 cp -f "$IOS_SRC_DIR/Sources/HealthKitPlugin.swift" "$IOS_GEN_DIR/Sources/dabney-app/HealthKit/HealthKitPlugin.swift"
+cp -f "$IOS_SRC_DIR/Sources/GlucoseAlertPlugin.swift" "$IOS_GEN_DIR/Sources/dabney-app/Alerts/GlucoseAlertPlugin.swift"
 
 # Inject read-only NSHealthShareUsageDescription into Info.plist (never write-access NSHealthUpdateUsageDescription).
 INFO_PLIST="$IOS_GEN_DIR/dabney-app_iOS/Info.plist"

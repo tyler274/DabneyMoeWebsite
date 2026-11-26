@@ -326,9 +326,10 @@ else:
         1,
     )
 
-# Fail closed if any Health Connect or sensitive PHI-related permissions crept in.
+# Fail closed if any Health Connect, notification, or sensitive PHI-related permissions crept in.
 forbidden_permissions = [
     "android.permission.health.",
+    "android.permission.POST_NOTIFICATIONS",
     "android.permission.CAMERA",
     "android.permission.RECORD_AUDIO",
     "android.permission.ACCESS_FINE_LOCATION",
@@ -433,7 +434,7 @@ if [ "$MODE" = "apk" ] && command -v aapt2 >/dev/null 2>&1; then
     echo "Unexpected APK package name (expected $EXPECTED_PACKAGE)" >&2
     exit 1
   fi
-  if grep -qE "android\.permission\.(health\.|CAMERA|RECORD_AUDIO|ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION|READ_CONTACTS)" <<< "$BADGING"; then
+  if grep -qE "android\.permission\.(health\.|POST_NOTIFICATIONS|CAMERA|RECORD_AUDIO|ACCESS_FINE_LOCATION|ACCESS_COARSE_LOCATION|READ_CONTACTS)" <<< "$BADGING"; then
     echo "Forbidden permission detected in built APK!" >&2
     exit 1
   fi
