@@ -22,12 +22,15 @@ When bumping a release, increment `bundle.android.versionCode` and `version` in 
 
 Official F-Droid compiles `moe.dabney.demo` from source using `docs/fdroid/moe.dabney.demo.yml` and signs it with F-Droid's release key:
 
-1. Ensure the release commit is on `main` and tagged `v1.0.0` on Codeberg (`https://codeberg.org/tyler274/dabney-moe-website`) and mirrored to GitLab (`https://gitlab.com/tyler274/dabney-moe-website`).
+> **3-month maturity requirement:** Official F-Droid requires new apps to have at least 3 months of public maintenance history before inclusion into main `fdroiddata`. Keep `RUSTUP_HOME` and `CARGO_HOME` in `$HOME` (outside `$PWD`) so F-Droid's source scanner passes with zero errors, and run `fdroid rewritemeta moe.dabney.demo` inside your `fdroiddata` fork to match `ruamel.yaml` blank-line and 80-column wrapping rules.
+
+1. Ensure the release commit is on `main` and tagged on Codeberg (`https://codeberg.org/tyler274/dabney-moe-website`) and mirrored to GitLab (`https://gitlab.com/tyler274/dabney-moe-website`).
 2. Fork [`https://gitlab.com/fdroid/fdroiddata`](https://gitlab.com/fdroid/fdroiddata) on GitLab.
-3. Copy `docs/fdroid/moe.dabney.demo.yml` into `metadata/moe.dabney.demo.yml` inside your `fdroiddata` fork.
+3. Copy `docs/fdroid/moe.dabney.demo.yml` into `metadata/moe.dabney.demo.yml` inside your `fdroiddata` fork and normalize formatting with `fdroid rewritemeta moe.dabney.demo`.
 4. Validate locally with `fdroidserver` if installed:
    ```bash
    fdroid readmeta
+   fdroid rewritemeta moe.dabney.demo
    fdroid lint moe.dabney.demo
    fdroid build -v -l moe.dabney.demo
    ```
