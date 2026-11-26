@@ -22,7 +22,7 @@ When bumping a release, increment `bundle.android.versionCode` and `version` in 
 
 Official F-Droid compiles `moe.dabney.demo` from source using `docs/fdroid/moe.dabney.demo.yml` and signs it with F-Droid's release key:
 
-1. Ensure the release commit is merged to `main` and tagged `v1.0.0` on GitHub (`https://github.com/tyler274/DabneyMoeWebsite`).
+1. Ensure the release commit is on `main` and tagged `v1.0.0` on Codeberg (`https://codeberg.org/tyler274/dabney-moe-website`) and mirrored to GitLab (`https://gitlab.com/tyler274/dabney-moe-website`).
 2. Fork [`https://gitlab.com/fdroid/fdroiddata`](https://gitlab.com/fdroid/fdroiddata) on GitLab.
 3. Copy `docs/fdroid/moe.dabney.demo.yml` into `metadata/moe.dabney.demo.yml` inside your `fdroiddata` fork.
 4. Validate locally with `fdroidserver` if installed:
@@ -35,7 +35,7 @@ Official F-Droid compiles `moe.dabney.demo` from source using `docs/fdroid/moe.d
 
 ## Track 2: Fast-Track F-Droid via IzzyOnDroid (`apt.izzysoft.de/fdroid`)
 
-IzzyOnDroid tracks signed universal release APKs attached to GitHub Releases directly and ingests `fastlane/metadata/android/en-US/` automatically (typically live within 24 hours after initial review):
+IzzyOnDroid tracks signed universal release APKs attached to Codeberg/GitLab Releases directly and ingests `fastlane/metadata/android/en-US/` automatically (typically live within 24 hours after initial review):
 
 1. Build and verify the signed universal release APK (`arm64-v8a` + `x86_64`, 16 KB ELF aligned):
    ```bash
@@ -48,5 +48,5 @@ IzzyOnDroid tracks signed universal release APKs attached to GitHub Releases dir
      scripts/android-release.sh --apk --target aarch64 --target x86_64
    '
    ```
-2. Publish GitHub Release `v1.0.0` attaching `dabney-demo-release.apk` (and `dabney-demo-release.apk.sha256`).
-3. Open a New App inclusion issue in IzzyOnDroid pointing to `https://github.com/tyler274/DabneyMoeWebsite` (MIT License, Fastlane metadata enabled, zero trackers/blobs).
+2. Publish Codeberg Release `v1.0.0` at `https://codeberg.org/tyler274/dabney-moe-website/releases` attaching `dabney-demo-release.apk` (and `dabney-demo-release.apk.sha256`).
+3. Open an **App Inclusion Request** at `https://codeberg.org/IzzyOnDroid/repodata/issues/new/choose` pointing to `https://codeberg.org/tyler274/dabney-moe-website` (MIT License, Fastlane metadata enabled, zero trackers/blobs).

@@ -6,12 +6,12 @@ AuthorName: Tyler Port
 AuthorEmail: tp@dabney.moe
 AuthorWebSite: https://dabney.moe
 WebSite: https://dabney.moe/clinical
-SourceCode: https://github.com/tyler274/DabneyMoeWebsite
-IssueTracker: https://github.com/tyler274/DabneyMoeWebsite/issues
-Changelog: https://github.com/tyler274/DabneyMoeWebsite/releases
+SourceCode: https://codeberg.org/tyler274/dabney-moe-website
+IssueTracker: https://codeberg.org/tyler274/dabney-moe-website/issues
+Changelog: https://codeberg.org/tyler274/dabney-moe-website/releases
 AutoName: Dabney.moe Clinical Demo
 RepoType: git
-Repo: https://github.com/tyler274/DabneyMoeWebsite.git
+Repo: https://codeberg.org/tyler274/dabney-moe-website.git
 Builds:
   - versionName: 1.0.0
     versionCode: 1
