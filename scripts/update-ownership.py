@@ -125,6 +125,12 @@ DEFAULT_REPLACEMENT_LEDGER: list[dict[str, str]] = [
         "replacement": "Two-stage Chinese-wall REA rewrites (physician-sample 85.7% -> 91.6%; 5/5 Chromium suites + PG 16 PASS) & automated CI ownership sync",
         "owner": "100% clean-room @tyler274",
     },
+    {
+        "category": "Standalone workspace Wave 4 final Tier-3 crates, apps & ops (b1ffa981f)",
+        "removed": "Last 3 Tier-3 Rust crates (physician-wire, physician-auth, mobile) + 56 multi-author app, client, API, extension, book & ops files",
+        "replacement": "Two-stage Chinese-wall REA rewrites (149 Evidence JSONs; 100% of 38 Rust crates >=90% Tyler or Reclaimed; full workspace Clippy host+wasm32 & all PG 16 + 5/5 Chromium suites PASS)",
+        "owner": "100% clean-room @tyler274",
+    },
 ]
 
 DEFAULT_REA_EVIDENCE: list[dict[str, Any]] = [
@@ -181,6 +187,30 @@ DEFAULT_REA_EVIDENCE: list[dict[str, Any]] = [
         "evidence_id": "ev_123639bb71aa92f2b354f718637b3d104c57178e2fdfc46be8f995ce9f7f3fc3",
         "bundles": 89,
         "scope": "Black-box specs for 33 multi-contributor physician-sample server, worker & browser test modules (26/26 site + 4/4 auth + shell + sign-in + 6-path TLA+ Chromium E2E PASS)",
+    },
+    {
+        "operation": "inspect_rust_binary + capture_process (Wave 4 Wire/Auth · 33 bundles)",
+        "evidence_id": "ev_453346e01cc30ac9448c60538abc82d070bc86e59bebd8cbb3fa3dd9e5d5e90d",
+        "bundles": 33,
+        "scope": "Black-box specs for physician-wire (98.6% Tyler, 11/11 tests) and physician-auth (95.3% Tyler, 72/72 lib/migration/publication/PG 16 tests PASS)",
+    },
+    {
+        "operation": "inspect_rust_binary + capture_process (Wave 4 Mobile/Duet · 38 bundles)",
+        "evidence_id": "ev_1e89e8c01b44bc02ab5e0216a92fcba4beedc6b6988835fa95be72eacc5d39d7",
+        "bundles": 38,
+        "scope": "Black-box specs for mobile CDP harness (95.2% Tyler), duet-client (96.8%, 48/48), duet-app (95.3%, 31/31) & duet-api (98.2%, 63/63 PG 16 + OpenAPI tests PASS)",
+    },
+    {
+        "operation": "inspect_rust_binary + capture_process (Wave 4 Physician App/Helpers · 33 bundles)",
+        "evidence_id": "ev_e195abfe1c3ad6d76302f40d65f5ac98fc596206cd408bff21121b698f7d683c",
+        "bundles": 33,
+        "scope": "Black-box specs for physician-app shell/panels/tabs/status/CSS (93.1% Tyler, 121/121 + 5/5 Chromium suites), front-door harness (99.1%, 14/14 PG 16) & iOS bridge (97.0%)",
+    },
+    {
+        "operation": "inspect_rust_binary + capture_process (Wave 4 Ops/Extension/Book · 45 bundles)",
+        "evidence_id": "ev_e950677700db44e8ab2f54415365bdcd0efefdece9a34817e2f2a0637660b119",
+        "bundles": 45,
+        "scope": "Black-box specs for 30 ops/config/book/extension/script files (dev/ 98.1%, extension/ 97.2%, scripts/ 97.0%, book/ 91.2%; 1,157 lychee links + 11/11 connector + 33/33 CI unit tests PASS)",
     },
 ]
 
