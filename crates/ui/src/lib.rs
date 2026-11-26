@@ -24,6 +24,8 @@ pub mod local_ai_chat;
 pub mod mental_health;
 pub mod mental_health_3d;
 pub mod mental_health_cgm;
+pub mod mental_health_cgm_analytics;
+pub mod mental_health_cgm_views;
 pub mod mental_health_episodes;
 pub mod mental_health_exports;
 pub mod mental_health_lingo;
