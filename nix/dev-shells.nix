@@ -23,6 +23,7 @@
     # `doppler` is the secrets-management CLI: it backs the Terraform `doppler`
     # provider and can inject the deploy secrets as `TF_VAR_*`
     # (`doppler run --name-transformer tf-var -- tofu apply`).
+    # `flarectl` is Cloudflare's official zone/DNS/firewall CLI.
     packages = [
       rustToolchain
     ]
@@ -34,6 +35,7 @@
       pkgs.mold
       pkgs.google-cloud-sdk
       pkgs.doppler
+      pkgs.flarectl
     ];
 
     PKG_CONFIG_PATH = pkgConfigPath;
@@ -73,6 +75,7 @@
       pkgs.opentofu
       pkgs.google-cloud-sdk
       pkgs.doppler
+      pkgs.flarectl
     ];
   };
 
