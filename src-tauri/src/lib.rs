@@ -1,6 +1,8 @@
 //! Tauri application entry point shared by desktop and mobile targets.
 
 #[cfg(feature = "health-connect")]
+pub mod alerts;
+#[cfg(feature = "health-connect")]
 pub mod health_connect;
 #[cfg(feature = "health-connect")]
 pub mod local_llm;
@@ -15,7 +17,9 @@ pub fn run() {
         feature = "health-connect",
         any(target_os = "android", target_os = "ios")
     ))]
-    let builder = builder.plugin(health_connect::init_plugin());
+    let builder = builder
+        .plugin(health_connect::init_plugin())
+        .plugin(alerts::init_plugin());
 
     #[cfg(all(feature = "health-connect", target_os = "android"))]
     let builder = builder
@@ -24,6 +28,9 @@ pub fn run() {
 
     #[cfg(feature = "health-connect")]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        alerts::app_alerts_status,
+        alerts::app_alerts_request_permission,
+        alerts::app_alerts_send_notification,
         health_connect::health_connect_status,
         health_connect::health_connect_request_permission,
         health_connect::health_connect_read_glucose,

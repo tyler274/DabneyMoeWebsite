@@ -94,12 +94,13 @@ if [ -d "$ROOT/src-tauri/icons/android" ]; then
   cp -rf "$ROOT/src-tauri/icons/android"/. "$ANDROID_DIR/app/src/main/res/"
 fi
 
-# Copy clean-room Kotlin Health Connect, encrypted Personal Vault, and on-device LLM plugins.
+# Copy clean-room Kotlin Health Connect, encrypted Personal Vault, on-device LLM, and local alert plugins.
 mkdir -p "$JAVA_PKG_DIR"
 cp -f "$KOTLIN_SRC_DIR/HealthConnectPlugin.kt" "$JAVA_PKG_DIR/HealthConnectPlugin.kt"
 cp -f "$KOTLIN_SRC_DIR/PermissionsRationaleActivity.kt" "$JAVA_PKG_DIR/PermissionsRationaleActivity.kt"
 cp -f "$KOTLIN_SRC_DIR/PersonalVaultPlugin.kt" "$JAVA_PKG_DIR/PersonalVaultPlugin.kt"
 cp -f "$KOTLIN_SRC_DIR/LocalLlmPlugin.kt" "$JAVA_PKG_DIR/LocalLlmPlugin.kt"
+cp -f "$KOTLIN_SRC_DIR/GlucoseAlertPlugin.kt" "$JAVA_PKG_DIR/GlucoseAlertPlugin.kt"
 
 # Copy personal ProGuard/R8 keep rules for Tauri plugins, ML Kit ComponentRegistrar, and AICore.
 # Tauri's generated app/build.gradle.kts automatically includes every app/**/*.pro file.
@@ -305,6 +306,14 @@ elif "com.google.android.aicore" not in manifest:
         1,
     )
 
+# Inject Android 13+ POST_NOTIFICATIONS for opt-in local glucose range alerts.
+if "android.permission.POST_NOTIFICATIONS" not in manifest:
+    manifest = manifest.replace(
+        "<application",
+        '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <application',
+        1,
+    )
+
 # Inject Android 13 rationale activity + Android 14+ VIEW_PERMISSION_USAGE alias.
 if "PermissionsRationaleActivity" not in manifest:
     rationale_xml = """
@@ -343,7 +352,7 @@ for perm in forbidden_unrelated:
         raise SystemExit(f"Forbidden unrelated permission found in {manifest_path}: {perm}")
 
 manifest_path.write_text(manifest, encoding="utf-8")
-print("Patched personal Gradle (Health Connect 1.1.0, 16 KB packaging) and manifest (READ_BLOOD_GLUCOSE + rationale).")
+print("Patched personal Gradle (Health Connect 1.1.0, 16 KB packaging) and manifest (READ_BLOOD_GLUCOSE, POST_NOTIFICATIONS + rationale).")
 PY
 
 BUILD_ARGS=("--$MODE" "-c" "$PERSONAL_CONFIG" "--features" "health-connect")
@@ -422,6 +431,10 @@ if [ "$MODE" = "apk" ] && command -v aapt2 >/dev/null 2>&1; then
   fi
   if [[ "$BADGING" != *"uses-permission: name='android.permission.health.READ_BLOOD_GLUCOSE'"* ]]; then
     echo "Missing android.permission.health.READ_BLOOD_GLUCOSE in built personal APK!" >&2
+    exit 1
+  fi
+  if [[ "$BADGING" != *"uses-permission: name='android.permission.POST_NOTIFICATIONS'"* ]]; then
+    echo "Missing android.permission.POST_NOTIFICATIONS in built personal APK!" >&2
     exit 1
   fi
   XMLTREE="$(aapt2 dump xmltree "$ARTIFACT" --file AndroidManifest.xml)"

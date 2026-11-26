@@ -122,7 +122,35 @@ fn push_octahedron(buf: &mut Vec<f32>, center: [f32; 3], radius: f32, color: [f3
     }
 }
 
-fn pair_ribbon_colors(a: &LingoReading, b: &LingoReading) -> ([f32; 4], [f32; 4], [f32; 4]) {
+fn sanitize_target_range(target_low_mg_dl: f64, target_high_mg_dl: f64) -> (f64, f64) {
+    let mut low = if target_low_mg_dl.is_finite() {
+        target_low_mg_dl
+    } else {
+        70.0
+    };
+    let mut high = if target_high_mg_dl.is_finite() {
+        target_high_mg_dl
+    } else {
+        140.0
+    };
+    if low > high {
+        std::mem::swap(&mut low, &mut high);
+    }
+    low = low.clamp(45.0, 340.0);
+    high = high.clamp(55.0, 350.0);
+    if high - low < 10.0 {
+        high = (low + 10.0).min(350.0);
+        low = low.min(high - 10.0);
+    }
+    (low, high)
+}
+
+fn pair_ribbon_colors(
+    a: &LingoReading,
+    b: &LingoReading,
+    target_low_mg_dl: f64,
+    target_high_mg_dl: f64,
+) -> ([f32; 4], [f32; 4], [f32; 4]) {
     if a.bound.is_floor_capped() || b.bound.is_floor_capped() {
         (COLOR_FLOOR_CAP, COLOR_FLOOR_CAP_CURTAIN, COLOR_FLOOR_CAP)
     } else if a.bound.is_ceiling_capped() || b.bound.is_ceiling_capped() {
@@ -131,23 +159,23 @@ fn pair_ribbon_colors(a: &LingoReading, b: &LingoReading) -> ([f32; 4], [f32; 4]
             COLOR_CEILING_CAP_CURTAIN,
             COLOR_CEILING_CAP,
         )
-    } else if a.glucose_mg_dl < 70.0 || b.glucose_mg_dl < 70.0 {
+    } else if a.glucose_mg_dl < target_low_mg_dl || b.glucose_mg_dl < target_low_mg_dl {
         (COLOR_HYPO, COLOR_HYPO_CURTAIN, COLOR_HYPO)
-    } else if a.glucose_mg_dl > 140.0 || b.glucose_mg_dl > 140.0 {
+    } else if a.glucose_mg_dl > target_high_mg_dl || b.glucose_mg_dl > target_high_mg_dl {
         (COLOR_SPIKE, COLOR_SPIKE_CURTAIN, [1.0, 0.92, 0.65, 1.0])
     } else {
         (COLOR_STEADY, COLOR_STEADY_CURTAIN, [0.82, 0.98, 1.0, 1.0])
     }
 }
 
-fn point_color(r: &LingoReading) -> [f32; 4] {
+fn point_color(r: &LingoReading, target_low_mg_dl: f64, target_high_mg_dl: f64) -> [f32; 4] {
     if r.bound.is_floor_capped() {
         COLOR_FLOOR_CAP
     } else if r.bound.is_ceiling_capped() {
         COLOR_CEILING_CAP
-    } else if r.glucose_mg_dl < 70.0 {
+    } else if r.glucose_mg_dl < target_low_mg_dl {
         COLOR_HYPO
-    } else if r.glucose_mg_dl > 140.0 {
+    } else if r.glucose_mg_dl > target_high_mg_dl {
         COLOR_SPIKE
     } else {
         COLOR_STEADY
@@ -197,11 +225,24 @@ fn select_notable_floor_caps(readings: &[LingoReading], max_markers: usize) -> V
     reps.into_iter().map(|i| readings[i].clone()).collect()
 }
 
-/// Build the 3D triangle & line scene for Abbott Lingo glucose + mood/anxiety check-ins.
+/// Build the 3D triangle & line scene for Abbott Lingo glucose + mood/anxiety check-ins
+/// using the default tight metabolic target band (`70–140 mg/dL`).
 pub fn build_lingo_3d_scene(
     readings: &[LingoReading],
     checkins: &[MentalHealthCheckIn],
 ) -> Chart3DScene {
+    build_lingo_3d_scene_with_range(readings, checkins, 70.0, 140.0)
+}
+
+/// Build the 3D triangle & line scene for glucose + mood/anxiety check-ins with a custom
+/// translucent emerald target range (`[target_low_mg_dl, target_high_mg_dl]`).
+pub fn build_lingo_3d_scene_with_range(
+    readings: &[LingoReading],
+    checkins: &[MentalHealthCheckIn],
+    target_low_mg_dl: f64,
+    target_high_mg_dl: f64,
+) -> Chart3DScene {
+    let (target_low, target_high) = sanitize_target_range(target_low_mg_dl, target_high_mg_dl);
     let mut scene = Chart3DScene::default();
     let max_hour = readings
         .iter()
@@ -215,7 +256,8 @@ pub fn build_lingo_3d_scene(
         .iter()
         .map(|r| r.glucose_mg_dl)
         .fold(180.0_f64, f64::max)
-        .max(180.0);
+        .max(180.0)
+        .max(target_high);
 
     let x_for = |h: f64| -1.55 + ((h / max_hour) as f32) * 3.10;
     let y_for_g = |g: f64| (((g.clamp(min_g, max_g) - min_g) / (max_g - min_g)) as f32) * 1.55;
@@ -234,33 +276,38 @@ pub fn build_lingo_3d_scene(
         push_vertex(&mut scene.lines, [1.55, 0.0, z], grid_col);
     }
 
-    // 2. Translucent emerald 70–140 mg/dL target planes + wireframe rails + subtle 180 mg/dL clinical rail
-    let y70 = y_for_g(70.0);
-    let y140 = y_for_g(140.0);
+    // 2. Translucent emerald target zone + wireframe rails + subtle 180 mg/dL clinical rail
+    let y_low = y_for_g(target_low);
+    let y_high = y_for_g(target_high);
     let y180 = y_for_g(180.0);
     let rail_col = [0.20, 0.83, 0.60, 0.55];
-    for y in [y70, y140] {
+    for y in [y_low, y_high] {
         push_vertex(&mut scene.lines, [-1.55, y, -0.14], rail_col);
         push_vertex(&mut scene.lines, [1.55, y, -0.14], rail_col);
         push_vertex(&mut scene.lines, [-1.55, y, 0.14], rail_col);
         push_vertex(&mut scene.lines, [1.55, y, 0.14], rail_col);
     }
-    let hyper_rail_col = [0.98, 0.75, 0.14, 0.35];
-    push_vertex(&mut scene.lines, [-1.55, y180, -0.14], hyper_rail_col);
-    push_vertex(&mut scene.lines, [1.55, y180, -0.14], hyper_rail_col);
+    if (target_high - 180.0).abs() > 1.0 {
+        let hyper_rail_col = [0.98, 0.75, 0.14, 0.35];
+        push_vertex(&mut scene.lines, [-1.55, y180, -0.14], hyper_rail_col);
+        push_vertex(&mut scene.lines, [1.55, y180, -0.14], hyper_rail_col);
+    }
     push_quad(
         &mut scene.translucent_triangles,
-        [-1.55, y70, -0.14],
-        [1.55, y70, -0.14],
-        [1.55, y140, -0.14],
-        [-1.55, y140, -0.14],
+        [-1.55, y_low, -0.14],
+        [1.55, y_low, -0.14],
+        [1.55, y_high, -0.14],
+        [-1.55, y_high, -0.14],
         [0.20, 0.83, 0.60, 0.14],
     );
 
     // 3. Gap-aware 3D Glucose ribbons + curtains (each contiguous segment rendered independently
     //    so multi-hour / multi-day sensor-off gaps NEVER draw phantom bridges or curtains).
     let segments = downsample_segments_for_chart(readings, 320, DEFAULT_CHART_GAP_HOURS);
-    let spike_peaks = select_notable_spike_peaks(readings, 36);
+    let spike_peaks: Vec<LingoReading> = select_notable_spike_peaks(readings, 36)
+        .into_iter()
+        .filter(|r| r.bound.is_ceiling_capped() || r.glucose_mg_dl > target_high)
+        .collect();
     let floor_caps = select_notable_floor_caps(readings, 24);
     let z_front = 0.08_f32;
     let z_back = -0.08_f32;
@@ -274,7 +321,7 @@ pub fn build_lingo_3d_scene(
                 &mut scene.opaque_triangles,
                 [x, y, 0.0],
                 0.04,
-                point_color(r),
+                point_color(r, target_low, target_high),
             );
             continue;
         }
@@ -286,7 +333,8 @@ pub fn build_lingo_3d_scene(
             let x1 = x_for(b.hour_offset);
             let y1 = y_for_g(b.glucose_mg_dl);
 
-            let (top_col, curtain_col, ridge_col) = pair_ribbon_colors(a, b);
+            let (top_col, curtain_col, ridge_col) =
+                pair_ribbon_colors(a, b, target_low, target_high);
 
             // Top 3D ribbon face (opaque)
             push_quad(
@@ -392,6 +440,7 @@ pub fn build_lingo_3d_scene(
 pub fn LingoMood3DChart(
     readings: Signal<Vec<LingoReading>>,
     checkins: Signal<Vec<MentalHealthCheckIn>>,
+    #[prop(optional)] target_range: Option<Signal<(f64, f64)>>,
 ) -> impl IntoView {
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
     let yaw = RwSignal::new(-0.42_f32);
@@ -401,10 +450,27 @@ pub fn LingoMood3DChart(
     let last_xy = RwSignal::new((0_i32, 0_i32));
     let gl_error = RwSignal::new(Option::<String>::None);
 
-    // Memoize geometry construction strictly on data changes so camera orbit/zoom NEVER
-    // clones readings or rebuilds the 3D scene on `mousemove`.
+    let active_range = Memo::new(move |_| {
+        target_range
+            .map(|sig| sig.get())
+            .map(|(lo, hi)| sanitize_target_range(lo, hi))
+            .unwrap_or((70.0, 140.0))
+    });
+
+    // Memoize geometry construction strictly on data & target-range changes so camera orbit/zoom
+    // NEVER clones readings or rebuilds the 3D scene on `mousemove`.
     let scene_memo = Memo::new(move |_| {
-        readings.with(|r| checkins.with(|c| Arc::new(build_lingo_3d_scene(r, c))))
+        let (target_low, target_high) = active_range.get();
+        readings.with(|r| {
+            checkins.with(|c| {
+                Arc::new(build_lingo_3d_scene_with_range(
+                    r,
+                    c,
+                    target_low,
+                    target_high,
+                ))
+            })
+        })
     });
     let span_label =
         Memo::new(move |_| readings.with(|r| checkins.with(|c| format_trace_span_label(r, c))));
@@ -521,10 +587,15 @@ pub fn LingoMood3DChart(
                 <p class="text-xs text-amber-300">{format!("WebGL2 unavailable ({err}); switch to 2D SVG above.")}</p>
             })}
             <p class="text-xs text-slate-400">
-                {move || format!(
-                    "X-axis: {} timeline (gaps >2h broken cleanly) · Y-axis: glucose (mg/dL) with emerald 70–140 target plane, amber spikes, orange-red ceiling cap & crimson floor cap · Z-axis depth: Mood lane (front, emerald) & Anxiety lane (back, rose).",
-                    span_label.get()
-                )}
+                {move || {
+                    let (target_low, target_high) = active_range.get();
+                    format!(
+                        "X-axis: {} timeline (gaps >2h broken cleanly) · Y-axis: glucose (mg/dL) with emerald {:.0}–{:.0} target plane, amber excursions, orange-red ceiling cap & crimson floor cap · Z-axis depth: Mood lane (front, emerald) & Anxiety lane (back, rose).",
+                        span_label.get(),
+                        target_low,
+                        target_high,
+                    )
+                }}
             </p>
         </div>
     }
@@ -936,5 +1007,68 @@ mod tests {
         assert!(html.contains("Pure-Rust WebGL2 (glow + glam)"));
         assert!(html.contains("Reset 3D"));
         assert!(html.contains("X-axis: 14d timeline"));
+        assert!(html.contains("emerald 70–140 target plane"));
+
+        let custom_range = RwSignal::new((70.0_f64, 180.0_f64));
+        let custom_html = view! {
+            <LingoMood3DChart
+                readings=readings.into()
+                checkins=checkins.into()
+                target_range=custom_range.into()
+            />
+        }
+        .to_html();
+        assert!(custom_html.contains("emerald 70–180 target plane"));
+    }
+
+    #[test]
+    fn custom_target_range_shifts_emerald_rails_and_preserves_saturation_colors() {
+        let readings = vec![
+            synthetic_reading(0.0, 54.0, GlucoseReadingBound::BelowSensorFloor),
+            synthetic_reading(1.0, 155.0, GlucoseReadingBound::Measured),
+            synthetic_reading(2.0, 160.0, GlucoseReadingBound::Measured),
+            synthetic_reading(3.0, 201.0, GlucoseReadingBound::AboveSensorCeiling),
+        ];
+        let tight = build_lingo_3d_scene_with_range(&readings, &[], 70.0, 140.0);
+        let ada = build_lingo_3d_scene_with_range(&readings, &[], 70.0, 180.0);
+
+        let max_emerald_rail_y = |scene: &Chart3DScene| -> f32 {
+            scene
+                .lines
+                .chunks_exact(7)
+                .filter(|v| {
+                    (v[3] - 0.20).abs() < 1e-4
+                        && (v[4] - 0.83).abs() < 1e-4
+                        && (v[5] - 0.60).abs() < 1e-4
+                        && (v[6] - 0.55).abs() < 1e-4
+                })
+                .map(|v| v[1])
+                .fold(0.0_f32, f32::max)
+        };
+
+        let y_tight = max_emerald_rail_y(&tight);
+        let y_ada = max_emerald_rail_y(&ada);
+        assert!(
+            y_ada > y_tight + 0.25,
+            "expected ADA 180 mg/dL emerald rail ({y_ada}) to sit noticeably above tight 140 mg/dL rail ({y_tight})"
+        );
+
+        let has_color = |scene: &Chart3DScene, col: [f32; 4]| {
+            scene.opaque_triangles.chunks_exact(7).any(|v| {
+                (v[3] - col[0]).abs() < 1e-4
+                    && (v[4] - col[1]).abs() < 1e-4
+                    && (v[5] - col[2]).abs() < 1e-4
+            })
+        };
+        assert!(
+            has_color(&tight, COLOR_SPIKE),
+            "155–160 mg/dL should render as amber excursion under 70–140"
+        );
+        assert!(
+            !has_color(&ada, COLOR_SPIKE) && has_color(&ada, COLOR_STEADY),
+            "155–160 mg/dL should render as steady cyan under 70–180"
+        );
+        assert!(has_color(&ada, COLOR_FLOOR_CAP));
+        assert!(has_color(&ada, COLOR_CEILING_CAP));
     }
 }

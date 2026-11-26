@@ -95,14 +95,23 @@ Useful flags:
 - `--compare` — print a trailing 14-day vs prior 14-day comparison table
   (Mean, GMI, TIR, Tight TIR, TBR, Ceiling-Cap %), noting when the prior span
   is truncated by sensor gaps.
+- `--alerts` — evaluate target-range alerts over the selected window, printing
+  the latest reading status, custom target-range compliance (`Below` / `In` /
+  `Above` %), urgent reading counts, and recent target-range breach episodes.
+- `--target-low <mg/dL>` / `--target-high <mg/dL>` / `--urgent-low <mg/dL>` /
+  `--urgent-high <mg/dL>` — override target-range alert thresholds (defaults:
+  `70–140 mg/dL`, urgent `<55` / `>180 mg/dL`; sanitized monotonically within
+  `45–350 mg/dL`). Example:
+  `nix develop -c cargo run -p ui --features ssr --bin validate-cgm -- "$HOME/Downloads/lingo-glucose-export.csv" --window 14d --alerts --target-low 70 --target-high 180`
 - `--brief /tmp/clinician-brief.md` — write a local-only clinician visit
   Markdown brief enriched with windowed saturation caveats, sustained episodes,
   circadian summary, 14-day trend delta, and wear sessions/gaps (**keep
   personal outputs outside Git**).
 - `--json` — emit machine-readable JSON containing diagnostics (including
-  `out_of_range_rows`), windowed summary & saturation caveats, and the full
+  `out_of_range_rows`), windowed summary & saturation caveats, the full
   `analytics` payload (daily, episodes, circadian, rate of change, sessions,
-  gaps, and 14-day comparison).
+  gaps, and 14-day comparison), and `range_alerts` when `--alerts` or threshold
+  overrides are supplied.
 - `--export-bridge-json /tmp/lingo-bridge.json` — convert a real Lingo CSV or
   Apple Health `export.xml` into the canonical `dabney.health_bridge.v1` JSON
   envelope locally (keep outputs outside Git).
@@ -118,8 +127,8 @@ delaying or risking the public patient demo:
 
 | Build Flavor | Package / Bundle ID | Permissions | Distribution |
 | --- | --- | --- | --- |
-| **Public Demo** (shipped now) | `moe.dabney.demo` | Zero Health Connect, zero sensitive device permissions (enforced fail-closed by `scripts/android-release.sh`) | Google Play Store (patients & reviewers) |
-| **Personal / Opt-In** (implemented for Android) | `moe.dabney.personal` | `android.permission.health.READ_BLOOD_GLUCOSE` only (enforced by `scripts/android-personal.sh` + Cargo feature `health-connect`) | USB sideload (`adb install -r target/android-personal/dabney-personal-sideload.apk`) immediately; optional Google Play Health Connect submission later |
+| **Public Demo** (shipped now) | `moe.dabney.demo` | Zero Health Connect, zero `POST_NOTIFICATIONS`, zero sensitive device permissions (enforced fail-closed by `scripts/android-release.sh`) | Google Play Store (patients & reviewers) |
+| **Personal / Opt-In** (implemented for Android) | `moe.dabney.personal` | `android.permission.health.READ_BLOOD_GLUCOSE` and opt-in `android.permission.POST_NOTIFICATIONS` (enforced by `scripts/android-personal.sh` + Cargo feature `health-connect`) | USB sideload (`adb install -r target/android-personal/dabney-personal-sideload.apk`) immediately; optional Google Play Health Connect submission later |
 
 Never add `android.permission.health.*` to `src-tauri/tauri.android.conf.json`.
 The personal flavor lives in its dedicated overlay config
@@ -293,3 +302,88 @@ local storage and on-device LLM chat without affecting the public zero-PHI demo
   - Automatically falls back to deterministic grounded Rust synthesis on emulators,
     non-AICore phones, desktop, and web browsers while keeping every response strictly
     grounded in computed local CGM metrics or single-patient verbatim chart citations.
+
+---
+
+## 7. Automated Target-Range Glucose Alerts (Web, CLI & `moe.dabney.personal`)
+
+The **Automated Glucose Range Alerts** panel on `/mental-health` evaluates incoming
+glucose readings 100% locally in Rust/WASM and syncs your configured target band live
+to both the **2D SVG** and **3D WebGL2** timelines.
+
+### 7.1 Reliable Clinical Defaults, Presets & Anti-Fatigue Rules
+
+- **Presets & monotonic bounds:**
+  - **Tight / Lingo (`70–140 mg/dL`, default):** urgent thresholds `<55` and `>180 mg/dL`.
+  - **ADA Standard (`70–180 mg/dL`):** urgent thresholds `<54` and `>250 mg/dL`.
+  - **Custom:** edit `Urgent Low`, `Target Low`, `Target High`, or `Urgent High`
+    directly (`45–350 mg/dL`, `>=10 mg/dL` target span). Values are automatically
+    sanitized on blur/apply and saved locally in `localStorage`
+    (`dabney.cgm.v1.alert_config`; preferences only, zero PHI).
+- **Anti-fatigue cooldown & escalation:** defaults to a `30 min` cooldown
+  (`15`, `30`, `60`, or `120 min`) for repeated alerts in the same direction and
+  severity, while **immediately overriding cooldown** on a direction flip
+  (`Low <-> High`) or severity escalation (`High -> UrgentHigh`,
+  `Low -> UrgentLow`).
+- **Sustained-duration filter:** choose `Immediate (0 min)` (default) or require
+  contiguous out-of-range readings for `10`, `15`, or `30 min` before alerting.
+- **Predictive rapid-change alerts:** optional `±2.0 mg/dL/min` 15-minute
+  velocity alerts when glucose is falling rapidly toward your low threshold or
+  rising rapidly toward your high threshold.
+- **Privacy-safe lock-screen mode (default ON):** hides exact `mg/dL` numbers on
+  OS and browser notifications (`"Dabney.moe Glucose Range Alert"`) while
+  displaying the full honest reading (including `<55` sensor floor and `>200`
+  sensor ceiling bounds) inside the in-app callout.
+- **Strict sample isolation:** automatic OS and browser notifications **never**
+  fire on initial page load for the built-in synthetic sample. They dispatch only
+  when personal data is imported or synced, or when you explicitly click **Send
+  Test Alert**.
+
+### 7.2 Browser Web Notifications (Web & Desktop)
+
+On web browsers and desktop shells, the alerts panel uses the standard browser
+**Web Notifications API** (`window.Notification`):
+1. Click **Enable Browser Notifications** to grant permission.
+2. Toggle **Deliver browser notifications when personal readings breach target range**.
+3. Click **Send Test Alert** to verify delivery with a synthetic test payload
+   (no personal data required).
+
+### 7.3 Native Mobile Notifications & Foreground Auto-Poll (`moe.dabney.personal`)
+
+Inside the opt-in personal mobile build (`--features health-connect`), the alerts
+panel automatically switches from browser notifications to native OS notifications
+(`src-tauri/src/alerts.rs`), keeping `moe.dabney.demo` completely free of
+`POST_NOTIFICATIONS` (verified fail-closed by `scripts/android-release.sh`):
+
+- **Android (`src-tauri/android-personal/GlucoseAlertPlugin.kt`):** uses built-in
+  `NotificationManager` + `NotificationChannel` (`dabney_glucose_alerts` default
+  importance and `dabney_glucose_urgent` high importance, both
+  `VISIBILITY_PRIVATE`, zero extra Maven dependencies) with runtime
+  `POST_NOTIFICATIONS` authorization injected by `scripts/android-personal.sh`.
+- **iOS (`src-tauri/ios-personal/Sources/GlucoseAlertPlugin.swift`):** uses
+  `UNUserNotificationCenter` (`.active` for standard alerts, `.timeSensitive` for
+  urgent alerts) with zero remote push or telemetry.
+- **Foreground Health Connect auto-poll:** once Health Connect blood glucose read
+  access is granted in `moe.dabney.personal`, select **Auto-check Health Connect**
+  (`Off`, `5 min`, `15 min`, or `30 min`; default `15 min`) to periodically read
+  the latest 24 hours from Health Connect while the app is open, append new
+  readings without disrupting longer multi-day windows, and automatically evaluate
+  and dispatch range alerts. The interval is automatically cleared on setting
+  changes and component unmount.
+
+### 7.4 Offline CLI Alert Checks (`validate-cgm`)
+
+Evaluate target-range alerts and custom compliance completely offline against any
+local export outside Git:
+
+```bash
+nix develop -c cargo run -p ui --features ssr --bin validate-cgm -- \
+  "$HOME/Downloads/lingo-glucose-export.csv" \
+  --window 14d \
+  --alerts \
+  --target-low 70 --target-high 140 \
+  --urgent-low 55 --urgent-high 180
+```
+
+Add `--json` to include the structured `range_alerts` summary and breach episodes
+in machine-readable output.
