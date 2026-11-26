@@ -43,14 +43,27 @@ Alternative export paths supported by the same parser today:
    uploaded). Inspect:
    - **Import Validation Report:** format, parsed reading count, date range,
      median cadence (`5.0 min` for Abbott Lingo), longest sensor gap,
-     `<55 / >200 mg/dL` sensor sentinels, skipped/duplicate rows, and ATTD
+     `<55 / >200 mg/dL` sensor sentinels, `"Out of range"` sensor status rows
+     (tracked separately from malformed rows), skipped/duplicate rows, and ATTD
      wear-time checks (`>=14 days`, `>=70%` active wear).
    - **Time window selector:** switch between `24h`, `3d`, `7d`, `14d` (ATTD
-     standard), and `All`.
-   - **ADA 5-Band TIR, GMI, GRI, MAGE, 24-Hour AGP** (binned by **local
-     wall-clock hour** after parsing ISO-8601 timezone offsets such as
-     `2026-02-07T11:38-05:00`), plus the downsampled **3D WebGL2** and **2D
-     SVG** timelines.
+     standard), `30d`, `90d`, and `All`, with gap-aware active wear computed
+     against the nominal window span.
+   - **Windowed Sensor Saturation Caveats:** whenever readings in the active
+     window hit the biosensor floor (`<=54` / `<55 mg/dL`) or ceiling (`>=201` /
+     `>200 mg/dL`), the UI, on-device AI grounding, and printable clinician
+     brief report window-specific cap counts/percentages and note that Mean,
+     GMI, TAR `>250`, and CV% (flat-line suppression) are lower bounds /
+     clipped in that window.
+   - **ADA 5-Band TIR, GMI, GRI, gap-aware turning-point MAGE, 24-Hour AGP**
+     (binned by **local wall-clock hour** after parsing ISO-8601 timezone
+     offsets such as `2026-02-07T11:38-05:00`), **gap-aware 3D WebGL2** and
+     **2D SVG** timelines (splitting polylines/ribbons across `>2h` sensor
+     gaps), plus **longitudinal analytics**: trailing 14-day vs prior 14-day
+     period comparison, 4-block circadian breakdown (Overnight / Morning /
+     Afternoon / Evening), sustained ATTD hypo/hyper episodes (`>=15 min`),
+     15-minute rate-of-change velocity bursts (`>= +2.0` / `<= -2.0 mg/dL/min`),
+     per-calendar-day summaries, and continuous wear sessions & gaps (`>=2h`).
 4. Click **Clear personal data & restore sample** (or reload the page) to wipe
    all personal readings from memory.
 
@@ -62,13 +75,34 @@ Run the workspace validator against your local export file outside Git:
 nix develop -c cargo run -p ui --features ssr --bin validate-cgm -- \
   "$HOME/Downloads/lingo-glucose-export.csv" \
   --monitor abbott-lingo \
-  --window 14d
+  --window 14d \
+  --daily --episodes --sessions --compare
 ```
 
 Useful flags:
-- `--window <24h|3d|7d|14d|all>` — scope clinical metrics (GMI, TIR, GRI, AGP)
-  to a standard 14-day ATTD window even on multi-month cumulative Lingo files.
-- `--json` — emit machine-readable JSON diagnostics and clinical metrics.
+- `--window <24h|3d|7d|14d|30d|90d|all>` — scope clinical metrics (GMI, TIR,
+  GRI, MAGE, AGP, circadian summary, sustained episodes, saturation caveats,
+  and gap-aware active wear) to a trailing window even on multi-month
+  cumulative Lingo files.
+- `--daily` — print a local calendar-day summary table (date, readings, wear %,
+  mean, min–max, TIR `70–180`, Tight TIR `70–140`, TBR `<70`, ceiling-cap %).
+- `--episodes` — print sustained ATTD episode counts (`>=15 min`: `<54`/`<55`
+  floor, `<70` hypo, `>180` hyper, `>140` excursions), notable recent
+  hypo/hyper episodes, and 15-minute glucose velocity (rate-of-change) rapid
+  rise/fall burst counts.
+- `--sessions` — print detected continuous sensor wear sessions and sensor-off
+  gaps (`>=2h`).
+- `--compare` — print a trailing 14-day vs prior 14-day comparison table
+  (Mean, GMI, TIR, Tight TIR, TBR, Ceiling-Cap %), noting when the prior span
+  is truncated by sensor gaps.
+- `--brief /tmp/clinician-brief.md` — write a local-only clinician visit
+  Markdown brief enriched with windowed saturation caveats, sustained episodes,
+  circadian summary, 14-day trend delta, and wear sessions/gaps (**keep
+  personal outputs outside Git**).
+- `--json` — emit machine-readable JSON containing diagnostics (including
+  `out_of_range_rows`), windowed summary & saturation caveats, and the full
+  `analytics` payload (daily, episodes, circadian, rate of change, sessions,
+  gaps, and 14-day comparison).
 - `--export-bridge-json /tmp/lingo-bridge.json` — convert a real Lingo CSV or
   Apple Health `export.xml` into the canonical `dabney.health_bridge.v1` JSON
   envelope locally (keep outputs outside Git).

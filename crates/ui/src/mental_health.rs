@@ -6,26 +6,33 @@ use leptos_router::components::A;
 
 #[cfg(any(feature = "hydrate", feature = "csr"))]
 use crate::health_bridge::{
-    build_personal_cgm_chat_prompt, generate_local_llm, invoke_tauri_command, load_personal_vault,
-    prepare_local_llm, probe_local_llm, probe_personal_health_bridge, probe_personal_vault,
-    save_personal_vault, wipe_personal_vault, HealthBridgePermissionUi, HealthBridgeReadUi,
-    PersonalVaultSaveUi,
+    build_personal_cgm_chat_prompt_with_analytics, generate_local_llm, invoke_tauri_command,
+    load_personal_vault, prepare_local_llm, probe_local_llm, probe_personal_health_bridge,
+    probe_personal_vault, save_personal_vault, wipe_personal_vault, HealthBridgePermissionUi,
+    HealthBridgeReadUi, PersonalVaultSaveUi,
 };
 use crate::health_bridge::{
-    collect_cgm_grounding_facts, synthesize_grounded_cgm_answer, HealthBridgeStatusUi,
-    LocalChatTurn, LocalLlmStatusUi, PersonalVaultStatusUi,
+    collect_cgm_grounding_facts_with_analytics, synthesize_grounded_cgm_answer_with_analytics,
+    HealthBridgeStatusUi, LocalChatTurn, LocalLlmStatusUi, PersonalVaultStatusUi,
 };
 use crate::local_ai_chat::{PersonalCgmAiChatSection, PersonalVaultBar};
 use crate::mental_health_3d::LingoMood3DChart;
-use crate::mental_health_cgm::{
-    downsample_readings_for_chart, parse_commercial_glucose_input, sample_csv_for_monitor,
-    select_notable_spike_peaks, slice_readings_window, summarize_commercial_glucose,
-    AdaTimeInRangeBar, AgpPercentileChart, GlucoseImportDiagnostics, GlucoseMonitor, GlucoseUnit,
-    GlucoseWindow, MeasurementMethod, ValidationLevel, SAMPLE_APPLE_HEALTH_XML,
-    SAMPLE_HEALTH_BRIDGE_JSON,
-};
 #[cfg(any(feature = "hydrate", feature = "csr"))]
-use crate::mental_health_cgm::{export_health_bridge_json, monitor_hint_from_filename};
+use crate::mental_health_cgm::{export_health_bridge_json_compact, monitor_hint_from_filename};
+use crate::mental_health_cgm::{
+    nominal_window_hours_for_trace, parse_commercial_glucose_input, parse_timestamp,
+    sample_csv_for_monitor, select_notable_spike_peaks, slice_readings_window,
+    summarize_commercial_glucose_with_window, AdaTimeInRangeBar, AgpPercentileChart,
+    CommercialGlucoseImport, GlucoseImportDiagnostics, GlucoseMonitor, GlucoseUnit, GlucoseWindow,
+    MeasurementMethod, ValidationLevel, SAMPLE_APPLE_HEALTH_XML, SAMPLE_HEALTH_BRIDGE_JSON,
+};
+use crate::mental_health_cgm_analytics::{
+    analyze_glucose_trace, downsample_segments_for_chart, DEFAULT_CHART_GAP_HOURS,
+};
+use crate::mental_health_cgm_views::{
+    CircadianBreakdownSection, DailyGlucoseAndSessionsSection, GlycemicEpisodesAndRocSection,
+    PeriodComparisonCard, SensorSaturationBanner,
+};
 use crate::mental_health_episodes::{
     summarize_episode_cadence, EpisodeActivationSection, TopCoolDownBanner,
 };
@@ -120,15 +127,48 @@ pub fn MentalHealthPage() -> impl IntoView {
     let next_chat_seq = RwSignal::new(1usize);
 
     let windowed_readings =
-        Signal::derive(move || slice_readings_window(&readings.get(), window.get()));
+        Memo::new(move |_| readings.with(|r| slice_readings_window(r, window.get())));
+    let glucose_summary = Memo::new(move |_| {
+        let nominal_h = readings.with(|full| nominal_window_hours_for_trace(full, window.get()));
+        windowed_readings.with(|sliced| {
+            summarize_commercial_glucose_with_window(
+                sliced,
+                detected_monitor.get(),
+                source_unit.get(),
+                measurement_method.get(),
+                nominal_h,
+            )
+        })
+    });
+    let glucose_analytics = Memo::new(move |_| {
+        windowed_readings.with(|sliced| {
+            readings.with(|full| {
+                analyze_glucose_trace(
+                    sliced,
+                    detected_monitor.get(),
+                    measurement_method.get(),
+                    Some(full),
+                )
+            })
+        })
+    });
 
     let checkins = RwSignal::new(sample_checkins());
+    let user_added_checkins = RwSignal::new(false);
+    let correlations = Memo::new(move |_| {
+        windowed_readings.with(|r| checkins.with(|c| correlate_glucose_and_mood(r, c)))
+    });
+    let max_checkin_hour = Memo::new(move |_| {
+        windowed_readings
+            .with(|r| r.last().map(|x| x.hour_offset).unwrap_or(24.0))
+            .max(24.0)
+    });
     let chart_mode = RwSignal::new(ChartViewMode::WebGl3D);
     let asrm_score = RwSignal::new(Some(7u8));
     let platform_consent = RwSignal::new(PlatformConsentState::default());
     let activity_events = RwSignal::new(load_synthetic_4platform_synthesis());
-    let synthesized_events = Signal::derive(move || {
-        synthesize_opted_in_events(&activity_events.get(), &platform_consent.get())
+    let synthesized_events = Memo::new(move |_| {
+        activity_events.with(|ev| synthesize_opted_in_events(ev, &platform_consent.get()))
     });
 
     // Form state for adding a new mental health check-in.
@@ -136,31 +176,50 @@ pub fn MentalHealthPage() -> impl IntoView {
     let anxiety_input = RwSignal::new(5u8);
     let energy_input = RwSignal::new(6u8);
     let sleep_input = RwSignal::new("7.0".to_string());
+    let parsed_sleep_hours = Memo::new(move |_| {
+        sleep_input
+            .get()
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|v| v.is_finite() && (0.0..=24.0).contains(v))
+            .unwrap_or(7.0)
+    });
     let phq9_input = RwSignal::new(String::new());
     let gad7_input = RwSignal::new(String::new());
     let note_input = RwSignal::new(String::new());
     let hour_input = RwSignal::new("18.0".to_string());
     let form_status = RwSignal::new(Option::<String>::None);
 
+    let apply_parsed_glucose = move |parsed: CommercialGlucoseImport,
+                                     source_label: Option<String>| {
+        let span_h = parsed.diagnostics.span_hours;
+        let is_personal_import = source_label.is_some();
+        detected_monitor.set(parsed.monitor);
+        source_unit.set(parsed.source_unit);
+        measurement_method.set(parsed.method);
+        import_diagnostics.set(Some(parsed.diagnostics));
+        readings.set(parsed.readings);
+        loaded_file_label.set(source_label);
+        // Clear synthetic sample check-ins when loading a personal trace unless the user has
+        // already logged/restored personal check-ins, avoiding synthetic notes squashed onto
+        // the left edge of a multi-month real export.
+        if is_personal_import && !user_added_checkins.get_untracked() {
+            checkins.set(Vec::new());
+        }
+        // Default multi-week personal exports to the ATTD 14-day view so charts & AGP stay crisp.
+        window.set(if span_h > 360.0 {
+            GlucoseWindow::Days14
+        } else {
+            GlucoseWindow::All
+        });
+        csv_error.set(None);
+    };
+
     let apply_glucose_text =
         move |raw: &str, hint: Option<GlucoseMonitor>, source_label: Option<String>| {
             match parse_commercial_glucose_input(raw, hint) {
-                Ok(parsed) => {
-                    let span_h = parsed.diagnostics.span_hours;
-                    detected_monitor.set(parsed.monitor);
-                    source_unit.set(parsed.source_unit);
-                    measurement_method.set(parsed.method);
-                    import_diagnostics.set(Some(parsed.diagnostics));
-                    readings.set(parsed.readings);
-                    loaded_file_label.set(source_label);
-                    // Default multi-week personal exports to the ATTD 14-day view so charts & AGP stay crisp.
-                    window.set(if span_h > 360.0 {
-                        GlucoseWindow::Days14
-                    } else {
-                        GlucoseWindow::All
-                    });
-                    csv_error.set(None);
-                }
+                Ok(parsed) => apply_parsed_glucose(parsed, source_label),
                 Err(err) => {
                     csv_error.set(Some(err));
                 }
@@ -205,34 +264,39 @@ pub fn MentalHealthPage() -> impl IntoView {
                         if let Some(text) = val.as_string() {
                             csv_input.set(compact_textarea_preview(&text));
                             let label = format!("{file_name} ({file_kb:.1} KB · on-device)");
-                            if let Ok(parsed_for_vault) =
-                                parse_commercial_glucose_input(&text, inferred_hint)
-                            {
-                                let count = parsed_for_vault.readings.len();
-                                let bridge_json =
-                                    export_health_bridge_json(&parsed_for_vault, "local_file");
-                                if vault_status.get_untracked().is_some_and(|v| v.enabled) {
-                                    let save_label = label.clone();
-                                    save_personal_vault(
-                                        &PersonalVaultSaveUi {
-                                            cgm_bridge_json: Some(bridge_json),
-                                            cgm_source_label: Some(save_label),
-                                            cgm_reading_count: Some(count),
-                                            ..Default::default()
-                                        },
-                                        move |res| {
-                                            if let Ok(updated) = res {
-                                                vault_status.set(Some(updated));
-                                                vault_notice.set(Some(
-                                                    "Encrypted & cached imported CGM file in local vault."
-                                                        .to_string(),
-                                                ));
-                                            }
-                                        },
-                                    );
+                            match parse_commercial_glucose_input(&text, inferred_hint) {
+                                Ok(parsed) => {
+                                    if vault_status.get_untracked().is_some_and(|v| v.enabled) {
+                                        let count = parsed.readings.len();
+                                        let bridge_json = export_health_bridge_json_compact(
+                                            &parsed,
+                                            "local_file",
+                                        );
+                                        let save_label = label.clone();
+                                        save_personal_vault(
+                                            &PersonalVaultSaveUi {
+                                                cgm_bridge_json: Some(bridge_json),
+                                                cgm_source_label: Some(save_label),
+                                                cgm_reading_count: Some(count),
+                                                ..Default::default()
+                                            },
+                                            move |res| {
+                                                if let Ok(updated) = res {
+                                                    vault_status.set(Some(updated));
+                                                    vault_notice.set(Some(
+                                                        "Encrypted & cached imported CGM file in local vault."
+                                                            .to_string(),
+                                                    ));
+                                                }
+                                            },
+                                        );
+                                    }
+                                    apply_parsed_glucose(parsed, Some(label));
+                                }
+                                Err(err) => {
+                                    csv_error.set(Some(err));
                                 }
                             }
-                            apply_glucose_text(&text, inferred_hint, Some(label));
                         }
                     }
                 },
@@ -262,6 +326,7 @@ pub fn MentalHealthPage() -> impl IntoView {
 
     let reset_sample = move |_| {
         load_monitor_preset(GlucoseMonitor::AbbottLingo);
+        user_added_checkins.set(false);
         checkins.set(sample_checkins());
         form_status.set(None);
         hc_message.set(None);
@@ -333,6 +398,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                                     serde_json::from_str::<Vec<MentalHealthCheckIn>>(&checkins_raw)
                                 {
                                     if !restored.is_empty() {
+                                        user_added_checkins.set(true);
                                         checkins.set(restored);
                                     }
                                 }
@@ -366,6 +432,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                     Ok(empty_status) => {
                         vault_status.set(Some(empty_status));
                         load_monitor_preset(GlucoseMonitor::AbbottLingo);
+                        user_added_checkins.set(false);
                         checkins.set(sample_checkins());
                         chat_turns.set(Vec::new());
                         form_status.set(None);
@@ -413,29 +480,24 @@ pub fn MentalHealthPage() -> impl IntoView {
         }
         chat_error.set(None);
 
-        let current_readings = windowed_readings.get_untracked();
         let current_monitor = detected_monitor.get_untracked();
-        let current_unit = source_unit.get_untracked();
-        let current_method = measurement_method.get_untracked();
         let current_diag = import_diagnostics.get_untracked();
         let current_checkins = checkins.get_untracked();
-        let summary = summarize_commercial_glucose(
-            &current_readings,
-            current_monitor,
-            current_unit,
-            current_method,
-        );
-        let facts = collect_cgm_grounding_facts(
+        let summary = glucose_summary.get_untracked();
+        let analytics = glucose_analytics.get_untracked();
+        let facts = collect_cgm_grounding_facts_with_analytics(
             current_monitor,
             summary.as_ref(),
             current_diag.as_ref(),
+            Some(&analytics),
             &current_checkins,
         );
-        let fallback_answer = synthesize_grounded_cgm_answer(
+        let fallback_answer = synthesize_grounded_cgm_answer_with_analytics(
             &trimmed,
             current_monitor,
             summary.as_ref(),
             current_diag.as_ref(),
+            Some(&analytics),
             &current_checkins,
         );
 
@@ -450,11 +512,12 @@ pub fn MentalHealthPage() -> impl IntoView {
         #[cfg(any(feature = "hydrate", feature = "csr"))]
         if try_aicore {
             let recent = chat_turns.get_untracked();
-            let prompt = build_personal_cgm_chat_prompt(
+            let prompt = build_personal_cgm_chat_prompt_with_analytics(
                 &trimmed,
                 current_monitor,
                 summary.as_ref(),
                 current_diag.as_ref(),
+                Some(&analytics),
                 &current_checkins,
                 &recent,
             );
@@ -660,20 +723,15 @@ pub fn MentalHealthPage() -> impl IntoView {
 
     let submit_checkin = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
-        let sleep_hours = sleep_input
-            .get()
-            .trim()
-            .parse::<f32>()
-            .ok()
-            .filter(|v| v.is_finite() && (0.0..=24.0).contains(v))
-            .unwrap_or(7.0);
+        let max_hour_bound = max_checkin_hour.get_untracked();
+        let sleep_hours = parsed_sleep_hours.get_untracked();
         let hour_offset = hour_input
             .get()
             .trim()
             .parse::<f64>()
             .ok()
-            .filter(|v| v.is_finite() && (0.0..=48.0).contains(v))
-            .unwrap_or(12.0);
+            .filter(|v| v.is_finite() && (0.0..=max_hour_bound).contains(v))
+            .unwrap_or_else(|| 12.0_f64.min(max_hour_bound));
         let phq9 = phq9_input
             .get()
             .trim()
@@ -708,6 +766,7 @@ pub fn MentalHealthPage() -> impl IntoView {
             gad7,
             note,
         };
+        user_added_checkins.set(true);
         checkins.update(|list| {
             list.push(entry);
             list.sort_by(|a, b| a.hour_offset.total_cmp(&b.hour_offset));
@@ -814,17 +873,9 @@ pub fn MentalHealthPage() -> impl IntoView {
 
             // Top-of-page calm Cool-Down banner when activation signals stack up
             <TopCoolDownBanner
-                events=synthesized_events
+                events=synthesized_events.into()
                 asrm_score=asrm_score.into()
-                sleep_hours=Signal::derive(move || {
-                    sleep_input
-                        .get()
-                        .trim()
-                        .parse::<f32>()
-                        .ok()
-                        .filter(|v| v.is_finite() && (0.0..=24.0).contains(v))
-                        .unwrap_or(7.0)
-                })
+                sleep_hours=parsed_sleep_hours.into()
             />
 
             // Local personal file indicator banner (shown only when the user imports a local file)
@@ -854,23 +905,76 @@ pub fn MentalHealthPage() -> impl IntoView {
 
             // KPI summary strip (ADA/ATTD clinical metrics across all commercial monitors)
             {move || {
-                let current_readings = windowed_readings.get();
+                let summary = glucose_summary.get();
+                let analytics = glucose_analytics.get();
                 let current_checkins = checkins.get();
-                let summary = summarize_commercial_glucose(
-                    &current_readings,
-                    detected_monitor.get(),
-                    source_unit.get(),
-                    measurement_method.get(),
-                );
                 let latest_phq9 = current_checkins.iter().rev().find_map(|c| c.phq9);
                 let latest_gad7 = current_checkins.iter().rev().find_map(|c| c.gad7);
+                let ep = &analytics.episode_counts;
+
+                let mean_value = summary
+                    .as_ref()
+                    .map(|s| {
+                        let prefix = if s.ceiling_capped_readings > 0 { "≥" } else { "" };
+                        format!(
+                            "{prefix}{:.0} mg/dL · {prefix}{:.1}%",
+                            s.mean_mg_dl, s.gmi_percent
+                        )
+                    })
+                    .unwrap_or_else(|| "—".to_string());
+                let mean_detail = summary
+                    .as_ref()
+                    .map(|s| {
+                        if s.ceiling_capped_readings > 0 {
+                            format!(
+                                "Median {:.0} · (≥ clipped · {:.0}% at cap)",
+                                s.median_mg_dl, s.ceiling_capped_pct
+                            )
+                        } else {
+                            format!(
+                                "Median {:.0} · Range {:.0}–{:.0}",
+                                s.median_mg_dl, s.min_mg_dl, s.max_mg_dl
+                            )
+                        }
+                    })
+                    .unwrap_or_default();
+
+                let cv_detail = summary
+                    .as_ref()
+                    .map(|s| {
+                        if s.ceiling_capped_readings > 0 {
+                            format!("SD {:.1} · clipped by cap (<36% target)", s.std_dev_mg_dl)
+                        } else {
+                            format!("SD {:.1} mg/dL (target <36%)", s.std_dev_mg_dl)
+                        }
+                    })
+                    .unwrap_or_default();
+
+                let gri_value = summary
+                    .as_ref()
+                    .map(|s| {
+                        let prefix = if s.ceiling_capped_readings > 0 { "≥" } else { "" };
+                        format!("{prefix}{:.0} / 100", s.gri_score)
+                    })
+                    .unwrap_or_else(|| "—".to_string());
+                let gri_detail = summary
+                    .as_ref()
+                    .map(|s| {
+                        format!(
+                            "{} · {} hypo · {} >140 exc.",
+                            s.gri_zone.label(),
+                            ep.level1_hypo_count,
+                            ep.lingo_excursion_gt_140_count
+                        )
+                    })
+                    .unwrap_or_default();
 
                 view! {
                     <div class="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
                         <MetricCard
                             label="Mean / GMI (est. A1C)"
-                            value=summary.as_ref().map(|s| format!("{:.0} mg/dL · {:.1}%", s.mean_mg_dl, s.gmi_percent)).unwrap_or_else(|| "—".to_string())
-                            detail=summary.as_ref().map(|s| format!("Median {:.0} · Range {:.0}–{:.0}", s.median_mg_dl, s.min_mg_dl, s.max_mg_dl)).unwrap_or_default()
+                            value=mean_value
+                            detail=mean_detail
                             accent="text-cyan-300"
                         />
                         <MetricCard
@@ -882,13 +986,13 @@ pub fn MentalHealthPage() -> impl IntoView {
                         <MetricCard
                             label="CV% / MAGE"
                             value=summary.as_ref().map(|s| format!("{:.1}% · {:.0}", s.cv_percent, s.mage_mg_dl)).unwrap_or_else(|| "—".to_string())
-                            detail=summary.as_ref().map(|s| format!("SD {:.1} mg/dL (target <36%)", s.std_dev_mg_dl)).unwrap_or_default()
+                            detail=cv_detail
                             accent="text-amber-300"
                         />
                         <MetricCard
                             label="GRI (Risk Index)"
-                            value=summary.as_ref().map(|s| format!("{:.0} / 100", s.gri_score)).unwrap_or_else(|| "—".to_string())
-                            detail=summary.as_ref().map(|s| format!("{} · {} spikes >140", s.gri_zone.label(), s.spike_readings_gt_140)).unwrap_or_default()
+                            value=gri_value
+                            detail=gri_detail
                             accent="text-rose-300"
                         />
                         <MetricCard
@@ -907,6 +1011,13 @@ pub fn MentalHealthPage() -> impl IntoView {
                         />
                     </div>
                 }
+            }}
+
+            // Window-specific sensor floor/ceiling saturation & Out-of-Range caveat banner
+            {move || {
+                glucose_summary.get().map(|summary| view! {
+                    <SensorSaturationBanner summary=summary diagnostics=import_diagnostics.get() />
+                })
             }}
 
             // On-device AI chat grounded in loaded CGM metrics & mood check-ins
@@ -1000,7 +1111,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                 </div>
                 {move || match chart_mode.get() {
                     ChartViewMode::WebGl3D => view! {
-                        <LingoMood3DChart readings=windowed_readings checkins=checkins.into() />
+                        <LingoMood3DChart readings=windowed_readings.into() checkins=checkins.into() />
                     }.into_any(),
                     ChartViewMode::Svg2D => view! {
                         <LingoMoodTimelineChart readings=windowed_readings.get() checkins=checkins.get() />
@@ -1010,13 +1121,7 @@ pub fn MentalHealthPage() -> impl IntoView {
 
             // Clinical ADA 5-Band Time-in-Range + 24-Hour Ambulatory Glucose Profile (AGP)
             {move || {
-                summarize_commercial_glucose(
-                    &windowed_readings.get(),
-                    detected_monitor.get(),
-                    source_unit.get(),
-                    measurement_method.get(),
-                )
-                .map(|summary| {
+                glucose_summary.get().map(|summary| {
                     let bins = summary.agp_hourly.clone();
                     let device_badge = format!(
                         "{} · {} · {} · window {}",
@@ -1051,6 +1156,30 @@ pub fn MentalHealthPage() -> impl IntoView {
                         </section>
                     }
                 })
+            }}
+
+            // Longitudinal CGM Analytics: 14d Period Comparison, Circadian Breakdown,
+            // ATTD Sustained Episodes & Velocity, and Daily / Wear Sessions Breakdown.
+            {move || {
+                glucose_analytics.get().period_comparison.map(|comparison| view! {
+                    <PeriodComparisonCard comparison=comparison />
+                })
+            }}
+            {move || {
+                let analytics = glucose_analytics.get();
+                view! {
+                    <CircadianBreakdownSection periods=analytics.circadian />
+                    <GlycemicEpisodesAndRocSection
+                        episodes=analytics.episodes
+                        counts=analytics.episode_counts
+                        roc=analytics.rate_of_change
+                    />
+                    <DailyGlucoseAndSessionsSection
+                        days=analytics.daily
+                        sessions=analytics.sessions
+                        gaps=analytics.gaps
+                    />
+                }
             }}
 
             // Longitudinal PHQ-9 & GAD-7 Trend Chart
@@ -1143,7 +1272,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                                     type="number"
                                     step="0.5"
                                     min="0"
-                                    max="48"
+                                    max=move || format!("{:.1}", max_checkin_hour.get())
                                     prop:value=move || hour_input.get()
                                     on:input=move |ev| hour_input.set(event_target_value(&ev))
                                     class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-sm text-white"
@@ -1341,7 +1470,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                         </p>
                     </div>
                     {move || {
-                        let corr = correlate_glucose_and_mood(&windowed_readings.get(), &checkins.get());
+                        let corr = correlations.get();
                         let href = csv_data_uri(&export_correlations_csv(&corr));
                         view! {
                             <a
@@ -1367,7 +1496,16 @@ pub fn MentalHealthPage() -> impl IntoView {
                         </thead>
                         <tbody class="divide-y divide-white/5 text-slate-200">
                             {move || {
-                                let corr = correlate_glucose_and_mood(&windowed_readings.get(), &checkins.get());
+                                let corr = correlations.get();
+                                if corr.is_empty() {
+                                    return view! {
+                                        <tr>
+                                            <td colspan="5" class="py-4 text-xs text-slate-400">
+                                                "No mental health check-ins logged for this trace yet. Use the form above to correlate mood, anxiety, or sleep against this CGM window."
+                                            </td>
+                                        </tr>
+                                    }.into_any();
+                                }
                                 corr.into_iter().map(|row| {
                                     let badge = if row.spike_adjacent {
                                         view! {
@@ -1395,7 +1533,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                                             <td class="py-3 text-xs text-slate-300">{row.note}</td>
                                         </tr>
                                     }
-                                }).collect_view()
+                                }).collect_view().into_any()
                             }}
                         </tbody>
                     </table>
@@ -1407,48 +1545,23 @@ pub fn MentalHealthPage() -> impl IntoView {
                 events=activity_events
                 consent=platform_consent
                 asrm_score=asrm_score
-                sleep_hours=Signal::derive(move || {
-                    sleep_input
-                        .get()
-                        .trim()
-                        .parse::<f32>()
-                        .ok()
-                        .filter(|v| v.is_finite() && (0.0..=24.0).contains(v))
-                        .unwrap_or(7.0)
-                })
+                sleep_hours=parsed_sleep_hours.into()
             />
 
             // On-Device Personal Crisis & Support Card + 1-Page Printable Clinician Visit Brief
             <SupportAndClinicianBriefSection
-                glucose_summary=Signal::derive(move || {
-                    summarize_commercial_glucose(
-                        &windowed_readings.get(),
-                        detected_monitor.get(),
-                        source_unit.get(),
-                        measurement_method.get(),
-                    )
-                })
+                glucose_summary=glucose_summary.into()
+                analytics=Signal::derive(move || Some(glucose_analytics.get()))
                 checkins=checkins.into()
                 cadence_summary=Signal::derive(move || {
-                    let sh = sleep_input
-                        .get()
-                        .trim()
-                        .parse::<f32>()
-                        .ok()
-                        .filter(|v| v.is_finite() && (0.0..=24.0).contains(v))
-                        .unwrap_or(7.0);
-                    summarize_episode_cadence(&synthesized_events.get(), asrm_score.get(), sh)
+                    summarize_episode_cadence(
+                        &synthesized_events.get(),
+                        asrm_score.get(),
+                        parsed_sleep_hours.get(),
+                    )
                 })
                 asrm_score=asrm_score.into()
-                sleep_hours=Signal::derive(move || {
-                    sleep_input
-                        .get()
-                        .trim()
-                        .parse::<f32>()
-                        .ok()
-                        .filter(|v| v.is_finite() && (0.0..=24.0).contains(v))
-                        .unwrap_or(7.0)
-                })
+                sleep_hours=parsed_sleep_hours.into()
             />
         </div>
 
@@ -1518,9 +1631,14 @@ fn ImportValidationPanel(diagnostics: GlucoseImportDiagnostics) -> impl IntoView
                     <p class="font-mono font-semibold text-emerald-200">{cadence_text}</p>
                 </div>
                 <div class="rounded-lg border border-white/5 bg-slate-900/70 px-2.5 py-1.5">
-                    <p class="text-slate-400">"Sentinels / Skipped"</p>
+                    <p class="text-slate-400">"Cap / OOR / Invalid"</p>
                     <p class="font-mono font-semibold text-amber-200">
-                        {format!("{} / {}", diagnostics.bounded_sentinels, diagnostics.skipped_invalid_rows)}
+                        {format!(
+                            "{} / {} / {}",
+                            diagnostics.bounded_sentinels,
+                            diagnostics.out_of_range_rows,
+                            diagnostics.skipped_invalid_rows
+                        )}
                     </p>
                 </div>
             </div>
@@ -1570,6 +1688,82 @@ fn ImportValidationPanel(diagnostics: GlucoseImportDiagnostics) -> impl IntoView
     }
 }
 
+fn select_svg_floor_cap_markers(
+    readings: &[LingoReading],
+    max_markers: usize,
+) -> Vec<LingoReading> {
+    if readings.is_empty() || max_markers == 0 {
+        return Vec::new();
+    }
+    const GAP_BREAK_HOURS: f64 = 1.5;
+    let mut reps: Vec<usize> = Vec::new();
+    let mut active_start: Option<usize> = None;
+    let mut prev_idx: usize = 0;
+
+    for (idx, r) in readings.iter().enumerate() {
+        if r.bound.is_floor_capped() {
+            match active_start {
+                None => {
+                    active_start = Some(idx);
+                    prev_idx = idx;
+                }
+                Some(start) => {
+                    if (r.hour_offset - readings[prev_idx].hour_offset).abs() > GAP_BREAK_HOURS {
+                        reps.push(start + (prev_idx - start) / 2);
+                        active_start = Some(idx);
+                    }
+                    prev_idx = idx;
+                }
+            }
+        } else if let Some(start) = active_start.take() {
+            reps.push(start + (prev_idx - start) / 2);
+        }
+    }
+    if let Some(start) = active_start {
+        reps.push(start + (prev_idx - start) / 2);
+    }
+
+    if reps.len() > max_markers {
+        let step = reps.len() as f64 / max_markers as f64;
+        reps = (0..max_markers)
+            .map(|i| reps[((i as f64 * step).floor() as usize).min(reps.len() - 1)])
+            .collect();
+    }
+
+    reps.into_iter().map(|i| readings[i].clone()).collect()
+}
+
+fn timeline_x_axis_labels(readings: &[LingoReading], max_hour: f64) -> (String, String, String) {
+    if max_hour >= 24.0 {
+        let first_date = readings
+            .first()
+            .and_then(|r| parse_timestamp(&r.timestamp, None))
+            .map(|p| p.local_date);
+        let last_date = readings
+            .last()
+            .and_then(|r| parse_timestamp(&r.timestamp, None))
+            .map(|p| p.local_date);
+        if let (Some(d0), Some(d1)) = (first_date, last_date) {
+            let span_days = (d1 - d0).num_days();
+            if span_days >= 2 {
+                let d_mid = d0 + chrono::TimeDelta::days(span_days / 2);
+                return (d0.to_string(), d_mid.to_string(), d1.to_string());
+            }
+        }
+    }
+    let mid = if max_hour >= 72.0 {
+        format!("{:.1}d", (max_hour / 2.0) / 24.0)
+    } else {
+        format!("{:.0}h", max_hour / 2.0)
+    };
+    let end = if max_hour >= 72.0 {
+        format!("{:.1}d", max_hour / 24.0)
+    } else {
+        format!("{:.0}h", max_hour)
+    };
+    ("0h".to_string(), mid, end)
+}
+
 #[component]
 fn LingoMoodTimelineChart(
     readings: Vec<LingoReading>,
@@ -1590,12 +1784,13 @@ fn LingoMoodTimelineChart(
         .chain(checkins.iter().map(|c| c.hour_offset))
         .fold(24.0_f64, f64::max)
         .max(1.0);
-    let min_g = 55.0_f64;
+    // Lower floor to 45 mg/dL so Lingo floor-capped 54 mg/dL (<55) readings sit visibly above the bottom edge.
+    let min_g = 45.0_f64;
     let max_g = readings
         .iter()
         .map(|r| r.glucose_mg_dl)
-        .fold(180.0_f64, f64::max)
-        .max(180.0);
+        .fold(190.0_f64, f64::max)
+        .max(190.0);
 
     let x_for = |h: f64| pad_l + (h / max_hour) * plot_w;
     let y_for_g = |g: f64| {
@@ -1610,21 +1805,35 @@ fn LingoMoodTimelineChart(
     let band_top = y_for_g(140.0);
     let band_bottom = y_for_g(70.0);
     let band_h = (band_bottom - band_top).max(1.0);
+    let y_180 = y_for_g(180.0);
+    let show_max_g_label = (y_180 - pad_t).abs() > 14.0;
 
-    let plot_readings = downsample_readings_for_chart(&readings, 360);
+    let segments = downsample_segments_for_chart(&readings, 360, DEFAULT_CHART_GAP_HOURS);
     let spike_peaks = select_notable_spike_peaks(&readings, 36);
+    let floor_caps = select_svg_floor_cap_markers(&readings, 24);
+    let (x_left, x_mid, x_right) = timeline_x_axis_labels(&readings, max_hour);
 
-    let points: String = plot_readings
+    let segment_polylines: Vec<String> = segments
         .iter()
-        .map(|r| {
-            format!(
-                "{:.1},{:.1}",
-                x_for(r.hour_offset),
-                y_for_g(r.glucose_mg_dl)
-            )
+        .filter(|seg| seg.len() >= 2)
+        .map(|seg| {
+            seg.iter()
+                .map(|r| {
+                    format!(
+                        "{:.1},{:.1}",
+                        x_for(r.hour_offset),
+                        y_for_g(r.glucose_mg_dl)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
         })
-        .collect::<Vec<_>>()
-        .join(" ");
+        .collect();
+    let isolated_points: Vec<(f64, f64)> = segments
+        .iter()
+        .filter(|seg| seg.len() == 1)
+        .map(|seg| (x_for(seg[0].hour_offset), y_for_g(seg[0].glucose_mg_dl)))
+        .collect();
 
     view! {
         <svg
@@ -1641,30 +1850,55 @@ fn LingoMoodTimelineChart(
                 height=band_h
                 fill="rgba(52, 211, 153, 0.10)"
             />
+            // Clinical 180 mg/dL hyperglycemia reference line
+            <line x1=pad_l y1=y_180 x2=width - pad_r y2=y_180 stroke="rgba(251, 191, 36, 0.45)" stroke-dasharray="4 4" />
             <line x1=pad_l y1=band_top x2=width - pad_r y2=band_top stroke="rgba(52, 211, 153, 0.35)" stroke-dasharray="4 4" />
             <line x1=pad_l y1=band_bottom x2=width - pad_r y2=band_bottom stroke="rgba(52, 211, 153, 0.35)" stroke-dasharray="4 4" />
 
             // Y-axis labels
+            <text x="8" y=y_180 + 4.0 fill=AMBER font-size="10">"180"</text>
             <text x="8" y=band_top + 4.0 fill=SLATE_LIGHT font-size="10">"140"</text>
             <text x="8" y=band_bottom + 4.0 fill=SLATE_LIGHT font-size="10">"70"</text>
-            <text x="8" y=pad_t + 6.0 fill=SLATE_LIGHT font-size="10">{format!("{:.0}", max_g)}</text>
+            {show_max_g_label.then(|| view! {
+                <text x="8" y=pad_t + 6.0 fill=SLATE_LIGHT font-size="10">{format!("{:.0}", max_g)}</text>
+            })}
 
-            // Glucose curve
-            <polyline
-                fill="none"
-                stroke=CYAN
-                stroke-width="2.5"
-                stroke-linejoin="round"
-                stroke-linecap="round"
-                points=points
-            />
+            // Gap-aware glucose segments (never bridged across >2h sensor gaps)
+            {segment_polylines.into_iter().map(|pts| view! {
+                <polyline
+                    fill="none"
+                    stroke=CYAN
+                    stroke-width="2.5"
+                    stroke-linejoin="round"
+                    stroke-linecap="round"
+                    points=pts
+                />
+            }).collect_view()}
+            {isolated_points.into_iter().map(|(cx, cy)| view! {
+                <circle cx=cx cy=cy r="2.5" fill=CYAN />
+            }).collect_view()}
 
-            // Spike markers (> 140 mg/dL local peaks)
+            // Spike markers (> 140 mg/dL local peaks; ceiling-capped readings styled distinctly in orange-red)
             {spike_peaks.into_iter().map(|r| {
                 let cx = x_for(r.hour_offset);
                 let cy = y_for_g(r.glucose_mg_dl);
+                if r.bound.is_ceiling_capped() {
+                    view! {
+                        <circle cx=cx cy=cy r="5.0" fill="#f97316" stroke="#fff7ed" stroke-width="1.5" />
+                    }.into_any()
+                } else {
+                    view! {
+                        <circle cx=cx cy=cy r="4.5" fill=AMBER stroke="#0f172a" stroke-width="1.5" />
+                    }.into_any()
+                }
+            }).collect_view()}
+
+            // Floor-capped markers (<55 / ≤54 mg/dL dips in crimson)
+            {floor_caps.into_iter().map(|r| {
+                let cx = x_for(r.hour_offset);
+                let cy = y_for_g(r.glucose_mg_dl);
                 view! {
-                    <circle cx=cx cy=cy r="4.5" fill=AMBER stroke="#0f172a" stroke-width="1.5" />
+                    <circle cx=cx cy=cy r="4.5" fill="#f43f5e" stroke="#fff1f2" stroke-width="1.5" />
                 }
             }).collect_view()}
 
@@ -1682,21 +1916,13 @@ fn LingoMoodTimelineChart(
                 }
             }).collect_view()}
 
-            // X-axis labels
-            <text x=pad_l y=height - 8.0 fill=SLATE_LIGHT font-size="10">"0h"</text>
+            // X-axis labels (real YYYY-MM-DD calendar dates when span >= 24h)
+            <text x=pad_l y=height - 8.0 fill=SLATE_LIGHT font-size="10">{x_left}</text>
             <text x=pad_l + plot_w / 2.0 y=height - 8.0 text-anchor="middle" fill=SLATE_LIGHT font-size="10">
-                {if max_hour >= 72.0 {
-                    format!("{:.1}d", (max_hour / 2.0) / 24.0)
-                } else {
-                    format!("{:.0}h", max_hour / 2.0)
-                }}
+                {x_mid}
             </text>
             <text x=width - pad_r y=height - 8.0 text-anchor="end" fill=SLATE_LIGHT font-size="10">
-                {if max_hour >= 72.0 {
-                    format!("{:.1}d", max_hour / 24.0)
-                } else {
-                    format!("{:.0}h", max_hour)
-                }}
+                {x_right}
             </text>
         </svg>
     }
@@ -2027,5 +2253,72 @@ mod tests {
         .to_html();
         assert!(trend_html.contains("PHQ-9 and GAD-7 longitudinal score trajectory"));
         assert!(trend_html.contains("2026-10-31"));
+    }
+
+    #[test]
+    fn timeline_svg_breaks_sensor_gaps_renders_dates_and_styles_saturation() {
+        use crate::mental_health_lingo::GlucoseReadingBound;
+
+        let readings = vec![
+            LingoReading {
+                timestamp: "2026-07-01T08:00-07:00".to_string(),
+                hour_offset: 0.0,
+                glucose_mg_dl: 54.0,
+                lingo_count: None,
+                tag: None,
+                bound: GlucoseReadingBound::BelowSensorFloor,
+            },
+            LingoReading {
+                timestamp: "2026-07-01T09:00-07:00".to_string(),
+                hour_offset: 1.0,
+                glucose_mg_dl: 108.0,
+                lingo_count: None,
+                tag: None,
+                bound: GlucoseReadingBound::Measured,
+            },
+            // 48-hour sensor-off gap -> must render as a separate <polyline>
+            LingoReading {
+                timestamp: "2026-07-03T09:00-07:00".to_string(),
+                hour_offset: 49.0,
+                glucose_mg_dl: 201.0,
+                lingo_count: None,
+                tag: None,
+                bound: GlucoseReadingBound::AboveSensorCeiling,
+            },
+            LingoReading {
+                timestamp: "2026-07-03T10:00-07:00".to_string(),
+                hour_offset: 50.0,
+                glucose_mg_dl: 155.0,
+                lingo_count: None,
+                tag: None,
+                bound: GlucoseReadingBound::Measured,
+            },
+        ];
+
+        let html = view! {
+            <LingoMoodTimelineChart readings=readings checkins=Vec::new() />
+        }
+        .to_html();
+
+        assert_eq!(html.matches("<polyline").count(), 2);
+        assert!(html.contains(">180</text>"));
+        assert!(html.contains("2026-07-01"));
+        assert!(html.contains("2026-07-02"));
+        assert!(html.contains("2026-07-03"));
+        assert!(html.contains("#f97316"), "ceiling-capped spike marker");
+        assert!(html.contains("#f43f5e"), "floor-capped dip marker");
+    }
+
+    #[test]
+    fn import_validation_panel_surfaces_out_of_range_rows() {
+        let mut import = parse_commercial_glucose_input(SAMPLE_LINGO_CSV, None).unwrap();
+        import.diagnostics.out_of_range_rows = 12;
+        import.diagnostics.skipped_invalid_rows = 1;
+        let html = view! {
+            <ImportValidationPanel diagnostics=import.diagnostics />
+        }
+        .to_html();
+        assert!(html.contains("Cap / OOR / Invalid"));
+        assert!(html.contains("0 / 12 / 1"));
     }
 }

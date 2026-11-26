@@ -13,6 +13,7 @@ use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use crate::mental_health_lingo::GlucoseReadingBound;
 use crate::mental_health_lingo::{split_delimited_row, LingoReading, SAMPLE_LINGO_CSV};
 
 const MMOL_TO_MG_DL: f64 = 18.0182;
@@ -156,14 +157,6 @@ impl MeasurementMethod {
     }
 }
 
-/// Indicates whether a sensor reading was measured directly or hit a sensor ceiling/floor sentinel.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum GlucoseReadingBound {
-    Measured,
-    BelowSensorFloor,
-    AboveSensorCeiling,
-}
-
 /// Glycemia Risk Index clinical zone (Klonoff et al. 2022, `0..=100`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GriZone {
@@ -254,6 +247,10 @@ pub struct GlucoseImportDiagnostics {
     pub parsed_readings: usize,
     pub skipped_non_glucose_rows: usize,
     pub skipped_invalid_rows: usize,
+    /// Non-numeric sensor status rows such as Abbott Lingo `"Out of range"` (tracked separately
+    /// from malformed CSV/XML rows).
+    #[serde(default)]
+    pub out_of_range_rows: usize,
     pub duplicate_timestamps_dropped: usize,
     pub bounded_sentinels: usize,
     pub timestamps_parsed: usize,
@@ -269,21 +266,25 @@ pub struct GlucoseImportDiagnostics {
 }
 
 /// Analysis / visualization time window over an imported glucose trace.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GlucoseWindow {
     Hours24,
     Days3,
     Days7,
     Days14,
+    Days30,
+    Days90,
     All,
 }
 
 impl GlucoseWindow {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::Hours24,
         Self::Days3,
         Self::Days7,
         Self::Days14,
+        Self::Days30,
+        Self::Days90,
         Self::All,
     ];
 
@@ -293,6 +294,8 @@ impl GlucoseWindow {
             Self::Days3 => "3d",
             Self::Days7 => "7d",
             Self::Days14 => "14d",
+            Self::Days30 => "30d",
+            Self::Days90 => "90d",
             Self::All => "All",
         }
     }
@@ -303,6 +306,8 @@ impl GlucoseWindow {
             Self::Days3 => Some(72.0),
             Self::Days7 => Some(168.0),
             Self::Days14 => Some(336.0),
+            Self::Days30 => Some(720.0),
+            Self::Days90 => Some(2160.0),
             Self::All => None,
         }
     }
@@ -423,9 +428,45 @@ pub struct ClinicalGlucoseSummary {
     pub high_readings_gt_180: usize,
     pub low_readings_lt_70: usize,
     pub very_low_readings_lt_54: usize,
+    /// Number of readings in this window clipped at the sensor floor (e.g., Lingo `<55 mg/dL`).
+    pub floor_capped_readings: usize,
+    /// Number of readings in this window clipped at the sensor ceiling (e.g., Lingo `>200 mg/dL`).
+    pub ceiling_capped_readings: usize,
+    /// Percentage of readings in this window clipped at the sensor floor.
+    pub floor_capped_pct: f64,
+    /// Percentage of readings in this window clipped at the sensor ceiling.
+    pub ceiling_capped_pct: f64,
     pub total_lingo_count: f64,
     pub estimated_active_wear_pct: f64,
     pub agp_hourly: Vec<AgpHourBin>,
+}
+
+impl ClinicalGlucoseSummary {
+    /// Whether any readings in this summarized window hit a sensor floor or ceiling saturation cap.
+    pub fn has_sensor_saturation(&self) -> bool {
+        self.floor_capped_readings > 0 || self.ceiling_capped_readings > 0
+    }
+}
+
+/// Resolve the effective sensor bound for a reading, including legacy Lingo traces loaded
+/// without an explicit `bound` field (`<= 54.5` floor / `>= 200.5` ceiling).
+pub(crate) fn effective_reading_bound(
+    reading: &LingoReading,
+    monitor: GlucoseMonitor,
+) -> GlucoseReadingBound {
+    if reading.bound != GlucoseReadingBound::Measured {
+        reading.bound
+    } else if monitor == GlucoseMonitor::AbbottLingo
+        && reading.glucose_mg_dl <= LINGO_FLOOR_MG_DL - 0.5
+    {
+        GlucoseReadingBound::BelowSensorFloor
+    } else if monitor == GlucoseMonitor::AbbottLingo
+        && reading.glucose_mg_dl >= LINGO_CEILING_MG_DL + 0.5
+    {
+        GlucoseReadingBound::AboveSensorCeiling
+    } else {
+        GlucoseReadingBound::Measured
+    }
 }
 
 /// Infer a monitor hint from an uploaded file's name when the user left format on Auto-detect.
@@ -515,7 +556,10 @@ pub fn downsample_readings_for_chart(
             }
         }
         if min_i == max_i {
-            out.push(slice[min_i].clone());
+            out.push(slice[0].clone());
+            if slice.len() > 1 {
+                out.push(slice[slice.len() - 1].clone());
+            }
         } else if min_i < max_i {
             out.push(slice[min_i].clone());
             out.push(slice[max_i].clone());
@@ -529,8 +573,10 @@ pub fn downsample_readings_for_chart(
     out
 }
 
-/// Select local excursion peaks above `140 mg/dL` so multi-week charts highlight distinct spikes
-/// without flooding the DOM or GPU with thousands of consecutive plateau markers.
+/// Select one representative peak per contiguous excursion above `140 mg/dL` so multi-week
+/// charts highlight distinct spikes cleanly without flooding the DOM or GPU with duplicate
+/// markers on flat ceiling plateaus (e.g., Abbott Lingo `201 mg/dL`). Excursions are broken
+/// across sensor gaps exceeding `1.5` hours.
 pub fn select_notable_spike_peaks(
     readings: &[LingoReading],
     max_markers: usize,
@@ -538,44 +584,140 @@ pub fn select_notable_spike_peaks(
     if readings.is_empty() || max_markers == 0 {
         return Vec::new();
     }
-    let all_spikes: Vec<&LingoReading> = readings
-        .iter()
-        .filter(|r| r.glucose_mg_dl > 140.0)
-        .collect();
-    if all_spikes.len() <= max_markers {
-        return all_spikes.into_iter().cloned().collect();
+
+    const EXCURSION_GAP_BREAK_HOURS: f64 = 1.5;
+
+    // Group contiguous readings > 140 mg/dL, breaking across gaps > 1.5h.
+    // For each excursion, pick the midpoint of its peak plateau so flat 201 mg/dL runs
+    // emit exactly one clean representative marker.
+    struct ExcursionPeak {
+        rep_idx: usize,
+        span_readings: usize,
     }
 
-    let mut peaks: Vec<(usize, &LingoReading)> = Vec::new();
-    for (idx, r) in readings.iter().enumerate() {
-        if r.glucose_mg_dl <= 140.0 {
-            continue;
+    let mut peaks: Vec<ExcursionPeak> = Vec::new();
+    let mut active_start: Option<usize> = None;
+    let mut prev_spike_idx: usize = 0;
+
+    let flush_excursion = |start: usize, end: usize, out: &mut Vec<ExcursionPeak>| {
+        let mut max_g = f64::NEG_INFINITY;
+        for r in &readings[start..=end] {
+            if r.glucose_mg_dl > max_g {
+                max_g = r.glucose_mg_dl;
+            }
         }
-        let left_ok = idx == 0 || r.glucose_mg_dl >= readings[idx - 1].glucose_mg_dl;
-        let right_ok =
-            idx + 1 == readings.len() || r.glucose_mg_dl > readings[idx + 1].glucose_mg_dl;
-        if left_ok && right_ok {
-            peaks.push((idx, r));
-        }
-    }
-    if peaks.is_empty() {
-        peaks = readings
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| r.glucose_mg_dl > 140.0)
+        let plateau_indices: Vec<usize> = (start..=end)
+            .filter(|&i| (readings[i].glucose_mg_dl - max_g).abs() <= 1e-6)
             .collect();
+        let rep_idx = plateau_indices
+            .get(plateau_indices.len() / 2)
+            .copied()
+            .unwrap_or(start);
+        out.push(ExcursionPeak {
+            rep_idx,
+            span_readings: end - start + 1,
+        });
+    };
+
+    for (idx, r) in readings.iter().enumerate() {
+        if r.glucose_mg_dl > 140.0 {
+            match active_start {
+                None => {
+                    active_start = Some(idx);
+                    prev_spike_idx = idx;
+                }
+                Some(start) => {
+                    let gap_hours = (r.hour_offset - readings[prev_spike_idx].hour_offset).abs();
+                    if gap_hours > EXCURSION_GAP_BREAK_HOURS {
+                        flush_excursion(start, prev_spike_idx, &mut peaks);
+                        active_start = Some(idx);
+                    }
+                    prev_spike_idx = idx;
+                }
+            }
+        } else if let Some(start) = active_start.take() {
+            flush_excursion(start, prev_spike_idx, &mut peaks);
+        }
     }
+    if let Some(start) = active_start {
+        flush_excursion(start, prev_spike_idx, &mut peaks);
+    }
+
     if peaks.len() > max_markers {
-        peaks.sort_by(|a, b| b.1.glucose_mg_dl.total_cmp(&a.1.glucose_mg_dl));
+        // Distribute markers across equal-width temporal buckets, choosing the most prominent
+        // excursion (highest peak, then longest span) in each bucket so tied ceiling plateaus
+        // (e.g. Abbott Lingo `201 mg/dL`) are spread across the full timeline rather than
+        // clustered at the start. Fill any spare slots (e.g. from empty gap buckets) by
+        // remaining global prominence.
+        let min_h = peaks
+            .iter()
+            .map(|p| readings[p.rep_idx].hour_offset)
+            .fold(f64::INFINITY, f64::min);
+        let max_h = peaks
+            .iter()
+            .map(|p| readings[p.rep_idx].hour_offset)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let span_h = (max_h - min_h).max(0.0);
+
+        let cmp_prominence = |a: &ExcursionPeak, b: &ExcursionPeak| {
+            readings[b.rep_idx]
+                .glucose_mg_dl
+                .total_cmp(&readings[a.rep_idx].glucose_mg_dl)
+                .then_with(|| b.span_readings.cmp(&a.span_readings))
+                .then_with(|| a.rep_idx.cmp(&b.rep_idx))
+        };
+
+        if span_h > 1e-6 {
+            let mut chosen = vec![false; peaks.len()];
+            let mut bucket_best: Vec<Option<usize>> = vec![None; max_markers];
+            for (i, p) in peaks.iter().enumerate() {
+                let norm = ((readings[p.rep_idx].hour_offset - min_h) / span_h).clamp(0.0, 1.0);
+                let bucket = ((norm * max_markers as f64).floor() as usize).min(max_markers - 1);
+                match bucket_best[bucket] {
+                    None => bucket_best[bucket] = Some(i),
+                    Some(prev_i) => {
+                        if cmp_prominence(&peaks[i], &peaks[prev_i]).is_lt() {
+                            bucket_best[bucket] = Some(i);
+                        }
+                    }
+                }
+            }
+
+            let mut selected_indices: Vec<usize> = Vec::with_capacity(max_markers);
+            for idx in bucket_best.into_iter().flatten() {
+                chosen[idx] = true;
+                selected_indices.push(idx);
+            }
+
+            if selected_indices.len() < max_markers {
+                let mut remaining: Vec<usize> = (0..peaks.len()).filter(|&i| !chosen[i]).collect();
+                remaining.sort_by(|&a, &b| cmp_prominence(&peaks[a], &peaks[b]));
+                let need = max_markers - selected_indices.len();
+                selected_indices.extend(remaining.into_iter().take(need));
+            }
+
+            selected_indices.sort_by_key(|&i| peaks[i].rep_idx);
+            return selected_indices
+                .into_iter()
+                .map(|i| readings[peaks[i].rep_idx].clone())
+                .collect();
+        }
+
+        peaks.sort_by(cmp_prominence);
         peaks.truncate(max_markers);
-        peaks.sort_by_key(|(idx, _)| *idx);
+        peaks.sort_by_key(|p| p.rep_idx);
     }
-    peaks.into_iter().map(|(_, r)| r.clone()).collect()
+
+    peaks
+        .into_iter()
+        .map(|p| readings[p.rep_idx].clone())
+        .collect()
 }
 
-/// Export any parsed [`CommercialGlucoseImport`] to the canonical `dabney.health_bridge.v1` JSON
-/// schema for offline validation and parity testing with future Health Connect / HealthKit bridges.
-pub fn export_health_bridge_json(import: &CommercialGlucoseImport, platform: &str) -> String {
+fn build_health_bridge_envelope(
+    import: &CommercialGlucoseImport,
+    platform: &str,
+) -> HealthBridgeEnvelope {
     let origin = import
         .diagnostics
         .detected_sources
@@ -585,30 +727,51 @@ pub fn export_health_bridge_json(import: &CommercialGlucoseImport, platform: &st
             GlucoseMonitor::AbbottLingo => "com.abbott.lingo".to_string(),
             other => other.slug().to_string(),
         });
-    let envelope = HealthBridgeEnvelope {
+    HealthBridgeEnvelope {
         schema: HEALTH_BRIDGE_SCHEMA_V1.to_string(),
         platform: platform.to_string(),
         exported_at: import.diagnostics.last_timestamp.clone(),
         records: import
             .readings
             .iter()
-            .map(|r| HealthBridgeGlucoseRecord {
-                time: r.timestamp.clone(),
-                zone_offset: extract_zone_offset_str(&r.timestamp),
-                level_mg_dl: Some((r.glucose_mg_dl * 10.0).round() / 10.0),
-                level_mmol_l: None,
-                relation_to_meal: r.tag.clone(),
-                specimen_source: Some(match import.method {
-                    MeasurementMethod::InterstitialCgm => "interstitial_fluid".to_string(),
-                    MeasurementMethod::CapillaryBgm => "capillary_blood".to_string(),
-                }),
-                data_origin: Some(origin.clone()),
-                lingo_count: r.lingo_count,
-                bound: None,
+            .map(|r| {
+                let bound = effective_reading_bound(r, import.monitor);
+                HealthBridgeGlucoseRecord {
+                    time: r.timestamp.clone(),
+                    zone_offset: extract_zone_offset_str(&r.timestamp),
+                    level_mg_dl: Some((r.glucose_mg_dl * 10.0).round() / 10.0),
+                    level_mmol_l: None,
+                    relation_to_meal: r.tag.clone(),
+                    specimen_source: Some(match import.method {
+                        MeasurementMethod::InterstitialCgm => "interstitial_fluid".to_string(),
+                        MeasurementMethod::CapillaryBgm => "capillary_blood".to_string(),
+                    }),
+                    data_origin: Some(origin.clone()),
+                    lingo_count: r.lingo_count,
+                    bound: bound.bridge_str().map(str::to_owned),
+                }
             })
             .collect(),
-    };
+    }
+}
+
+/// Export any parsed [`CommercialGlucoseImport`] to the canonical pretty-printed
+/// `dabney.health_bridge.v1` JSON schema for offline validation and parity testing with
+/// future Health Connect / HealthKit bridges.
+pub fn export_health_bridge_json(import: &CommercialGlucoseImport, platform: &str) -> String {
+    let envelope = build_health_bridge_envelope(import, platform);
     serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Export any parsed [`CommercialGlucoseImport`] to compact (minified) `dabney.health_bridge.v1`
+/// JSON for encrypted mobile personal vault storage (staying well under payload limits even for
+/// multi-month 5-minute CGM archives).
+pub fn export_health_bridge_json_compact(
+    import: &CommercialGlucoseImport,
+    platform: &str,
+) -> String {
+    let envelope = build_health_bridge_envelope(import, platform);
+    serde_json::to_string(&envelope).unwrap_or_else(|_| "{}".to_string())
 }
 
 struct HeaderSpec {
@@ -642,11 +805,13 @@ struct IndexedGlucoseRow {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct ParsedTimestamp {
+pub(crate) struct ParsedTimestamp {
     /// Exact monotonic UTC epoch minutes (computed with Gregorian calendar dates).
-    utc_minutes: f64,
-    /// Local wall-clock hour (`0..24`) for 24-hour AGP binning.
-    local_hour: u8,
+    pub(crate) utc_minutes: f64,
+    /// Local calendar date (`YYYY-MM-DD`) in the reading's own timezone offset.
+    pub(crate) local_date: NaiveDate,
+    /// Local wall-clock hour (`0..24`) for 24-hour AGP & circadian binning.
+    pub(crate) local_hour: u8,
 }
 
 enum CellParseOutcome {
@@ -669,6 +834,7 @@ struct FinalizeImportArgs {
     total_rows_seen: usize,
     skipped_non_glucose_rows: usize,
     skipped_invalid_rows: usize,
+    out_of_range_rows: usize,
     detected_sources: Vec<String>,
     sample_warnings: Vec<String>,
 }
@@ -716,6 +882,7 @@ pub fn parse_commercial_glucose_csv(
     let mut total_rows_seen = 0usize;
     let mut skipped_non_glucose_rows = 0usize;
     let mut skipped_invalid_rows = 0usize;
+    let mut out_of_range_rows = 0usize;
     let mut detected_sources: Vec<String> = Vec::new();
     let mut sample_warnings: Vec<String> = Vec::new();
 
@@ -898,7 +1065,7 @@ pub fn parse_commercial_glucose_csv(
         }
 
         let mut parsed_glucose: Option<(f64, GlucoseReadingBound)> = None;
-        let mut cell_issue: Option<String> = None;
+        let mut cell_issue: Option<(bool, String)> = None;
         for &g_idx in &spec.glucose_cols {
             let cell = cols.get(g_idx).map(|s| s.trim()).unwrap_or("");
             match parse_glucose_cell(cell, row_unit) {
@@ -923,22 +1090,29 @@ pub fn parse_commercial_glucose_csv(
                     break;
                 }
                 CellParseOutcome::OutOfRangeSentinel(raw) => {
-                    cell_issue = Some(format!(
-                        "Line {}: skipped sensor status cell `{raw}`.",
-                        line_idx + 1
+                    cell_issue = Some((
+                        true,
+                        format!("Line {}: sensor status cell `{raw}`.", line_idx + 1),
                     ));
                 }
                 CellParseOutcome::Invalid(raw) => {
-                    cell_issue = Some(format!(
-                        "Line {}: could not parse glucose cell `{raw}`.",
-                        line_idx + 1
+                    cell_issue = Some((
+                        false,
+                        format!(
+                            "Line {}: could not parse glucose cell `{raw}`.",
+                            line_idx + 1
+                        ),
                     ));
                 }
             }
         }
         let Some((glucose_mg_dl, bound)) = parsed_glucose else {
-            if let Some(msg) = cell_issue {
-                skipped_invalid_rows += 1;
+            if let Some((is_oor, msg)) = cell_issue {
+                if is_oor {
+                    out_of_range_rows += 1;
+                } else {
+                    skipped_invalid_rows += 1;
+                }
                 push_warning(&mut sample_warnings, msg);
             } else {
                 skipped_non_glucose_rows += 1;
@@ -1043,6 +1217,7 @@ pub fn parse_commercial_glucose_csv(
         total_rows_seen,
         skipped_non_glucose_rows,
         skipped_invalid_rows,
+        out_of_range_rows,
         detected_sources,
         sample_warnings,
     }))
@@ -1059,6 +1234,7 @@ pub fn parse_apple_health_xml(
     let mut total_rows_seen = 0usize;
     let mut skipped_non_glucose_rows = 0usize;
     let mut skipped_invalid_rows = 0usize;
+    let mut out_of_range_rows = 0usize;
     let mut detected_sources: Vec<String> = Vec::new();
     let mut sample_warnings: Vec<String> = Vec::new();
     let mut saw_mmol = false;
@@ -1121,6 +1297,13 @@ pub fn parse_apple_health_xml(
                     bound,
                 });
             }
+            CellParseOutcome::OutOfRangeSentinel(raw) => {
+                out_of_range_rows += 1;
+                push_warning(
+                    &mut sample_warnings,
+                    format!("Apple Health record at `{start_date}` had sensor status `{raw}`."),
+                );
+            }
             _ => {
                 skipped_invalid_rows += 1;
                 push_warning(
@@ -1157,6 +1340,7 @@ pub fn parse_apple_health_xml(
         total_rows_seen,
         skipped_non_glucose_rows,
         skipped_invalid_rows,
+        out_of_range_rows,
         detected_sources,
         sample_warnings,
     }))
@@ -1359,6 +1543,7 @@ pub fn parse_health_bridge_json(
         total_rows_seen,
         skipped_non_glucose_rows: 0,
         skipped_invalid_rows,
+        out_of_range_rows: 0,
         detected_sources,
         sample_warnings,
     }))
@@ -1445,6 +1630,7 @@ fn finalize_glucose_import(args: FinalizeImportArgs) -> CommercialGlucoseImport 
                 glucose_mg_dl: item.row.glucose_mg_dl,
                 lingo_count: item.row.lingo_count,
                 tag: item.row.tag,
+                bound: effective_bound,
             }
         })
         .collect();
@@ -1481,6 +1667,7 @@ fn finalize_glucose_import(args: FinalizeImportArgs) -> CommercialGlucoseImport 
         lingo_floor_capped,
         lingo_ceiling_capped,
         args.skipped_invalid_rows,
+        args.out_of_range_rows,
         span_hours,
         median_interval_minutes,
         longest_gap_minutes,
@@ -1492,6 +1679,7 @@ fn finalize_glucose_import(args: FinalizeImportArgs) -> CommercialGlucoseImport 
         parsed_readings: readings.len(),
         skipped_non_glucose_rows: args.skipped_non_glucose_rows,
         skipped_invalid_rows: args.skipped_invalid_rows,
+        out_of_range_rows: args.out_of_range_rows,
         duplicate_timestamps_dropped,
         bounded_sentinels,
         timestamps_parsed,
@@ -1528,6 +1716,7 @@ fn build_validation_checks(
     lingo_floor_capped: usize,
     lingo_ceiling_capped: usize,
     skipped_invalid_rows: usize,
+    out_of_range_rows: usize,
     span_hours: f64,
     median_interval_minutes: Option<f64>,
     longest_gap_minutes: Option<f64>,
@@ -1695,13 +1884,29 @@ fn build_validation_checks(
         });
     }
 
-    // 5. Skipped / invalid rows check
+    // 5. Sensor out-of-range status rows (tracked separately from malformed rows)
+    if out_of_range_rows > 0 {
+        let level = if out_of_range_rows >= 24 {
+            ValidationLevel::Warn
+        } else {
+            ValidationLevel::Info
+        };
+        checks.push(ValidationCheck {
+            name: "Sensor Out-of-Range Rows".to_string(),
+            level,
+            detail: format!(
+                "Observed {out_of_range_rows} non-numeric sensor status row(s) (e.g. \"Out of range\"); excluded from numeric mean/TIR while preserving valid readings."
+            ),
+        });
+    }
+
+    // 6. Skipped / malformed rows check
     if skipped_invalid_rows > 0 {
         checks.push(ValidationCheck {
             name: "Row Integrity".to_string(),
             level: ValidationLevel::Warn,
             detail: format!(
-                "Skipped {skipped_invalid_rows} malformed or sensor-status row(s); valid readings were preserved."
+                "Skipped {skipped_invalid_rows} malformed row(s); valid readings were preserved."
             ),
         });
     }
@@ -2241,7 +2446,10 @@ fn normalize_timestamp_with_zone_offset(ts: &str, zone_offset: Option<&str>) -> 
 /// - Apple Health `export.xml` (`2026-11-25 10:00:00 -0700`)
 /// - Local ISO (`2026-11-21 06:00`, `2026-11-21 06:00:00`)
 /// - US / EU slash & dash dates (`MM/DD/YYYY HH:MM[:SS] [AM|PM]`, `DD-MM-YYYY HH:MM`)
-fn parse_timestamp(ts: &str, extra_zone_offset: Option<&str>) -> Option<ParsedTimestamp> {
+pub(crate) fn parse_timestamp(
+    ts: &str,
+    extra_zone_offset: Option<&str>,
+) -> Option<ParsedTimestamp> {
     let cleaned = ts.trim().replace('T', " ");
     let mut parts = cleaned.split_whitespace();
     let date_part = parts.next()?;
@@ -2351,31 +2559,37 @@ fn parse_timestamp(ts: &str, extra_zone_offset: Option<&str>) -> Option<ParsedTi
         None => wall_minutes,
     };
 
-    let local_hour = if had_z_suffix {
+    let (local_date, local_hour) = if had_z_suffix {
         if let Some(extra_off) = extra_zone_offset.and_then(parse_offset_minutes) {
             let local_mins = utc_minutes.round() as i64 + extra_off;
-            (local_mins.div_euclid(60).rem_euclid(24)) as u8
+            let days_from_epoch = local_mins.div_euclid(1440);
+            let adjusted_date = epoch
+                .checked_add_signed(chrono::TimeDelta::days(days_from_epoch))
+                .unwrap_or(date);
+            let adjusted_hour = (local_mins.div_euclid(60).rem_euclid(24)) as u8;
+            (adjusted_date, adjusted_hour)
         } else {
-            hour as u8
+            (date, hour as u8)
         }
     } else {
-        hour as u8
+        (date, hour as u8)
     };
 
     Some(ParsedTimestamp {
         utc_minutes,
+        local_date,
         local_hour,
     })
 }
 
-fn extract_clock_hour(ts: &str, fallback_offset: f64) -> u8 {
+pub(crate) fn extract_clock_hour(ts: &str, fallback_offset: f64) -> u8 {
     if let Some(parsed) = parse_timestamp(ts, None) {
         return parsed.local_hour;
     }
     ((fallback_offset.floor() as i64).rem_euclid(24)) as u8
 }
 
-fn percentile_sorted(sorted: &[f64], p: f64) -> f64 {
+pub(crate) fn percentile_sorted(sorted: &[f64], p: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
     }
@@ -2389,28 +2603,135 @@ fn percentile_sorted(sorted: &[f64], p: f64) -> f64 {
     sorted[lo] * (1.0 - frac) + sorted[hi] * frac
 }
 
+/// Compute gap-aware Mean Amplitude of Glycemic Excursions (MAGE, `> 1 SD`) using classic
+/// significant turning-point hysteresis (`> 1 SD` reversal) within each continuous segment
+/// so 1 mg/dL sensor jitter does not reset swings and multi-hour sensor gaps are never bridged.
 fn compute_mage(readings: &[LingoReading], std_dev: f64) -> f64 {
     if readings.len() < 3 || std_dev <= 0.5 {
         return 0.0;
     }
-    let mut extrema = vec![readings[0].glucose_mg_dl];
-    for w in readings.windows(3) {
-        let (a, b, c) = (w[0].glucose_mg_dl, w[1].glucose_mg_dl, w[2].glucose_mg_dl);
-        if (b >= a && b > c) || (b <= a && b < c) {
-            extrema.push(b);
-        }
-    }
-    extrema.push(readings[readings.len() - 1].glucose_mg_dl);
 
-    let swings: Vec<f64> = extrema
+    // Break segments at > 2.0h for continuous CGM traces; for coarse multi-hour sample/BGM
+    // traces whose own median interval exceeds 1h, scale the break threshold accordingly.
+    let mut pos_intervals: Vec<f64> = readings
         .windows(2)
-        .map(|w| (w[1] - w[0]).abs())
-        .filter(|delta| *delta > std_dev)
+        .map(|w| (w[1].hour_offset - w[0].hour_offset).abs())
+        .filter(|d| *d > 0.001)
         .collect();
+    pos_intervals.sort_by(f64::total_cmp);
+    let median_h = if pos_intervals.is_empty() {
+        5.0 / 60.0
+    } else {
+        percentile_sorted(&pos_intervals, 0.50)
+    };
+    let max_gap_h = if median_h <= 1.0 {
+        2.0
+    } else {
+        (median_h * 3.0).max(8.0)
+    };
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum SwingDir {
+        Up,
+        Down,
+    }
+
+    let mut swings: Vec<f64> = Vec::new();
+    let mut seg_start = 0usize;
+    while seg_start < readings.len() {
+        let mut seg_end = seg_start;
+        while seg_end + 1 < readings.len() {
+            let gap_h = (readings[seg_end + 1].hour_offset - readings[seg_end].hour_offset).abs();
+            if gap_h > max_gap_h + 1e-6 {
+                break;
+            }
+            seg_end += 1;
+        }
+        let seg = &readings[seg_start..=seg_end];
+        if seg.len() >= 2 {
+            let mut turning_points: Vec<f64> = Vec::new();
+            let mut cur_min = seg[0].glucose_mg_dl;
+            let mut cur_max = seg[0].glucose_mg_dl;
+            let mut dir: Option<SwingDir> = None;
+
+            for r in &seg[1..] {
+                let g = r.glucose_mg_dl;
+                match dir {
+                    None => {
+                        if g < cur_min {
+                            cur_min = g;
+                        }
+                        if g > cur_max {
+                            cur_max = g;
+                        }
+                        if g - cur_min > std_dev {
+                            turning_points.push(cur_min);
+                            dir = Some(SwingDir::Up);
+                            cur_max = g;
+                        } else if cur_max - g > std_dev {
+                            turning_points.push(cur_max);
+                            dir = Some(SwingDir::Down);
+                            cur_min = g;
+                        }
+                    }
+                    Some(SwingDir::Up) => {
+                        if g > cur_max {
+                            cur_max = g;
+                        } else if cur_max - g > std_dev {
+                            turning_points.push(cur_max);
+                            dir = Some(SwingDir::Down);
+                            cur_min = g;
+                        }
+                    }
+                    Some(SwingDir::Down) => {
+                        if g < cur_min {
+                            cur_min = g;
+                        } else if g - cur_min > std_dev {
+                            turning_points.push(cur_min);
+                            dir = Some(SwingDir::Up);
+                            cur_max = g;
+                        }
+                    }
+                }
+            }
+            match dir {
+                Some(SwingDir::Up) => turning_points.push(cur_max),
+                Some(SwingDir::Down) => turning_points.push(cur_min),
+                None => {}
+            }
+            for w in turning_points.windows(2) {
+                let delta = (w[1] - w[0]).abs();
+                if delta > std_dev {
+                    swings.push(delta);
+                }
+            }
+        }
+        seg_start = seg_end + 1;
+    }
+
     if swings.is_empty() {
         0.0
     } else {
         swings.iter().sum::<f64>() / swings.len() as f64
+    }
+}
+
+/// Compute the effective nominal window span in hours for `window` against a full trace,
+/// capped by the full trace's elapsed span so shorter imports are not penalized.
+pub fn nominal_window_hours_for_trace(
+    full_readings: &[LingoReading],
+    window: GlucoseWindow,
+) -> Option<f64> {
+    let max_h = window.max_hours()?;
+    let full_span = full_readings
+        .last()
+        .zip(full_readings.first())
+        .map(|(last, first)| (last.hour_offset - first.hour_offset).max(0.0))
+        .unwrap_or(0.0);
+    if full_span <= 0.0 {
+        None
+    } else {
+        Some(max_h.min(full_span))
     }
 }
 
@@ -2420,6 +2741,20 @@ pub fn summarize_commercial_glucose(
     monitor: GlucoseMonitor,
     source_unit: GlucoseUnit,
     method: MeasurementMethod,
+) -> Option<ClinicalGlucoseSummary> {
+    summarize_commercial_glucose_with_window(readings, monitor, source_unit, method, None)
+}
+
+/// Compute comprehensive ADA/ATTD clinical summary + 24-hour AGP percentile bins, using an
+/// optional `nominal_window_hours` floor (e.g., from [`nominal_window_hours_for_trace`]) so
+/// `estimated_active_wear_pct` is not inflated when a trailing window cutoff lands inside a
+/// multi-day sensor gap.
+pub fn summarize_commercial_glucose_with_window(
+    readings: &[LingoReading],
+    monitor: GlucoseMonitor,
+    source_unit: GlucoseUnit,
+    method: MeasurementMethod,
+    nominal_window_hours: Option<f64>,
 ) -> Option<ClinicalGlucoseSummary> {
     if readings.is_empty() {
         return None;
@@ -2449,6 +2784,8 @@ pub fn summarize_commercial_glucose(
     let mut high_181_250 = 0usize;
     let mut very_high_250 = 0usize;
     let mut spikes_140 = 0usize;
+    let mut floor_capped_readings = 0usize;
+    let mut ceiling_capped_readings = 0usize;
 
     for r in readings {
         let g = r.glucose_mg_dl;
@@ -2469,6 +2806,11 @@ pub fn summarize_commercial_glucose(
         if g > 140.0 {
             spikes_140 += 1;
         }
+        match effective_reading_bound(r, monitor) {
+            GlucoseReadingBound::BelowSensorFloor => floor_capped_readings += 1,
+            GlucoseReadingBound::AboveSensorCeiling => ceiling_capped_readings += 1,
+            GlucoseReadingBound::Measured => {}
+        }
     }
 
     let tbr_very_low_lt_54_pct = (very_low as f64 / n) * 100.0;
@@ -2477,6 +2819,8 @@ pub fn summarize_commercial_glucose(
     let tir_70_180_pct = (tir_70_180 as f64 / n) * 100.0;
     let tar_high_181_250_pct = (high_181_250 as f64 / n) * 100.0;
     let tar_very_high_gt_250_pct = (very_high_250 as f64 / n) * 100.0;
+    let floor_capped_pct = (floor_capped_readings as f64 / n) * 100.0;
+    let ceiling_capped_pct = (ceiling_capped_readings as f64 / n) * 100.0;
 
     let gri_score = (3.0 * tbr_very_low_lt_54_pct
         + 2.4 * tbr_low_54_69_pct
@@ -2505,11 +2849,15 @@ pub fn summarize_commercial_glucose(
         .filter(|d| *d > 0.001)
         .collect();
     intervals.sort_by(f64::total_cmp);
-    let span_h = readings
+    let actual_span_h = readings
         .last()
-        .map(|r| r.hour_offset)
-        .unwrap_or(0.0)
-        .max(0.0);
+        .zip(readings.first())
+        .map(|(last, first)| (last.hour_offset - first.hour_offset).max(0.0))
+        .unwrap_or(0.0);
+    let span_h = match nominal_window_hours {
+        Some(nom) if nom.is_finite() && nom > 0.0 => actual_span_h.max(nom),
+        _ => actual_span_h,
+    };
     let estimated_active_wear_pct =
         if method == MeasurementMethod::CapillaryBgm || intervals.is_empty() || span_h <= 0.0 {
             100.0
@@ -2567,6 +2915,10 @@ pub fn summarize_commercial_glucose(
         high_readings_gt_180: high_181_250 + very_high_250,
         low_readings_lt_70: very_low + low_54_69,
         very_low_readings_lt_54: very_low,
+        floor_capped_readings,
+        ceiling_capped_readings,
+        floor_capped_pct,
+        ceiling_capped_pct,
         total_lingo_count,
         estimated_active_wear_pct,
         agp_hourly,
@@ -2959,7 +3311,8 @@ mod tests {
         assert_eq!(import.diagnostics.format, ImportPayloadFormat::Csv);
         assert_eq!(import.readings.len(), 6);
         assert_eq!(import.bounded_sentinels, 2);
-        assert_eq!(import.diagnostics.skipped_invalid_rows, 1);
+        assert_eq!(import.diagnostics.out_of_range_rows, 1);
+        assert_eq!(import.diagnostics.skipped_invalid_rows, 0);
         assert_eq!(import.diagnostics.timestamps_unparsed, 0);
 
         // Exact Gregorian calendar diff from Feb 28 23:50 to Mar 1 00:00 is 10 minutes (0.1667h),
@@ -3120,6 +3473,7 @@ mod tests {
                     glucose_mg_dl: g,
                     lingo_count: None,
                     tag: None,
+                    bound: GlucoseReadingBound::Measured,
                 }
             })
             .collect();
@@ -3183,7 +3537,8 @@ Time of Glucose Reading [T=(local time) +/- (time zone offset)], Measurement(mg/
         assert_eq!(imp.source_unit, GlucoseUnit::MgDl);
         assert_eq!(imp.readings.len(), 4);
         assert_eq!(imp.bounded_sentinels, 2);
-        assert_eq!(imp.diagnostics.skipped_invalid_rows, 1);
+        assert_eq!(imp.diagnostics.out_of_range_rows, 1);
+        assert_eq!(imp.diagnostics.skipped_invalid_rows, 0);
         assert_eq!(imp.diagnostics.timestamps_unparsed, 0);
         // Chronologically sorted across DST fall-back:
         // 01:50-06:00 (07:50Z) -> 01:55-06:00 (07:55Z) -> 01:00-07:00 (08:00Z) -> 01:10-07:00 (08:10Z)
@@ -3208,5 +3563,265 @@ Time of Glucose Reading [T=(local time) +/- (time zone offset)], Measurement(mmo
         assert_eq!(imp_mmol.monitor, GlucoseMonitor::AbbottLingo);
         assert_eq!(imp_mmol.source_unit, GlucoseUnit::MmolL);
         assert!((imp_mmol.readings[0].glucose_mg_dl - 5.5 * MMOL_TO_MG_DL).abs() < 0.05);
+    }
+
+    #[test]
+    fn preserves_reading_bounds_across_bridge_json_and_compact_export() {
+        let csv = "\
+Time of Glucose Reading [T=(local time) +/- (time zone offset)], Measurement(mg/dL)
+2026-08-01T08:00-07:00,54
+2026-08-01T08:05-07:00,110
+2026-08-01T08:10-07:00,201
+";
+        let imp = parse_commercial_glucose_input(csv, None).unwrap();
+        assert_eq!(imp.readings[0].bound, GlucoseReadingBound::BelowSensorFloor);
+        assert_eq!(imp.readings[1].bound, GlucoseReadingBound::Measured);
+        assert_eq!(
+            imp.readings[2].bound,
+            GlucoseReadingBound::AboveSensorCeiling
+        );
+
+        let pretty = export_health_bridge_json(&imp, "offline_validation");
+        let compact = export_health_bridge_json_compact(&imp, "mobile_vault");
+        assert!(compact.len() < pretty.len());
+        assert!(pretty.contains("\"below_floor\""));
+        assert!(pretty.contains("\"above_ceiling\""));
+        assert!(compact.contains("\"below_floor\""));
+        assert!(compact.contains("\"above_ceiling\""));
+
+        // Re-import compact JSON as GenericCsv (no Lingo numeric fallback) to prove
+        // `bound` itself round-trips cleanly.
+        let reparsed =
+            parse_commercial_glucose_input(&compact, Some(GlucoseMonitor::GenericCsv)).unwrap();
+        assert_eq!(reparsed.readings.len(), 3);
+        assert_eq!(
+            reparsed.readings[0].bound,
+            GlucoseReadingBound::BelowSensorFloor
+        );
+        assert_eq!(reparsed.readings[1].bound, GlucoseReadingBound::Measured);
+        assert_eq!(
+            reparsed.readings[2].bound,
+            GlucoseReadingBound::AboveSensorCeiling
+        );
+    }
+
+    #[test]
+    fn supports_30d_and_90d_windows_and_windowed_saturation_metrics() {
+        assert_eq!(
+            GlucoseWindow::ALL,
+            [
+                GlucoseWindow::Hours24,
+                GlucoseWindow::Days3,
+                GlucoseWindow::Days7,
+                GlucoseWindow::Days14,
+                GlucoseWindow::Days30,
+                GlucoseWindow::Days90,
+                GlucoseWindow::All,
+            ]
+        );
+        assert_eq!(GlucoseWindow::Days30.label(), "30d");
+        assert_eq!(GlucoseWindow::Days30.max_hours(), Some(720.0));
+        assert_eq!(GlucoseWindow::Days90.label(), "90d");
+        assert_eq!(GlucoseWindow::Days90.max_hours(), Some(2160.0));
+
+        // Build a synthetic 100-day hourly trace:
+        // days 0..70 have floor caps (54), days 70..100 have ceiling caps (201) on some hours.
+        let total_hours = 100 * 24;
+        let readings: Vec<LingoReading> = (0..total_hours)
+            .map(|h| {
+                let day = h / 24;
+                let (g, bound) = if day < 70 && h % 24 == 3 {
+                    // Legacy reading without explicit bound to verify Lingo fallback too
+                    (54.0, GlucoseReadingBound::Measured)
+                } else if day >= 70 && h % 24 == 14 {
+                    (201.0, GlucoseReadingBound::AboveSensorCeiling)
+                } else {
+                    (108.0, GlucoseReadingBound::Measured)
+                };
+                LingoReading {
+                    timestamp: format!("2026-01-01T{:02}:00:00-07:00", h % 24),
+                    hour_offset: h as f64,
+                    glucose_mg_dl: g,
+                    lingo_count: None,
+                    tag: None,
+                    bound,
+                }
+            })
+            .collect();
+
+        let w30 = slice_readings_window(&readings, GlucoseWindow::Days30);
+        let w90 = slice_readings_window(&readings, GlucoseWindow::Days90);
+        assert!(w30.len() <= 721 && w30.len() >= 720);
+        assert!(w90.len() <= 2161 && w90.len() >= 2160);
+
+        let sum30 = summarize_commercial_glucose(
+            &w30,
+            GlucoseMonitor::AbbottLingo,
+            GlucoseUnit::MgDl,
+            MeasurementMethod::InterstitialCgm,
+        )
+        .unwrap();
+        assert!(sum30.has_sensor_saturation());
+        assert_eq!(sum30.floor_capped_readings, 0);
+        assert_eq!(sum30.ceiling_capped_readings, 30);
+        assert!((sum30.ceiling_capped_pct - (30.0 / w30.len() as f64) * 100.0).abs() < 1e-6);
+
+        let sum_all = summarize_commercial_glucose(
+            &readings,
+            GlucoseMonitor::AbbottLingo,
+            GlucoseUnit::MgDl,
+            MeasurementMethod::InterstitialCgm,
+        )
+        .unwrap();
+        assert_eq!(sum_all.floor_capped_readings, 70);
+        assert_eq!(sum_all.ceiling_capped_readings, 30);
+        assert!((sum_all.floor_capped_pct - (70.0 / readings.len() as f64) * 100.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn select_notable_spike_peaks_deduplicates_plateaus_and_breaks_across_gaps() {
+        let mk = |hour_offset: f64, g: f64| LingoReading {
+            timestamp: format!("2026-08-01T00:00:00-07:00@{hour_offset:.2}"),
+            hour_offset,
+            glucose_mg_dl: g,
+            lingo_count: None,
+            tag: None,
+            bound: if g >= 200.5 {
+                GlucoseReadingBound::AboveSensorCeiling
+            } else {
+                GlucoseReadingBound::Measured
+            },
+        };
+
+        // Excursion 1: ramp up to a 5-point flat 201 ceiling plateau, then back below 140.
+        // Excursion 2: spike to 175, then a 2.5h sensor gap while still > 140.
+        // Excursion 3: post-gap excursion to 188.
+        let readings = vec![
+            mk(0.0, 110.0),
+            mk(0.083, 155.0),
+            mk(0.167, 201.0),
+            mk(0.250, 201.0),
+            mk(0.333, 201.0), // midpoint of the 5-point plateau
+            mk(0.417, 201.0),
+            mk(0.500, 201.0),
+            mk(0.583, 165.0),
+            mk(0.667, 130.0),
+            mk(1.000, 160.0),
+            mk(1.083, 175.0), // peak of excursion 2
+            mk(1.167, 150.0),
+            // 2.5h sensor gap (> 1.5h)
+            mk(3.667, 162.0),
+            mk(3.750, 188.0), // peak of excursion 3
+            mk(3.833, 120.0),
+        ];
+
+        let peaks = select_notable_spike_peaks(&readings, 24);
+        assert_eq!(peaks.len(), 3);
+        assert!((peaks[0].hour_offset - 0.333).abs() < 1e-6);
+        assert!((peaks[0].glucose_mg_dl - 201.0).abs() < 1e-6);
+        assert!((peaks[1].hour_offset - 1.083).abs() < 1e-6);
+        assert!((peaks[1].glucose_mg_dl - 175.0).abs() < 1e-6);
+        assert!((peaks[2].hour_offset - 3.750).abs() < 1e-6);
+        assert!((peaks[2].glucose_mg_dl - 188.0).abs() < 1e-6);
+
+        // Verify temporal spread when > max_markers excursions all tie at 201 mg/dL:
+        // 60 daily excursions across 60 days capped to 12 markers must span the full timeline,
+        // NOT cluster only in the first 12 days.
+        let mut tied_trace = Vec::new();
+        for day in 0..60 {
+            let base_h = day as f64 * 24.0;
+            tied_trace.push(mk(base_h, 100.0));
+            tied_trace.push(mk(base_h + 1.0, 201.0));
+            tied_trace.push(mk(base_h + 1.1, 201.0));
+            tied_trace.push(mk(base_h + 2.0, 105.0));
+        }
+        let spread = select_notable_spike_peaks(&tied_trace, 12);
+        assert_eq!(spread.len(), 12);
+        assert!(spread.first().unwrap().hour_offset < 120.0);
+        assert!(spread.last().unwrap().hour_offset > 1200.0);
+    }
+
+    #[test]
+    fn gap_aware_mage_ignores_jitter_and_does_not_bridge_sensor_gaps() {
+        let mk = |hour_offset: f64, g: f64| LingoReading {
+            timestamp: format!("2026-08-01T00:00:00-07:00@{hour_offset:.2}"),
+            hour_offset,
+            glucose_mg_dl: g,
+            lingo_count: None,
+            tag: None,
+            bound: GlucoseReadingBound::Measured,
+        };
+        // Two flat segments separated by a 12-hour sensor gap (80 before gap, 190 after gap).
+        // Bridging the gap would report MAGE = 110; gap-aware MAGE must be 0.0 because
+        // neither continuous segment has a > 1 SD swing!
+        let mut gapped = Vec::new();
+        for i in 0..20 {
+            gapped.push(mk(i as f64 * (5.0 / 60.0), 80.0));
+        }
+        for i in 0..20 {
+            gapped.push(mk(14.0 + i as f64 * (5.0 / 60.0), 190.0));
+        }
+        let sum = summarize_commercial_glucose(
+            &gapped,
+            GlucoseMonitor::AbbottLingo,
+            GlucoseUnit::MgDl,
+            MeasurementMethod::InterstitialCgm,
+        )
+        .unwrap();
+        assert!((sum.mage_mg_dl - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn nominal_window_prevents_overstating_active_wear_across_gap() {
+        // 40-day 5-min synthetic trace with a 10-day sensor gap from day 15..25.
+        // Trailing 30d window (days 10..40) has readings on days 10..15 + 25..40 = 20d active
+        // out of 30d nominal -> true wear ~66.7%. If instead days 10..20 were missing (cutoff
+        // lands inside the gap at day 10, first reading inside 30d is at day 20), actual_span
+        // is only 20d -> without nominal window wear would be falsely 100%, whereas with
+        // nominal_window_hours_for_trace it accurately reports ~66.7%!
+        let mut readings = Vec::new();
+        for day in 0..40_usize {
+            if (8..20).contains(&day) {
+                continue; // 12-day gap spanning the 30d cutoff (day 10)
+            }
+            for step in 0..288_usize {
+                let hour_offset = day as f64 * 24.0 + step as f64 * (5.0 / 60.0);
+                readings.push(LingoReading {
+                    timestamp: format!(
+                        "2026-08-01T{:02}:{:02}:00-07:00",
+                        (step / 12) % 24,
+                        (step % 12) * 5
+                    ),
+                    hour_offset,
+                    glucose_mg_dl: 105.0,
+                    lingo_count: None,
+                    tag: None,
+                    bound: GlucoseReadingBound::Measured,
+                });
+            }
+        }
+        let w30 = slice_readings_window(&readings, GlucoseWindow::Days30);
+        let nom_h = nominal_window_hours_for_trace(&readings, GlucoseWindow::Days30);
+        assert_eq!(nom_h, Some(720.0));
+
+        let naive = summarize_commercial_glucose(
+            &w30,
+            GlucoseMonitor::AbbottLingo,
+            GlucoseUnit::MgDl,
+            MeasurementMethod::InterstitialCgm,
+        )
+        .unwrap();
+        let accurate = summarize_commercial_glucose_with_window(
+            &w30,
+            GlucoseMonitor::AbbottLingo,
+            GlucoseUnit::MgDl,
+            MeasurementMethod::InterstitialCgm,
+            nom_h,
+        )
+        .unwrap();
+        assert!(naive.estimated_active_wear_pct > 99.0);
+        assert!(
+            accurate.estimated_active_wear_pct > 64.0 && accurate.estimated_active_wear_pct < 69.0
+        );
     }
 }

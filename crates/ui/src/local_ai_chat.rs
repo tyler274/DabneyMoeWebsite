@@ -9,6 +9,8 @@ use crate::health_bridge::{
 
 const CGM_CHAT_PRESETS: &[&str] = &[
     "Summarize my glucose stability, TIR, and biggest spikes",
+    "How do my last 14 days compare to the prior 14 days?",
+    "How are my overnight glucose and low episodes?",
     "What time of day do my glucose spikes peak in my 24h AGP?",
     "How do my mood and anxiety check-ins line up with glucose swings?",
     "Draft 3 focused questions to ask my doctor at my next visit",
@@ -372,5 +374,24 @@ mod tests {
         }
         .to_html();
         assert!(fb_html.contains("Grounded Rust Fallback"));
+
+        let chat_html = view! {
+            <PersonalCgmAiChatSection
+                llm_status=RwSignal::new(None)
+                use_local_llm=use_llm
+                llm_preparing=prep
+                llm_prepare_notice=prep_notice
+                chat_input=RwSignal::new(String::new())
+                chat_turns=RwSignal::new(Vec::new())
+                chat_busy=RwSignal::new(false)
+                chat_error=RwSignal::new(None)
+                on_prepare_llm=on_prep
+                on_send_question=Callback::new(|_| {})
+                on_clear_chat=Callback::new(|()| {})
+            />
+        }
+        .to_html();
+        assert!(chat_html.contains("How do my last 14 days compare to the prior 14 days?"));
+        assert!(chat_html.contains("How are my overnight glucose and low episodes?"));
     }
 }
