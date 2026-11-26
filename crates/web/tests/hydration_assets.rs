@@ -27,7 +27,7 @@ async fn shell_resolves_every_asset_from_the_build_manifest() {
             move || ui::shell(options.clone())
         })
         .with_state(options);
-    for path in ["/", "/community-activity"] {
+    for path in ["/", "/creators"] {
         let response = app
             .clone()
             .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
