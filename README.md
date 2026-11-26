@@ -122,7 +122,15 @@ cargo run -p icon-gen -- --play-assets target/android-release/play-store-assets
 
 See [`docs/google-play/README.md`](docs/google-play/README.md) for upload
 keystore generation, Google Play Console Data Safety & Health Apps declarations,
-and store listing copy.
+and store listing copy, and [`docs/fdroid/README.md`](docs/fdroid/README.md)
+for F-Droid, IzzyOnDroid, and self-hosted F-Droid repository publishing.
+
+**Install on Android (`moe.dabney.demo`, 100% synthetic zero-PHI, MIT):**
+
+- **Web Install Hub & QR Code**: [`https://dabney.moe/android`](https://dabney.moe/android)
+- **Live Signed F-Droid Repository**: `https://codeberg.org/tyler274/fdroid/raw/branch/pages/repo` (SHA-256 fingerprint `BBA10E130E00DC452ED1B1C33D8D6074A098A5874F5DE3AE1390171550EDA5B7`)
+- **Obtainium Config**: [`https://dabney.moe/obtainium-dabney-demo.json`](https://dabney.moe/obtainium-dabney-demo.json)
+- **Direct Signed Universal APK**: [`moe.dabney.demo_1.apk`](https://codeberg.org/tyler274/fdroid/raw/branch/pages/repo/moe.dabney.demo_1.apk) (`arm64-v8a` + `x86_64`, 16 KB ELF aligned)
 
 For validating a personal **Abbott Lingo** CGM export locally (`.csv`, Apple
 Health `export.xml`, or Health Connect JSON) and for the future **Google Health

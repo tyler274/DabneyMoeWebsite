@@ -429,6 +429,14 @@ pub fn PatientDemoPage() -> impl IntoView {
                         "Open on dabney.moe ↗"
                     </a>
                 })}
+                {(app_mode == AppShellMode::Website).then(|| view! {
+                    <A
+                        href="/android"
+                        attr:class="inline-flex min-h-[40px] items-center rounded-full border border-emerald-400/35 bg-emerald-500/15 px-4 py-2 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
+                    >
+                        "Install Android App (F-Droid / APK)"
+                    </A>
+                })}
             </header>
 
             // Prominent Zero-PHI Synthetic Demo Disclaimer

@@ -53,3 +53,23 @@ IzzyOnDroid tracks signed universal release APKs attached to Codeberg/GitLab Rel
    ```
 2. Publish Codeberg Release `v1.0.0` at `https://codeberg.org/tyler274/dabney-moe-website/releases` attaching `dabney-demo-release.apk` (and `dabney-demo-release.apk.sha256`).
 3. Open an **App Inclusion Request** at `https://codeberg.org/IzzyOnDroid/repodata/issues/new/choose` pointing to `https://codeberg.org/tyler274/dabney-moe-website` (MIT License, Fastlane metadata enabled, zero trackers/blobs).
+
+## Track 3: Self-Hosted Official F-Droid Repository (Live Today)
+
+Users can install and receive cryptographically signed updates immediately via F-Droid, Droid-ify, Neo Store, or Obtainium using the dedicated signed F-Droid repository hosted on Codeberg (`https://codeberg.org/tyler274/fdroid`, `pages` branch):
+
+- **Web Install Hub & QR Code**: [`https://dabney.moe/android`](https://dabney.moe/android)
+- **Repository HTTPS URL**: `https://codeberg.org/tyler274/fdroid/raw/branch/pages/repo`
+- **Repository Signing Fingerprint (SHA-256)**: `BBA10E130E00DC452ED1B1C33D8D6074A098A5874F5DE3AE1390171550EDA5B7`
+- **One-Tap Deep Link**: `fdroidrepos://codeberg.org/tyler274/fdroid/raw/branch/pages/repo?fingerprint=BBA10E130E00DC452ED1B1C33D8D6074A098A5874F5DE3AE1390171550EDA5B7`
+- **Obtainium Profile**: `https://dabney.moe/obtainium-dabney-demo.json`
+
+To publish a new signed APK release to the self-hosted F-Droid repository (keeping all `.apk` binaries strictly out of `DabneyMoeWebsite` Git history):
+
+```bash
+# 1. Build signed universal APK (arm64-v8a + x86_64) into target/android-release/dabney-demo-release.apk
+# 2. Rebuild signed v1/v2 F-Droid index + regenerate public/fdroid-repo-qr.svg and push to codeberg.org/tyler274/fdroid (pages branch):
+scripts/fdroid-repo-publish.sh --push
+```
+
+The repository signing keystore lives outside Git at `~/.config/dabney-android/fdroid-repo-keystore.jks` (alias `dabney-fdroid-repo`). Never commit keystores or password files.

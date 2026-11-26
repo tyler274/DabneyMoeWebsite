@@ -851,4 +851,65 @@ mod tests {
         );
         assert_eq!(head.headers()[header::CACHE_CONTROL], "public, max-age=300");
     }
+
+    #[tokio::test]
+    async fn android_distribution_page_is_server_rendered_with_verified_metadata() {
+        use leptos::prelude::LeptosOptions;
+        use leptos_axum::LeptosRoutes;
+
+        let options = LeptosOptions::builder().output_name("dabney").build();
+        let app = Router::new()
+            .leptos_routes(&options, generate_route_list(App), {
+                let options = options.clone();
+                move || ui::shell(options.clone())
+            })
+            .with_state(options);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/android")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        for expected in [
+            ui::android_download::ANDROID_APP_PACKAGE,
+            ui::android_download::FDROID_REPO_URL,
+            ui::android_download::FDROID_REPO_FINGERPRINT,
+            ui::android_download::APK_SHA256,
+            ui::android_download::SIGNING_CERT_SHA256,
+            "/fdroid-repo-qr.svg",
+            "/obtainium-dabney-demo.json",
+            "Zero PHI",
+            "https://dabney.moe/android",
+        ] {
+            assert!(html.contains(expected), "missing from /android: {expected}");
+        }
+
+        // Clinical overview links to /android in Website mode.
+        let clinical_resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/clinical")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(clinical_resp.status(), StatusCode::OK);
+        let clinical_html = String::from_utf8(
+            to_bytes(clinical_resp.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(clinical_html.contains("href=\"/android\""));
+    }
 }

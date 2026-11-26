@@ -1,0 +1,13 @@
+{
+  "apps": [
+    {
+      "id": "moe.dabney.demo",
+      "url": "https://codeberg.org/tyler274/fdroid/raw/branch/pages/repo",
+      "author": "Tyler Port",
+      "name": "Dabney.moe Clinical Demo",
+      "preferredApkIndex": 0,
+      "additionalSettings": "{\"versionDetection\":true,\"apkFilterRegEx\":\"\",\"invertAPKFilter\":false,\"autoApkFilterByArch\":true,\"appName\":\"Dabney.moe Clinical Demo\",\"appAuthor\":\"Tyler Port\",\"shizukuPretendOrSomewhereElse\":false,\"allowInsecure\":false,\"exemptFromBackgroundUpdates\":false,\"skipUpdateNotifications\":false,\"about\":\"Zero-PHI synthetic patient & clinician workflow demo built in Rust/WASM (MIT License).\",\"refreshBeforeDownload\":false,\"filterVersionsByRegEx\":\"\",\"fdroidThirdPartyRepo\":true,\"appId\":\"moe.dabney.demo\"}",
+      "overrideSource": "FDroidRepo"
+    }
+  ]
+}

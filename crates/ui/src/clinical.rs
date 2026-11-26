@@ -164,6 +164,14 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
                             >
                                 "Mental Health & CGM Tracker"
                             </A>
+                            {(app_mode == AppShellMode::Website).then(|| view! {
+                                <A
+                                    href="/android"
+                                    attr:class="inline-flex items-center gap-2 rounded-full border border-cyan-400/35 bg-slate-950/70 px-5 py-2.5 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-500/15"
+                                >
+                                    "Install Android App (F-Droid / APK)"
+                                </A>
+                            })}
                         </div>
                     </div>
                 </div>

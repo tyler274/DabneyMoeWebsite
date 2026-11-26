@@ -10,6 +10,7 @@ pub mod activity_snapshot;
 #[cfg(feature = "ssr")]
 pub mod activity_source;
 pub mod analytics;
+pub mod android_download;
 pub mod clinical;
 pub mod commissions;
 pub mod commissions_data;
@@ -131,6 +132,7 @@ pub fn AppWithMode(mode: AppShellMode) -> impl IntoView {
                         }
                     />
                     <Route path=StaticSegment("privacy") view=PrivacyPage />
+                    <Route path=StaticSegment("android") view=android_download::AndroidDownloadPage />
                     <Route path=StaticSegment("clinical") view=clinical::ClinicalOverviewPage />
                     <Route
                         path=(StaticSegment("clinical"), StaticSegment("patient"))
