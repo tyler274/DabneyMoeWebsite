@@ -198,7 +198,7 @@ fn OwnerMetadata() -> impl IntoView {
         <Title text="Tyler Port - Freelance Software Engineer" />
         <Meta
             name="description"
-            content="Tyler Port is a Caltech-trained freelance software engineer specializing in Rust, GPU computing, and high-performance systems. Available for contract work."
+            content="Tyler Port is a Caltech-trained software engineer and former Founding Senior Software Engineer at Coda Health (built platform to MVP), specializing in Rust, GPU computing, and high-performance systems."
         />
         <Meta name="author" content="Tyler Alamo Port" />
         <Link rel="canonical" href="https://dabney.moe/" />
@@ -206,7 +206,7 @@ fn OwnerMetadata() -> impl IntoView {
         <Meta property="og:title" content="Tyler Port - Freelance Software Engineer" />
         <Meta
             property="og:description"
-            content="Rust, GPU computing, and high-performance systems. Available for freelance and contract work."
+            content="Former Founding Senior Software Engineer at Coda Health (built platform to MVP). Rust, GPU computing, and high-performance systems. Available for freelance and contract work."
         />
         <Meta property="og:url" content="https://dabney.moe/" />
         <Meta property="og:site_name" content="dabney.moe" />
@@ -216,7 +216,7 @@ fn OwnerMetadata() -> impl IntoView {
         <Meta name="twitter:title" content="Tyler Port - Freelance Software Engineer" />
         <Meta
             name="twitter:description"
-            content="Rust, GPU computing, and high-performance systems. Available for freelance and contract work."
+            content="Former Founding Senior Software Engineer at Coda Health (built platform to MVP). Rust, GPU computing, and high-performance systems. Available for freelance and contract work."
         />
     }
 }

@@ -43,11 +43,11 @@ pub const ABOUT_PHOTO: &str = "/photos/tyler-travel.png";
 pub const TAGLINE: &str = "Independent software engineer & freelance contractor";
 
 pub const SUMMARY: &str = "Caltech-trained software engineer specializing in Rust, GPU \
-computing, and high-performance systems. Previously worked for Coda Health as their \
-Founding Senior System Software Engineer; recent work spans Dabney.moe (full-stack \
-Rust clinical systems), Elysian Studio, ElyMalloc, and ElyLD in safe Rust. I take \
-projects from first commit to production deployment. I'm available for freelance and \
-contract work.";
+computing, and high-performance systems. Previously Coda Health's Founding Senior \
+Software Engineer, where I built their platform to MVP before moving on to focus on \
+my own vision—spanning Curie on Dabney.moe (full-stack Rust clinical systems), \
+Elysian Studio, ElyMalloc, and ElyLD in safe Rust. I take projects from first commit \
+to production deployment. I'm available for freelance and contract work.";
 
 pub const ABOUT: &str = "When I'm not shipping systems code, you'll find me behind a camera \
 or exploring somewhere new. I bring the same curiosity I have for travel and culture to \
@@ -104,14 +104,20 @@ pub const SERVICES: &[Service] = &[
 
 pub const PROJECTS: &[Project] = &[
     Project {
-        name: "Dabney.moe Clinical Workspace",
-        blurb:
-            "Clean-room local-first Rust & WebAssembly clinical workspace hosted on dabney.moe — \
-                bounded multi-step agentic clinical chat harness with verifiable tool traces and \
-                verbatim record citations, embedded Axum JSON & SSE clinical API, comprehensive \
-                commercial CGM & mental health analytics, Nix OCI images, and provider-agnostic \
-                infrastructure.",
-        tags: &["Rust", "Leptos", "Axum", "WASM", "Agent Harness", "Nix"],
+        name: "Curie (Dabney.moe Clinical)",
+        blurb: "Clean-room local-first Rust & WebAssembly clinical suite hosted on dabney.moe — \
+                patient EHR portal link-through (SMART on FHIR R4 + PKCE), portable shareable \
+                health passport, automated HIPAA Release of Information dispatch, bounded \
+                multi-step agentic clinical chat harness with verbatim citations, embedded Axum \
+                JSON & SSE clinical API, and commercial CGM & mental health analytics.",
+        tags: &[
+            "Rust",
+            "Leptos",
+            "Axum",
+            "WASM",
+            "SMART FHIR",
+            "Agent Harness",
+        ],
         href: "https://dabney.moe/clinical",
         demo_href: Some("/clinical/physician"),
         icon: Some("/favicon.png"),
@@ -150,22 +156,22 @@ pub const PROJECTS: &[Project] = &[
 
 pub const EXPERIENCE: &[Role] = &[
     Role {
-        company: "Dabney.moe",
+        company: "Coda Health",
         location: "Remote",
-        title: "Senior System Software Engineer",
-        period: "Oct 2026 – Nov 2026",
+        title: "Founding Senior Software Engineer",
+        period: "October 2026 - November 2026",
         points: &[
-            "Previously worked for Coda Health as their Founding Senior System Software Engineer; \
-             engineered full-stack Rust clinical systems (WASM web interfaces, Axum services, \
-             PostgreSQL with pgvector RLS, Valkey SSE fan-out, zero-PHI push, and Swift \
-             HealthKit / Kotlin Health Connect bridges) powering clinician and patient workflows.",
-            "Built a bounded LLM tool-execution harness, offline BGE semantic encoder, \
-             Poppler/Tesseract OCR, PKCE FHIR R4 & EHR adapters, and synchronized care workflows \
-             backed by TLA+ model checks, PostgreSQL crash-recovery suites, headless Android \
-             emulator tests, and Chromium E2E qualification.",
-            "Automated Nix distroless OCI images, OpenTofu/Terraform cloud infrastructure, \
-             OpenTelemetry observability, sandboxed CI, and clean-room interactive WASM clinical \
-             workspace hosting at dabney.moe/clinical.",
+            "Built Coda Health's full-stack Rust clinical platform to MVP in under two months \
+             before moving on to focus on my own vision: WASM clinician and patient web \
+             interfaces, Axum services, PostgreSQL with pgvector RLS, Valkey SSE fan-out, \
+             zero-PHI push notifications, and Swift HealthKit / Kotlin Health Connect bridges.",
+            "Engineered the platform's bounded LLM tool-execution harness, offline BGE semantic \
+             encoder, Poppler/Tesseract OCR pipeline, PKCE FHIR R4 & EHR/Chrome adapters, and \
+             synchronized care workflows backed by TLA+ model checks, PostgreSQL crash-recovery \
+             suites, headless Android emulator tests, and Chromium E2E qualification.",
+            "Automated Nix distroless OCI images, OpenTofu/Terraform GCP infrastructure (Cloud \
+             Run, GKE, Cloud SQL, IAP, Doppler), OpenTelemetry/Datadog/Langfuse observability, \
+             and Firecracker sandboxed CI.",
         ],
     },
     Role {
