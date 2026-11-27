@@ -53,6 +53,7 @@ mod tests {
                 notes: Some("Heated pool and mountain views".to_string()),
             },
             staff_licenses,
+            staffing_profile: None,
             enrichment: None,
         }
     }
@@ -85,6 +86,7 @@ mod tests {
                     vec![StaffLicense::Pmhnp, StaffLicense::Np, StaffLicense::Pa],
                 ),
             ],
+            staff_network: Vec::new(),
         };
 
         // MD Psychiatrist must NOT match DO Psychiatrist or PMHNP.
@@ -165,6 +167,7 @@ mod tests {
                     vec![StaffLicense::Pmhnp],
                 ),
             ],
+            staff_network: Vec::new(),
         };
 
         // Amenities use AND semantics: Pool + HotTub matches only Resort Retreat.
@@ -370,5 +373,178 @@ mod tests {
         assert_eq!(ext2.amenities, vec![Amenity::PrivateRooms]);
         assert_eq!(ext2.electronics, Some(ElectronicsPolicy::Prohibited));
         assert_eq!(ext2.staff_licenses, vec![StaffLicense::MdPsychiatrist]);
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn shared_staff_network_distinguishes_dedicated_physicians_from_visiting_providers() {
+        use crate::updater::network::{
+            rebuild_state_staff_network, NetworkRebuildMode, ProviderObservation,
+        };
+
+        let mut fac_a = sample_facility(
+            "Scottsdale Dedicated Clinic",
+            vec![Amenity::Pool],
+            Some(FoodSituation::ChefPrepared),
+            Some(ElectronicsPolicy::Scheduled),
+            vec![StaffLicense::MdPsychiatrist],
+        );
+        fac_a.address.state = "AZ".to_string();
+        fac_a.address.city = "Scottsdale".to_string();
+        fac_a.address.zip = "85251".to_string();
+        let id_a = fac_a.stable_id();
+
+        let mut fac_b = sample_facility(
+            "Phoenix Shared Residential",
+            vec![Amenity::YogaStudio],
+            Some(FoodSituation::Cafeteria),
+            Some(ElectronicsPolicy::Prohibited),
+            vec![StaffLicense::Pmhnp],
+        );
+        fac_b.address.state = "AZ".to_string();
+        fac_b.address.city = "Phoenix".to_string();
+        fac_b.address.zip = "85016".to_string();
+        let id_b = fac_b.stable_id();
+
+        let mut catalog = StateCatalog {
+            state: "AZ".to_string(),
+            retrieved: "2026-11-27".to_string(),
+            facilities: vec![fac_a, fac_b],
+            staff_network: Vec::new(),
+        };
+
+        // 1 dedicated MD Psychiatrist at Clinic A, 1 shared PMHNP across A & B, and 1 curated
+        // visiting yoga instructor serving A & B.
+        let observations = vec![
+            ProviderObservation {
+                id: "npi-1111111111".to_string(),
+                name: "Dr. Elena Vance, MD".to_string(),
+                organization: None,
+                npi: Some("1111111111".to_string()),
+                role: ProviderRole::Clinical(StaffLicense::MdPsychiatrist),
+                arrangement_hint: StaffArrangement::Dedicated,
+                facility_id: id_a.clone(),
+                source: DataSource::Nppes,
+                notes: None,
+            },
+            ProviderObservation {
+                id: "npi-2222222222".to_string(),
+                name: "Jordan Lee, PMHNP-BC".to_string(),
+                organization: None,
+                npi: Some("2222222222".to_string()),
+                role: ProviderRole::Clinical(StaffLicense::Pmhnp),
+                arrangement_hint: StaffArrangement::Dedicated,
+                facility_id: id_a.clone(),
+                source: DataSource::Nppes,
+                notes: None,
+            },
+            ProviderObservation {
+                id: "npi-2222222222".to_string(),
+                name: "Jordan Lee, PMHNP-BC".to_string(),
+                organization: None,
+                npi: Some("2222222222".to_string()),
+                role: ProviderRole::Clinical(StaffLicense::Pmhnp),
+                arrangement_hint: StaffArrangement::Dedicated,
+                facility_id: id_b.clone(),
+                source: DataSource::Nppes,
+                notes: None,
+            },
+        ];
+
+        let curated = vec![NetworkProvider {
+            id: "staff-az-jacob-yoga".to_string(),
+            name: "Jacob".to_string(),
+            organization: Some("Scottsdale Recovery Yoga".to_string()),
+            npi: None,
+            role: ProviderRole::Wellness(WellnessRole::YogaInstructor),
+            arrangement: StaffArrangement::Visiting,
+            facility_ids: vec![id_a.clone(), id_b.clone()],
+            sources: vec![DataSource::Verified],
+            notes: Some("Provides yoga classes across Phoenix/Scottsdale programs.".to_string()),
+        }];
+
+        rebuild_state_staff_network(
+            &mut catalog,
+            &observations,
+            &curated,
+            NetworkRebuildMode::FullNppesRefresh,
+        );
+
+        // Published network keeps shared PMHNP + visiting yoga instructor (not single-site MD).
+        assert_eq!(catalog.staff_network.len(), 2);
+        let prof_a = catalog.facilities[0]
+            .staffing_profile
+            .as_ref()
+            .expect("profile A");
+        assert_eq!(prof_a.dedicated_physicians, 1);
+        assert_eq!(prof_a.shared_prescribers, 1);
+        assert_eq!(prof_a.visiting_specialists, 1);
+        assert_eq!(prof_a.shared_with_facilities, 1);
+
+        let prof_b = catalog.facilities[1]
+            .staffing_profile
+            .as_ref()
+            .expect("profile B");
+        assert_eq!(prof_b.dedicated_physicians, 0);
+        assert_eq!(prof_b.shared_prescribers, 1);
+        assert_eq!(prof_b.visiting_specialists, 1);
+
+        // Incremental merge (e.g. `add-provider` or `--skip-nppes` LLM pass) must preserve
+        // existing NPPES shared providers AND dedicated single-site physician counts.
+        let mut curated_plus = curated.clone();
+        curated_plus.push(NetworkProvider {
+            id: "staff-az-art-therapist".to_string(),
+            name: "Maya Lin".to_string(),
+            organization: None,
+            npi: None,
+            role: ProviderRole::Wellness(WellnessRole::ArtMusicTherapist),
+            arrangement: StaffArrangement::Visiting,
+            facility_ids: vec![id_b.clone()],
+            sources: vec![DataSource::Verified],
+            notes: None,
+        });
+        rebuild_state_staff_network(
+            &mut catalog,
+            &[],
+            &curated_plus,
+            NetworkRebuildMode::IncrementalMerge,
+        );
+        assert_eq!(catalog.staff_network.len(), 3);
+        let prof_a_after = catalog.facilities[0]
+            .staffing_profile
+            .as_ref()
+            .expect("profile A after incremental merge");
+        assert_eq!(prof_a_after.dedicated_physicians, 1);
+        assert_eq!(prof_a_after.shared_prescribers, 1);
+        assert_eq!(prof_a_after.visiting_specialists, 1);
+        let prof_b_after = catalog.facilities[1]
+            .staffing_profile
+            .as_ref()
+            .expect("profile B after incremental merge");
+        assert_eq!(prof_b_after.visiting_specialists, 2);
+
+        // Dedicated physician filter isolates Clinic A only.
+        let dedicated_only = search_catalog(
+            &catalog,
+            &RecoveryQuery {
+                only_dedicated_physician: true,
+                ..RecoveryQuery::default()
+            },
+        );
+        assert_eq!(dedicated_only.total, 1);
+        assert_eq!(
+            dedicated_only.hits[0].facility.name,
+            "Scottsdale Dedicated Clinic"
+        );
+
+        // Filtering by visiting yoga instructor shows both Clinic A and Clinic B.
+        let by_yoga = search_catalog(
+            &catalog,
+            &RecoveryQuery {
+                provider_id: Some("staff-az-jacob-yoga".to_string()),
+                ..RecoveryQuery::default()
+            },
+        );
+        assert_eq!(by_yoga.total, 2);
     }
 }

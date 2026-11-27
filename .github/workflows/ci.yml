@@ -299,6 +299,10 @@ jobs:
           key: rust-v1-clippy-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             rust-v1-clippy-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-
+      - name: "clippy: recovery-index (cli)"
+        run: nix develop -c cargo clippy -p recovery-index --features cli -- -D warnings
+      - name: "clippy: recovery-index (wasm32)"
+        run: nix develop -c cargo clippy -p recovery-index --target wasm32-unknown-unknown -- -D warnings
       - name: "clippy: clinical-workspace (ssr)"
         run: nix develop -c cargo clippy -p clinical-workspace --features ssr -- -D warnings
       - name: "clippy: ui (ssr)"
@@ -540,6 +544,8 @@ jobs:
           key: rust-v1-test-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             rust-v1-test-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-
+      - name: "test: recovery-index (cli)"
+        run: nix develop -c cargo test -p recovery-index --features cli
       - name: "test: clinical-workspace (ssr)"
         run: nix develop -c cargo test -p clinical-workspace --features ssr
       - name: "test: ui (data + ssr render)"

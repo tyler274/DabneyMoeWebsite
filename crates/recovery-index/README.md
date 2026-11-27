@@ -72,6 +72,19 @@ cargo run -p recovery-index --features cli -- set \
 # Offline rebuild after hand-editing data/recovery/overrides/<ST>.toml
 cargo run -p recovery-index --features cli -- rebuild
 
+# Map a shared clinician or visiting/contracted specialist (e.g. a visiting PMHNP or local yoga instructor)
+cargo run -p recovery-index --features cli -- add-provider \
+  --state AZ \
+  --name "Jacob" \
+  --org "Scottsdale Yoga Studio" \
+  --wellness yoga-instructor \
+  --arrangement visiting \
+  --facilities <facility-id-1>,<facility-id-2> \
+  --notes "Provides weekly yoga classes across Phoenix & Scottsdale residential programs."
+
+# Inspect the cross-facility shared-staff & visiting-provider network for a state
+cargo run -p recovery-index --features cli -- network --state AZ --top 25
+
 # Check enrichment coverage across states
 cargo run -p recovery-index --features cli -- stats
 ```

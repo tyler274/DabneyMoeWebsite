@@ -6,6 +6,7 @@
 
 pub mod cache;
 pub mod llm;
+pub mod network;
 pub mod nppes;
 pub mod overrides;
 pub mod samhsa;
@@ -20,11 +21,15 @@ use std::time::Duration;
 use futures_util::stream::{self, StreamExt};
 
 use crate::schema::{
-    Amenity, DietaryOption, ElectronicsPolicy, Facility, FoodSituation, SmokingPolicy,
-    StaffLicense, StateCatalog, StateIndex, StateIndexEntry, VapingPolicy,
+    Amenity, DataSource, DietaryOption, ElectronicsPolicy, Facility, FoodSituation,
+    NetworkProvider, ProviderRole, SmokingPolicy, StaffArrangement, StaffLicense, StateCatalog,
+    StateIndex, StateIndexEntry, VapingPolicy,
 };
 use crate::updater::cache::{sha256_hex, today_utc_iso, CacheMode, DiskCache};
-use crate::updater::overrides::{load_state_overrides, save_state_overrides, FacilityOverride};
+use crate::updater::overrides::{
+    load_state_curated_providers, load_state_overrides, load_state_overrides_file,
+    save_state_overrides, save_state_overrides_file, FacilityOverride,
+};
 
 const WEB_CONCURRENCY: usize = 20;
 
@@ -237,7 +242,7 @@ pub async fn run_import(opts: ImportOptions) -> Result<(), UpdaterError> {
     let mut total_facilities = 0usize;
     let mut total_overrides = 0usize;
     for catalog in &mut catalogs {
-        // Carry forward prior NPPES/website enrichment if already present on matching stable_ids.
+        // Carry forward prior NPPES/website/network enrichment if already present on matching stable_ids.
         if let Some(prev_cat) = existing.get(&catalog.state) {
             let prev_by_id: BTreeMap<String, &Facility> = prev_cat
                 .facilities
@@ -250,8 +255,19 @@ pub async fn run_import(opts: ImportOptions) -> Result<(), UpdaterError> {
                     merge_preserved_enrichment(f, prev);
                 }
             }
+            catalog.staff_network = prev_cat.staff_network.clone();
         }
         total_overrides += apply_overrides_to_catalog(&opts.paths.overrides_dir, catalog)?;
+        let curated_providers =
+            load_state_curated_providers(&opts.paths.overrides_dir, &catalog.state)?;
+        if !catalog.staff_network.is_empty() || !curated_providers.is_empty() {
+            network::rebuild_state_staff_network(
+                catalog,
+                &[],
+                &curated_providers,
+                network::NetworkRebuildMode::IncrementalMerge,
+            );
+        }
         write_state_shard(&opts.paths.out_dir, catalog)?;
         total_facilities += catalog.facilities.len();
     }
@@ -300,6 +316,9 @@ fn merge_preserved_enrichment(target: &mut Facility, prev: &Facility) {
     }
     target.staff_licenses.sort_unstable();
     target.staff_licenses.dedup();
+    if target.staffing_profile.is_none() {
+        target.staffing_profile.clone_from(&prev.staffing_profile);
+    }
 
     if let Some(prev_meta) = &prev.enrichment {
         let meta = target
@@ -381,12 +400,13 @@ pub async fn run_enrich(opts: EnrichOptions) -> Result<(), UpdaterError> {
         let mut nppes_hits = 0usize;
         let mut nppes_net = 0usize;
         let mut nppes_enriched = 0usize;
+        let mut all_observations: Vec<network::ProviderObservation> = Vec::new();
         if !opts.skip_nppes {
             let mut subset: Vec<Facility> = indices
                 .iter()
                 .map(|&i| catalog.facilities[i].clone())
                 .collect();
-            let (hits, net, enriched) =
+            let (hits, net, enriched, nppes_obs) =
                 nppes::enrich_facilities_with_nppes(&client, &cache, &mut subset).await;
             for (&idx, updated) in indices.iter().zip(subset) {
                 catalog.facilities[idx] = updated;
@@ -394,6 +414,7 @@ pub async fn run_enrich(opts: EnrichOptions) -> Result<(), UpdaterError> {
             nppes_hits = hits;
             nppes_net = net;
             nppes_enriched = enriched;
+            all_observations.extend(nppes_obs);
         }
 
         // Layer 3 (+ optional 3b LLM): Public facility websites (deduplicated per unique URL, cached)
@@ -517,14 +538,33 @@ pub async fn run_enrich(opts: EnrichOptions) -> Result<(), UpdaterError> {
                             if llm::apply_llm_extraction(&mut catalog.facilities[idx], ext) {
                                 llm_enriched += 1;
                             }
+                            let fid = catalog.facilities[idx].stable_id();
+                            all_observations.extend(llm::observations_from_llm(state, &fid, ext));
                         }
                     }
                 }
             }
         }
 
-        // Layer 4: Curated in-repo TOML overrides
+        // Layer 4: Curated in-repo TOML overrides + Cross-facility shared-staff network
         let ov_count = apply_overrides_to_catalog(&opts.paths.overrides_dir, catalog)?;
+        let curated_providers = load_state_curated_providers(&opts.paths.overrides_dir, state)?;
+        let network_mode = if !opts.skip_nppes && opts.limit.is_none() {
+            network::NetworkRebuildMode::FullNppesRefresh
+        } else {
+            network::NetworkRebuildMode::IncrementalMerge
+        };
+        if !all_observations.is_empty()
+            || !curated_providers.is_empty()
+            || network_mode == network::NetworkRebuildMode::FullNppesRefresh
+        {
+            network::rebuild_state_staff_network(
+                catalog,
+                &all_observations,
+                &curated_providers,
+                network_mode,
+            );
+        }
         for f in &mut catalog.facilities {
             f.id = Some(f.stable_id());
         }
@@ -545,8 +585,9 @@ pub async fn run_enrich(opts: EnrichOptions) -> Result<(), UpdaterError> {
             "recovery-index enrich [{state}]: {} facilities ({enriched_total} enriched) | \
              NPPES: {nppes_enriched} matched (cache {nppes_hits} hits / {nppes_net} fetched) | \
              Web: {web_enriched} matched (cache {web_hits} hits / {web_net} fetched){llm_summary} | \
-             Overrides: {ov_count} | sha256: {}...",
+             Network: {} shared/visiting providers | Overrides: {ov_count} | sha256: {}...",
             catalog.facilities.len(),
+            catalog.staff_network.len(),
             &digest[..12],
         );
     }
@@ -571,6 +612,15 @@ pub fn run_rebuild(paths: &PathsConfig, states: &[String]) -> Result<(), Updater
             f.id = Some(f.stable_id());
         }
         total_overrides += apply_overrides_to_catalog(&paths.overrides_dir, catalog)?;
+        let curated_providers = load_state_curated_providers(&paths.overrides_dir, code)?;
+        if !curated_providers.is_empty() || !catalog.staff_network.is_empty() {
+            network::rebuild_state_staff_network(
+                catalog,
+                &[],
+                &curated_providers,
+                network::NetworkRebuildMode::IncrementalMerge,
+            );
+        }
         write_state_shard(&paths.out_dir, catalog)?;
         updated_states += 1;
     }
@@ -833,7 +883,8 @@ pub fn run_stats(paths: &PathsConfig, state_filter: Option<&str>) -> Result<(), 
 
         if enriched > 0 || state_filter.is_some() {
             println!(
-                "{code}: {fac:4} total | {enriched:4} enriched | amenities:{amenities:3} food:{food:3} devices:{elec:3} staff:{staff:3}"
+                "{code}: {fac:4} total | {enriched:4} enriched | amenities:{amenities:3} food:{food:3} devices:{elec:3} staff:{staff:3} | shared-network:{} providers",
+                catalog.staff_network.len()
             );
         }
     }
@@ -841,5 +892,169 @@ pub fn run_stats(paths: &PathsConfig, state_filter: Option<&str>) -> Result<(), 
     println!(
         "TOTAL: {total_fac} facilities | {total_enriched} enriched | amenities:{total_amenities} food:{total_food} devices:{total_elec} staff:{total_staff}"
     );
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+pub struct AddProviderOptions {
+    pub paths: PathsConfig,
+    pub state: String,
+    pub id: Option<String>,
+    pub name: String,
+    pub organization: Option<String>,
+    pub npi: Option<String>,
+    pub role: ProviderRole,
+    pub arrangement: StaffArrangement,
+    pub facility_ids: Vec<String>,
+    pub notes: Option<String>,
+}
+
+/// Adds or updates a curated shared clinician or visiting/contracted specialist (e.g. a visiting
+/// PMHNP or local yoga instructor serving multiple rehabs) in `data/recovery/overrides/<ST>.toml`
+/// and immediately rebuilds that state's shard + `index.json`.
+pub fn run_add_provider(opts: AddProviderOptions) -> Result<(), UpdaterError> {
+    let state = opts.state.to_ascii_uppercase();
+    let mut shards = load_existing_shards(&opts.paths.out_dir)?;
+    let catalog = shards.get_mut(&state).ok_or_else(|| {
+        UpdaterError::Usage(format!(
+            "State shard `{state}` not found in {}",
+            opts.paths.out_dir.display()
+        ))
+    })?;
+
+    let valid_ids: std::collections::BTreeSet<String> =
+        catalog.facilities.iter().map(|f| f.stable_id()).collect();
+    for fid in &opts.facility_ids {
+        if !valid_ids.contains(fid) {
+            return Err(UpdaterError::Usage(format!(
+                "Facility id `{fid}` not found in {state}. Run `recovery-index find --state {state} --query ...` to look up IDs."
+            )));
+        }
+    }
+
+    let id = opts.id.unwrap_or_else(|| {
+        network::provider_slug_id(&state, &opts.name, opts.organization.as_deref())
+    });
+    let mut doc = load_state_overrides_file(&opts.paths.overrides_dir, &state)?;
+    let mut facility_ids = opts.facility_ids;
+    facility_ids.sort();
+    facility_ids.dedup();
+
+    if let Some(existing) = doc.providers.iter_mut().find(|p| p.id == id) {
+        existing.name = opts.name.clone();
+        if opts.organization.is_some() {
+            existing.organization.clone_from(&opts.organization);
+        }
+        if opts.npi.is_some() {
+            existing.npi.clone_from(&opts.npi);
+        }
+        existing.role = opts.role;
+        existing.arrangement = opts.arrangement;
+        for fid in facility_ids {
+            if !existing.facility_ids.contains(&fid) {
+                existing.facility_ids.push(fid);
+            }
+        }
+        existing.facility_ids.sort();
+        existing.facility_ids.dedup();
+        if opts.notes.is_some() {
+            existing.notes.clone_from(&opts.notes);
+        }
+        if !existing.sources.contains(&DataSource::Verified) {
+            existing.sources.push(DataSource::Verified);
+        }
+    } else {
+        doc.providers.push(NetworkProvider {
+            id: id.clone(),
+            name: opts.name.clone(),
+            organization: opts.organization,
+            npi: opts.npi,
+            role: opts.role,
+            arrangement: opts.arrangement,
+            facility_ids,
+            sources: vec![DataSource::Verified],
+            notes: opts.notes,
+        });
+    }
+
+    let saved = save_state_overrides_file(&opts.paths.overrides_dir, &state, &doc)?;
+    network::rebuild_state_staff_network(
+        catalog,
+        &[],
+        &doc.providers,
+        network::NetworkRebuildMode::IncrementalMerge,
+    );
+    write_state_shard(&opts.paths.out_dir, catalog)?;
+    rebuild_index_json(&opts.paths.out_dir)?;
+
+    println!(
+        "Saved provider `{}` ({id}) in {} and rebuilt {state}.json ({} network providers).",
+        opts.name,
+        saved.display(),
+        catalog.staff_network.len()
+    );
+    Ok(())
+}
+
+/// Prints the top shared clinicians and visiting specialists in a state's cross-facility network.
+pub fn run_network(
+    paths: &PathsConfig,
+    state: &str,
+    top: usize,
+    role_filter: Option<&str>,
+) -> Result<(), UpdaterError> {
+    let state = state.to_ascii_uppercase();
+    let shards = load_existing_shards(&paths.out_dir)?;
+    let catalog = shards
+        .get(&state)
+        .ok_or_else(|| UpdaterError::Usage(format!("State shard `{state}` not found.")))?;
+    let name_by_id: HashMap<String, String> = catalog
+        .facilities
+        .iter()
+        .map(|f| (f.stable_id(), format!("{} ({})", f.name, f.address.city)))
+        .collect();
+
+    println!(
+        "Shared/visiting staff network for {state}: {} providers mapped",
+        catalog.staff_network.len()
+    );
+    let mut shown = 0usize;
+    for prov in &catalog.staff_network {
+        if let Some(rf) = role_filter {
+            let matches_role = match prov.role {
+                ProviderRole::Clinical(lic) => lic.code().eq_ignore_ascii_case(rf),
+                ProviderRole::Wellness(w) => w.code().eq_ignore_ascii_case(rf),
+            };
+            if !matches_role {
+                continue;
+            }
+        }
+        let org = prov
+            .organization
+            .as_deref()
+            .map(|o| format!(" · {o}"))
+            .unwrap_or_default();
+        println!(
+            "- [{}] {}{} | {} | {} ({} sites)",
+            prov.id,
+            prov.name,
+            org,
+            prov.role.short_label(),
+            prov.arrangement.label(),
+            prov.facility_ids.len()
+        );
+        for fid in prov.facility_ids.iter().take(6) {
+            if let Some(fname) = name_by_id.get(fid) {
+                println!("    • {fname}");
+            }
+        }
+        if prov.facility_ids.len() > 6 {
+            println!("    • (+{} more facilities)", prov.facility_ids.len() - 6);
+        }
+        shown += 1;
+        if shown >= top {
+            break;
+        }
+    }
     Ok(())
 }

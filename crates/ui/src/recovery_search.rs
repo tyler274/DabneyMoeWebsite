@@ -514,12 +514,16 @@ pub fn RecoverySearchSection(
     let selected_vaping = RwSignal::new(Vec::<VapingPolicy>::new());
     let selected_staff = RwSignal::new(Vec::<StaffLicense>::new());
     let staff_match_mode = RwSignal::new(StaffMatchMode::Any);
+    let only_dedicated_physician = RwSignal::new(false);
+    let only_shared_network = RwSignal::new(false);
+    let selected_provider_id = RwSignal::new(Option::<String>::None);
     let only_enriched = RwSignal::new(false);
 
     // Collapsible filter drawers
     let show_care_filters = RwSignal::new(false);
     let show_lifestyle_filters = RwSignal::new(false);
     let show_staff_filters = RwSignal::new(false);
+    let show_network_explorer = RwSignal::new(false);
     let show_all_payments = RwSignal::new(false);
 
     // Distance & geolocation signals
@@ -677,12 +681,32 @@ pub fn RecoverySearchSection(
             + selected_vaping.with(Vec::len)
     });
 
+    let network_by_id = Memo::new(move |_| {
+        let mut map = HashMap::<String, NetworkProvider>::new();
+        if let Some(cat) = active_catalog.get() {
+            for p in cat.staff_network {
+                map.insert(p.id.clone(), p);
+            }
+        }
+        map
+    });
+
+    let top_network_providers = Memo::new(move |_| {
+        active_catalog
+            .get()
+            .map(|cat| cat.staff_network.into_iter().take(24).collect::<Vec<_>>())
+            .unwrap_or_default()
+    });
+
     let active_filter_count = Memo::new(move |_| {
         selected_care.with(Vec::len)
             + selected_settings.with(Vec::len)
             + selected_payments.with(Vec::len)
             + lifestyle_filter_count.get()
             + selected_staff.with(Vec::len)
+            + usize::from(only_dedicated_physician.get())
+            + usize::from(only_shared_network.get())
+            + usize::from(selected_provider_id.get().is_some())
             + usize::from(only_enriched.get())
             + usize::from(origin.get().is_some())
             + usize::from(!search_text.get().trim().is_empty())
@@ -703,6 +727,9 @@ pub fn RecoverySearchSection(
             vaping: selected_vaping.get(),
             staff_licenses: selected_staff.get(),
             staff_match_mode: staff_match_mode.get(),
+            only_dedicated_physician: only_dedicated_physician.get(),
+            only_shared_network: only_shared_network.get(),
+            provider_id: selected_provider_id.get(),
             only_enriched: only_enriched.get(),
             origin: origin.get(),
             radius_km: radius_km.get(),
@@ -725,6 +752,9 @@ pub fn RecoverySearchSection(
         selected_vaping.set(Vec::new());
         selected_staff.set(Vec::new());
         staff_match_mode.set(StaffMatchMode::Any);
+        only_dedicated_physician.set(false);
+        only_shared_network.set(false);
+        selected_provider_id.set(None);
         only_enriched.set(false);
         origin.set(None);
         coords_input.set(String::new());
@@ -889,6 +919,7 @@ pub fn RecoverySearchSection(
                             selected_state.set(event_target_value(&ev));
                             selected_settings.set(Vec::new());
                             selected_payments.set(Vec::new());
+                            selected_provider_id.set(None);
                             page.set(0);
                         }
                         prop:value=move || selected_state.get()
@@ -1115,6 +1146,30 @@ pub fn RecoverySearchSection(
                             }
                         }}
                     </button>
+
+                    <Show when=move || { offered_facets.get().network_provider_count > 0 }>
+                        <button
+                            type="button"
+                            aria-expanded=move || show_network_explorer.get().to_string()
+                            on:click=move |_| show_network_explorer.update(|open| *open = !*open)
+                            class=move || {
+                                if selected_provider_id.get().is_some()
+                                    || only_shared_network.get()
+                                    || show_network_explorer.get()
+                                {
+                                    "inline-flex min-h-[38px] items-center gap-1.5 rounded-full border border-indigo-400/55 bg-indigo-500/20 px-3.5 py-1.5 text-xs font-semibold text-indigo-100 transition hover:bg-indigo-500/30"
+                                } else {
+                                    "inline-flex min-h-[38px] items-center gap-1.5 rounded-full border border-white/15 bg-white/[0.04] px-3.5 py-1.5 text-xs font-medium text-slate-200 transition hover:border-indigo-400/40 hover:text-white"
+                                }
+                            }
+                        >
+                            {move || {
+                                let n = offered_facets.get().network_provider_count;
+                                let arrow = if show_network_explorer.get() { "▲" } else { "▼" };
+                                format!("Shared Staff Network ({n}) {arrow}")
+                            }}
+                        </button>
+                    </Show>
 
                     <Show when=move || { offered_facets.get().enriched_count > 0 }>
                         <button
@@ -1463,6 +1518,61 @@ pub fn RecoverySearchSection(
                         </div>
                     </div>
 
+                    // Dedicated vs Shared care-model quick filters
+                    <div class="flex flex-wrap items-center gap-2 border-b border-white/10 pb-3">
+                        <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                            "Care Model:"
+                        </span>
+                        <button
+                            type="button"
+                            aria-pressed=move || only_dedicated_physician.get().to_string()
+                            on:click=move |_| {
+                                only_dedicated_physician.update(|v| *v = !*v);
+                                page.set(0);
+                            }
+                            class=move || {
+                                if only_dedicated_physician.get() {
+                                    "min-h-[32px] rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 text-xs font-semibold text-emerald-100 transition"
+                                } else {
+                                    "min-h-[32px] rounded-full border border-white/15 bg-white/[0.03] px-3 py-1 text-xs text-slate-300 transition hover:border-emerald-400/40 hover:text-white"
+                                }
+                            }
+                        >
+                            {move || {
+                                let n = offered_facets.get().dedicated_physician_count;
+                                if n > 0 {
+                                    format!("Dedicated single-site MD/DO on-site ({n})")
+                                } else {
+                                    "Dedicated single-site MD/DO on-site".to_string()
+                                }
+                            }}
+                        </button>
+                        <button
+                            type="button"
+                            aria-pressed=move || only_shared_network.get().to_string()
+                            on:click=move |_| {
+                                only_shared_network.update(|v| *v = !*v);
+                                page.set(0);
+                            }
+                            class=move || {
+                                if only_shared_network.get() {
+                                    "min-h-[32px] rounded-full border border-indigo-400/60 bg-indigo-500/20 px-3 py-1 text-xs font-semibold text-indigo-100 transition"
+                                } else {
+                                    "min-h-[32px] rounded-full border border-white/15 bg-white/[0.03] px-3 py-1 text-xs text-slate-300 transition hover:border-indigo-400/40 hover:text-white"
+                                }
+                            }
+                        >
+                            {move || {
+                                let n = offered_facets.get().shared_network_facility_count;
+                                if n > 0 {
+                                    format!("Shares staff across facilities ({n})")
+                                } else {
+                                    "Shares staff across facilities".to_string()
+                                }
+                            }}
+                        </button>
+                    </div>
+
                     <div class="space-y-3">
                         {StaffLicenseTier::ALL
                             .iter()
@@ -1520,6 +1630,133 @@ pub fn RecoverySearchSection(
                     </div>
                 </div>
             </Show>
+
+            // Drawer 2b: Cross-Facility Shared Staff & Visiting Provider Network Explorer
+            <Show when=move || show_network_explorer.get()>
+                <div class="space-y-3 rounded-xl border border-indigo-400/30 bg-slate-950/80 p-4">
+                    <div class="flex flex-wrap items-baseline justify-between gap-2">
+                        <div>
+                            <p class="text-xs font-semibold uppercase tracking-wider text-indigo-300">
+                                "Shared Staff & Visiting Provider Network"
+                            </p>
+                            <p class="mt-0.5 text-[11px] text-slate-400">
+                                "Many clinics share visiting prescribers (e.g. traveling PMHNPs or psychiatrists) and local wellness specialists (e.g. yoga instructors). Select a provider to compare every facility they serve."
+                            </p>
+                        </div>
+                        <Show when=move || selected_provider_id.get().is_some()>
+                            <button
+                                type="button"
+                                on:click=move |_| {
+                                    selected_provider_id.set(None);
+                                    page.set(0);
+                                }
+                                class="text-xs font-medium text-indigo-200 underline-offset-2 hover:underline"
+                            >
+                                "Clear provider filter"
+                            </button>
+                        </Show>
+                    </div>
+                    <div class="flex flex-wrap gap-1.5">
+                        {move || {
+                            top_network_providers
+                                .get()
+                                .into_iter()
+                                .map(|prov| {
+                                    let pid_pressed = prov.id.clone();
+                                    let pid_class = prov.id.clone();
+                                    let pid_click = prov.id.clone();
+                                    let org_part = prov
+                                        .organization
+                                        .as_deref()
+                                        .map(|o| format!(" · {o}"))
+                                        .unwrap_or_default();
+                                    let label = format!(
+                                        "{}{} — {} ({} sites)",
+                                        prov.name,
+                                        org_part,
+                                        prov.role.short_label(),
+                                        prov.facility_ids.len()
+                                    );
+                                    view! {
+                                        <button
+                                            type="button"
+                                            aria-pressed=move || {
+                                                (selected_provider_id.get().as_deref()
+                                                    == Some(pid_pressed.as_str()))
+                                                    .to_string()
+                                            }
+                                            on:click=move |_| {
+                                                selected_provider_id.update(|cur| {
+                                                    if cur.as_deref() == Some(pid_click.as_str()) {
+                                                        *cur = None;
+                                                    } else {
+                                                        *cur = Some(pid_click.clone());
+                                                    }
+                                                });
+                                                page.set(0);
+                                            }
+                                            class=move || {
+                                                if selected_provider_id.get().as_deref()
+                                                    == Some(pid_class.as_str())
+                                                {
+                                                    "min-h-[32px] rounded-full border border-indigo-400/70 bg-indigo-500/25 px-3 py-1 text-xs font-semibold text-indigo-100 transition"
+                                                } else {
+                                                    "min-h-[32px] rounded-full border border-white/15 bg-white/[0.03] px-3 py-1 text-xs text-slate-200 transition hover:border-indigo-400/45 hover:text-white"
+                                                }
+                                            }
+                                        >
+                                            {label}
+                                        </button>
+                                    }
+                                })
+                                .collect_view()
+                        }}
+                    </div>
+                </div>
+            </Show>
+
+            // Active shared-provider filter banner
+            {move || {
+                let pid = selected_provider_id.get()?;
+                let prov = network_by_id.with(|m| m.get(&pid).cloned())?;
+                let org_text = prov
+                    .organization
+                    .as_deref()
+                    .map(|o| format!(" ({o})"))
+                    .unwrap_or_default();
+                let summary = format!(
+                    "{}{org_text} — {} · {} · {} facilities",
+                    prov.name,
+                    prov.role.short_label(),
+                    prov.arrangement.label(),
+                    prov.facility_ids.len()
+                );
+                let notes = prov.notes.clone();
+                Some(view! {
+                    <div
+                        role="status"
+                        class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-indigo-400/40 bg-indigo-500/15 px-4 py-2.5 text-xs text-indigo-100"
+                    >
+                        <div>
+                            <p>
+                                <strong>"Shared provider filter: "</strong>
+                                {summary}
+                            </p>
+                            {notes.map(|n| view! { <p class="mt-0.5 text-[11px] text-indigo-200/80">{n}</p> })}
+                        </div>
+                        <button
+                            type="button"
+                            on:click=move |_| {
+                                selected_provider_id.set(None);
+                                page.set(0);
+                            }
+                            class="min-h-[32px] rounded-full border border-indigo-300/40 bg-indigo-500/20 px-3 py-1 text-xs font-semibold text-white transition hover:bg-indigo-500/35"
+                        >
+                            "Show all facilities"
+                        </button>
+                    </div>
+                })
+            }}
 
             // Drawer 3: Care Settings & Payment / Insurance
             <Show when=move || show_care_filters.get()>
@@ -1772,7 +2009,27 @@ pub fn RecoverySearchSection(
                                         .hits
                                         .into_iter()
                                         .map(|hit| {
-                                            render_facility_card(hit, on_save_care_team, saved_facility_name)
+                                            let shared_providers: Vec<NetworkProvider> = hit
+                                                .facility
+                                                .staffing_profile
+                                                .as_ref()
+                                                .map(|prof| {
+                                                    network_by_id.with(|map| {
+                                                        prof.network_provider_ids
+                                                            .iter()
+                                                            .filter_map(|id| map.get(id).cloned())
+                                                            .collect()
+                                                    })
+                                                })
+                                                .unwrap_or_default();
+                                            render_facility_card(
+                                                hit,
+                                                shared_providers,
+                                                selected_provider_id,
+                                                page,
+                                                on_save_care_team,
+                                                saved_facility_name,
+                                            )
                                         })
                                         .collect_view()}
                                 </div>
@@ -1849,6 +2106,9 @@ fn staff_badge_class(lic: StaffLicense) -> &'static str {
 
 fn render_facility_card(
     hit: RecoveryHit,
+    shared_providers: Vec<NetworkProvider>,
+    selected_provider_id: RwSignal<Option<String>>,
+    page: RwSignal<usize>,
     on_save_care_team: Option<Callback<SavedCareTeamFacility>>,
     saved_facility_name: RwSignal<Option<String>>,
 ) -> impl IntoView {
@@ -1864,6 +2124,7 @@ fn render_facility_card(
     let payment_badges: Vec<&'static str> = f.payments.iter().map(|p| p.label()).collect();
     let group_badges: Vec<&'static str> = f.groups.iter().map(|g| g.label()).collect();
     let staff_licenses = f.staff_licenses.clone();
+    let staffing_profile = f.staffing_profile.clone();
     let amenities = f.lifestyle.amenities.clone();
     let food = f.lifestyle.food;
     let dietary = f.lifestyle.dietary.clone();
@@ -1948,14 +2209,17 @@ fn render_facility_card(
                         .collect_view()}
                 </div>
 
-                // Staff Licenses (strictly separated: MD != DO, Psychiatrist != NP)
-                {(!staff_licenses.is_empty()).then(|| {
+                // Staff Licenses & Dedicated vs Shared/Visiting Network (MD != DO, Psychiatrist != NP)
+                {(!staff_licenses.is_empty() || staffing_profile.is_some()).then(|| {
                     let nppes_count = enrichment.as_ref().and_then(|m| m.nppes_provider_count);
+                    let prof = staffing_profile.clone();
+                    let top_shared: Vec<NetworkProvider> =
+                        shared_providers.into_iter().take(4).collect();
                     view! {
-                        <div class="rounded-lg border border-amber-400/20 bg-amber-950/15 p-2">
-                            <div class="mb-1 flex items-center justify-between gap-2">
+                        <div class="space-y-1.5 rounded-lg border border-amber-400/20 bg-amber-950/15 p-2">
+                            <div class="flex flex-wrap items-center justify-between gap-2">
                                 <span class="text-[10px] font-semibold uppercase tracking-wider text-amber-200/90">
-                                    "Staff Licenses"
+                                    "Staff Licenses & Care Model"
                                 </span>
                                 {nppes_count.map(|n| {
                                     view! {
@@ -1965,18 +2229,110 @@ fn render_facility_card(
                                     }
                                 })}
                             </div>
-                            <div class="flex flex-wrap gap-1">
-                                {staff_licenses
-                                    .into_iter()
-                                    .map(|lic| {
-                                        view! {
-                                            <span class=staff_badge_class(lic)>
-                                                {lic.short_label()}
-                                            </span>
-                                        }
-                                    })
-                                    .collect_view()}
-                            </div>
+                            {prof.as_ref().map(|p| {
+                                let has_model = p.dedicated_physicians > 0
+                                    || p.dedicated_clinicians > 0
+                                    || p.shared_prescribers > 0
+                                    || p.shared_with_facilities > 0
+                                    || p.visiting_specialists > 0;
+                                has_model.then(|| {
+                                    let ded_phys = p.dedicated_physicians;
+                                    let ded_clin = p.dedicated_clinicians;
+                                    let sh_presc = p.shared_prescribers;
+                                    let sh_peers = p.shared_with_facilities;
+                                    let visiting = p.visiting_specialists;
+                                    view! {
+                                        <div class="flex flex-wrap gap-1">
+                                            {(ded_phys > 0).then(|| {
+                                                view! {
+                                                    <span class="rounded border border-emerald-400/40 bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-200">
+                                                        {format!("{ded_phys} dedicated MD/DO")}
+                                                    </span>
+                                                }
+                                            })}
+                                            {(ded_clin > 0 && ded_phys == 0).then(|| {
+                                                view! {
+                                                    <span class="rounded border border-emerald-400/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-200">
+                                                        {format!("{ded_clin} dedicated staff")}
+                                                    </span>
+                                                }
+                                            })}
+                                            {(sh_presc > 0).then(|| {
+                                                view! {
+                                                    <span class="rounded border border-amber-400/40 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-100">
+                                                        {format!("{sh_presc} shared prescriber{}", if sh_presc == 1 { "" } else { "s" })}
+                                                    </span>
+                                                }
+                                            })}
+                                            {(visiting > 0).then(|| {
+                                                view! {
+                                                    <span class="rounded border border-indigo-400/40 bg-indigo-500/15 px-1.5 py-0.5 text-[10px] font-medium text-indigo-200">
+                                                        {format!("{visiting} visiting specialist{}", if visiting == 1 { "" } else { "s" })}
+                                                    </span>
+                                                }
+                                            })}
+                                            {(sh_peers > 0).then(|| {
+                                                view! {
+                                                    <span class="rounded border border-indigo-400/30 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] text-indigo-200">
+                                                        {format!("Shares staff with {sh_peers} peer {}", if sh_peers == 1 { "site" } else { "sites" })}
+                                                    </span>
+                                                }
+                                            })}
+                                        </div>
+                                    }
+                                })
+                            })}
+                            {(!staff_licenses.is_empty()).then(|| {
+                                view! {
+                                    <div class="flex flex-wrap gap-1">
+                                        {staff_licenses
+                                            .into_iter()
+                                            .map(|lic| {
+                                                view! {
+                                                    <span class=staff_badge_class(lic)>
+                                                        {lic.short_label()}
+                                                    </span>
+                                                }
+                                            })
+                                            .collect_view()}
+                                    </div>
+                                }
+                            })}
+                            {(!top_shared.is_empty()).then(|| {
+                                view! {
+                                    <div class="border-t border-white/5 pt-1.5">
+                                        <span class="mb-1 block text-[10px] text-slate-400">
+                                            "Shared / visiting providers (click to compare sites):"
+                                        </span>
+                                        <div class="flex flex-wrap gap-1">
+                                            {top_shared
+                                                .into_iter()
+                                                .map(|sp| {
+                                                    let pid = sp.id.clone();
+                                                    let chip_label = format!(
+                                                        "{} · {} ({} sites)",
+                                                        sp.name,
+                                                        sp.role.short_label(),
+                                                        sp.facility_ids.len()
+                                                    );
+                                                    view! {
+                                                        <button
+                                                            type="button"
+                                                            on:click=move |_| {
+                                                                selected_provider_id.set(Some(pid.clone()));
+                                                                page.set(0);
+                                                            }
+                                                            class="rounded-full border border-indigo-400/35 bg-indigo-500/15 px-2 py-0.5 text-[10px] font-medium text-indigo-100 transition hover:bg-indigo-500/30"
+                                                        >
+                                                            {chip_label}
+                                                        </button>
+                                                    }
+                                                })
+                                                .collect_view()}
+                                        </div>
+                                    </div>
+                                }
+                            })}
                         </div>
                     }
                 })}

@@ -231,6 +231,7 @@ pub fn build_catalogs_from_pages(
                 state,
                 retrieved: retrieved.to_string(),
                 facilities,
+                staff_network: Vec::new(),
             }
         })
         .collect()
@@ -352,6 +353,7 @@ fn map_row(row: RawRow, state: &str) -> Option<Facility> {
         groups,
         lifestyle,
         staff_licenses: Vec::new(),
+        staffing_profile: None,
         enrichment: (!enrichment.is_empty()).then_some(enrichment),
     };
     facility.id = Some(facility.stable_id());

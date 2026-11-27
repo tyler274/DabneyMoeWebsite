@@ -53,6 +53,12 @@ pub struct RecoveryQuery {
     pub staff_licenses: Vec<StaffLicense>,
     /// Whether `staff_licenses` requires any match or all matches.
     pub staff_match_mode: StaffMatchMode,
+    /// When true, require at least one dedicated (single-site, non-shared) MD/DO physician.
+    pub only_dedicated_physician: bool,
+    /// When true, restrict to facilities linked into the shared/visiting staff network.
+    pub only_shared_network: bool,
+    /// Optional provider ID from `StateCatalog::staff_network`: show all facilities served by that provider.
+    pub provider_id: Option<String>,
     /// When true, restrict results to facilities with enriched amenities or staff license data.
     pub only_enriched: bool,
     pub origin: Option<Coordinates>,
@@ -88,14 +94,28 @@ pub struct OfferedFacets {
     pub vaping: Vec<VapingPolicy>,
     pub staff_licenses: Vec<StaffLicense>,
     pub enriched_count: usize,
+    pub dedicated_physician_count: usize,
+    pub shared_network_facility_count: usize,
+    pub network_provider_count: usize,
 }
 
 impl OfferedFacets {
     pub fn from_catalog(catalog: &StateCatalog) -> Self {
-        let mut out = Self::default();
+        let mut out = Self {
+            network_provider_count: catalog.staff_network.len(),
+            ..Self::default()
+        };
         for f in &catalog.facilities {
             if f.is_enriched() {
                 out.enriched_count += 1;
+            }
+            if let Some(profile) = &f.staffing_profile {
+                if profile.dedicated_physicians > 0 {
+                    out.dedicated_physician_count += 1;
+                }
+                if !profile.network_provider_ids.is_empty() || profile.shared_with_facilities > 0 {
+                    out.shared_network_facility_count += 1;
+                }
             }
             for &s in &f.settings {
                 insert_sorted_unique(&mut out.settings, s);
@@ -233,6 +253,25 @@ pub fn search_catalog(catalog: &StateCatalog, query: &RecoveryQuery) -> Recovery
                     .is_some_and(|pol| query.vaping.contains(&pol))
         })
         .filter(|f| matches_staff_licenses(f, &query.staff_licenses, query.staff_match_mode))
+        .filter(|f| {
+            !query.only_dedicated_physician
+                || f.staffing_profile
+                    .as_ref()
+                    .is_some_and(|p| p.dedicated_physicians > 0)
+        })
+        .filter(|f| {
+            !query.only_shared_network
+                || f.staffing_profile.as_ref().is_some_and(|p| {
+                    !p.network_provider_ids.is_empty() || p.shared_with_facilities > 0
+                })
+        })
+        .filter(|f| match query.provider_id.as_deref() {
+            None => true,
+            Some(pid) => f
+                .staffing_profile
+                .as_ref()
+                .is_some_and(|p| p.network_provider_ids.iter().any(|id| id == pid)),
+        })
         .filter_map(|facility| match query.origin {
             None => Some((facility, None)),
             Some(origin) => {

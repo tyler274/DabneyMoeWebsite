@@ -20,12 +20,13 @@ use tokio::process::Command;
 
 use crate::schema::{
     Amenity, DataSource, DietaryOption, ElectronicsPolicy, EnrichmentMeta, Facility, FoodSituation,
-    SmokingPolicy, StaffLicense, VapingPolicy,
+    ProviderRole, SmokingPolicy, StaffArrangement, StaffLicense, VapingPolicy, WellnessRole,
 };
 use crate::updater::cache::{sha256_hex, today_utc_iso, CacheMode, DiskCache};
+use crate::updater::network::{provider_slug_id, ProviderObservation};
 use crate::updater::website::CachedWebPage;
 
-const PROMPT_VERSION: &str = "v1";
+const PROMPT_VERSION: &str = "v2";
 const LLM_CACHE_TTL: Duration = Duration::from_secs(90 * 24 * 60 * 60);
 const MAX_PROMPT_CHARS: usize = 14_000;
 const CLI_TIMEOUT: Duration = Duration::from_secs(90);
@@ -97,6 +98,19 @@ impl LlmConfig {
     }
 }
 
+/// Named clinician or visiting/contracted specialist extracted by an LLM from a facility's pages.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtractedStaff {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
+    pub role: ProviderRole,
+    #[serde(default)]
+    pub arrangement: StaffArrangement,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+}
+
 /// Strict typed extraction produced by an LLM from a facility's cached website text.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LlmExtraction {
@@ -115,6 +129,8 @@ pub struct LlmExtraction {
     #[serde(default)]
     pub staff_licenses: Vec<StaffLicense>,
     #[serde(default)]
+    pub named_staff: Vec<ExtractedStaff>,
+    #[serde(default)]
     pub notes: Option<String>,
     #[serde(default)]
     pub evidence_urls: Vec<String>,
@@ -129,12 +145,29 @@ impl LlmExtraction {
             && self.smoking.is_none()
             && self.vaping.is_none()
             && self.staff_licenses.is_empty()
+            && self.named_staff.is_empty()
             && self
                 .notes
                 .as_deref()
                 .map(str::trim)
                 .is_none_or(str::is_empty)
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawNamedStaff {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    organization: Option<String>,
+    #[serde(default)]
+    clinical_license: Option<String>,
+    #[serde(default)]
+    wellness_role: Option<String>,
+    #[serde(default)]
+    arrangement: Option<String>,
+    #[serde(default)]
+    notes: Option<String>,
 }
 
 /// Raw JSON shape parsed from the model before filtering through exact domain enums, so an
@@ -155,6 +188,8 @@ struct RawLlmPayload {
     vaping: Option<String>,
     #[serde(default)]
     staff_licenses: Vec<String>,
+    #[serde(default)]
+    named_staff: Vec<RawNamedStaff>,
     #[serde(default)]
     notes: Option<String>,
 }
@@ -304,6 +339,29 @@ pub fn apply_llm_extraction(facility: &mut Facility, ext: &LlmExtraction) -> boo
     true
 }
 
+/// Converts any named clinicians or visiting/contracted specialists extracted by the LLM for
+/// `facility` into [`ProviderObservation`]s for the state's shared-staff network graph.
+pub fn observations_from_llm(
+    state: &str,
+    facility_id: &str,
+    ext: &LlmExtraction,
+) -> Vec<ProviderObservation> {
+    ext.named_staff
+        .iter()
+        .map(|staff| ProviderObservation {
+            id: provider_slug_id(state, &staff.name, staff.organization.as_deref()),
+            name: staff.name.clone(),
+            organization: staff.organization.clone(),
+            npi: None,
+            role: staff.role,
+            arrangement_hint: staff.arrangement,
+            facility_id: facility_id.to_string(),
+            source: DataSource::Llm,
+            notes: staff.notes.clone(),
+        })
+        .collect()
+}
+
 /// Combines cached pages into a compact bounded excerpt, prioritizing subpages (amenities, FAQ,
 /// what-to-bring, dining, staff) before the homepage.
 pub fn build_site_excerpt(pages: &[CachedWebPage]) -> Option<(String, Vec<String>)> {
@@ -356,6 +414,17 @@ fn truncate_utf8(text: &str, max_bytes: usize) -> &str {
     &text[..end]
 }
 
+fn truncate_tail_utf8(text: &str, max_bytes: usize) -> &str {
+    if text.len() <= max_bytes {
+        return text;
+    }
+    let mut start = text.len() - max_bytes;
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    &text[start..]
+}
+
 /// JSON Schema enforced by `codex exec --output-schema` and `claude --json-schema`.
 pub fn extraction_json_schema() -> serde_json::Value {
     let amenity_codes: Vec<&str> = Amenity::ALL.iter().map(|v| v.code()).collect();
@@ -365,6 +434,19 @@ pub fn extraction_json_schema() -> serde_json::Value {
     let smoking_codes: Vec<&str> = SmokingPolicy::ALL.iter().map(|v| v.code()).collect();
     let vaping_codes: Vec<&str> = VapingPolicy::ALL.iter().map(|v| v.code()).collect();
     let staff_codes: Vec<&str> = StaffLicense::ALL.iter().map(|v| v.code()).collect();
+    let wellness_codes: Vec<&str> = WellnessRole::ALL.iter().map(|v| v.code()).collect();
+    let staff_codes_nullable: Vec<Option<&str>> = staff_codes
+        .iter()
+        .copied()
+        .map(Some)
+        .chain(std::iter::once(None))
+        .collect();
+    let wellness_codes_nullable: Vec<Option<&str>> = wellness_codes
+        .iter()
+        .copied()
+        .map(Some)
+        .chain(std::iter::once(None))
+        .collect();
 
     serde_json::json!({
         "type": "object",
@@ -377,6 +459,7 @@ pub fn extraction_json_schema() -> serde_json::Value {
             "smoking",
             "vaping",
             "staff_licenses",
+            "named_staff",
             "notes"
         ],
         "properties": {
@@ -407,6 +490,23 @@ pub fn extraction_json_schema() -> serde_json::Value {
             "staff_licenses": {
                 "type": "array",
                 "items": { "type": "string", "enum": staff_codes }
+            },
+            "named_staff": {
+                "type": "array",
+                "description": "Named medical directors, psychiatrists, PMHNPs, or visiting/contracted specialists (e.g. yoga instructors, equine therapists, chefs) explicitly named on the website.",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["name", "organization", "clinical_license", "wellness_role", "arrangement", "notes"],
+                    "properties": {
+                        "name": { "type": "string" },
+                        "organization": { "type": ["string", "null"] },
+                        "clinical_license": { "type": ["string", "null"], "enum": staff_codes_nullable },
+                        "wellness_role": { "type": ["string", "null"], "enum": wellness_codes_nullable },
+                        "arrangement": { "type": "string", "enum": ["dedicated", "shared", "visiting"] },
+                        "notes": { "type": ["string", "null"] }
+                    }
+                }
             },
             "notes": {
                 "type": ["string", "null"],
@@ -442,10 +542,16 @@ pub fn build_extraction_prompt(site_excerpt: &str) -> String {
         .map(|v| format!("`{}` ({})", v.code(), v.label()))
         .collect::<Vec<_>>()
         .join(", ");
+    let wellness_list = WellnessRole::ALL
+        .iter()
+        .map(|v| format!("`{}` ({})", v.code(), v.label()))
+        .collect::<Vec<_>>()
+        .join(", ");
 
     format!(
-        "You are extracting factual, non-care facility amenities and exact clinical staff license \
-         types from public text scraped from a treatment facility's website.\n\n\
+        "You are extracting factual, non-care facility amenities, exact clinical staff license \
+         types, and named clinicians or visiting/contracted specialists from public text scraped \
+         from a treatment facility's website.\n\n\
          STRICT RULES:\n\
          1. Extract ONLY facts explicitly stated in the provided text. NEVER guess, infer, or assume.\n\
          2. If a field is not explicitly mentioned, return `null` or `[]`.\n\
@@ -454,7 +560,10 @@ pub fn build_extraction_prompt(site_excerpt: &str) -> String {
             - A DO is NOT an MD (`do-psychiatrist` != `md-psychiatrist`). Only emit MD or DO when that exact degree appears.\n\
             - A Nurse Practitioner (`pmhnp` / `np`) or Physician Assistant (`pa`) is NOT a Psychiatrist.\n\
             - Distinguish `phd-psychologist` vs `psyd-psychologist`, and `lcsw` vs `lpc-lmhc` vs `lmft`.\n\
-         5. Return ONLY a single JSON object matching the required schema (no markdown fences, no commentary).\n\n\
+         5. For `named_staff`, list explicitly named clinicians or contracted/visiting specialists \
+            (e.g. a visiting psychiatrist, traveling PMHNP, or contracted yoga/equine/culinary studio), \
+            setting EITHER `clinical_license` OR `wellness_role` (and `null` for the other).\n\
+         6. Return ONLY a single JSON object matching the required schema (no markdown fences, no commentary).\n\n\
          ALLOWED ENUM CODES:\n\
          - amenities: {amenity_list}\n\
          - food: {food_list} (or null)\n\
@@ -463,6 +572,8 @@ pub fn build_extraction_prompt(site_excerpt: &str) -> String {
          - smoking: `not-permitted`, `designated-area`, `permitted` (or null)\n\
          - vaping: `not-permitted`, `designated-area`, `permitted` (or null)\n\
          - staff_licenses: {staff_list}\n\
+         - wellness_role (for named_staff): {wellness_list}\n\
+         - arrangement (for named_staff): `dedicated`, `shared`, `visiting`\n\
          - notes: 1-2 short factual sentences summarizing explicit amenities/food/device rules (max 240 chars), or null.\n\n\
          WEBSITE EXCERPTS:\n{site_excerpt}\n"
     )
@@ -529,6 +640,46 @@ pub fn parse_llm_json(raw: &str) -> Result<LlmExtraction, LlmError> {
         .filter(|s| !s.is_empty())
         .map(|s| truncate_utf8(&s, 280).to_string());
 
+    let named_staff: Vec<ExtractedStaff> = raw_payload
+        .named_staff
+        .into_iter()
+        .filter_map(|item| {
+            let name = item.name.trim().to_string();
+            if name.len() < 2 {
+                return None;
+            }
+            let role = item
+                .clinical_license
+                .as_deref()
+                .and_then(StaffLicense::from_code)
+                .map(ProviderRole::Clinical)
+                .or_else(|| {
+                    item.wellness_role
+                        .as_deref()
+                        .and_then(WellnessRole::from_code)
+                        .map(ProviderRole::Wellness)
+                })?;
+            let arrangement = item
+                .arrangement
+                .as_deref()
+                .and_then(StaffArrangement::from_code)
+                .unwrap_or(StaffArrangement::Dedicated);
+            Some(ExtractedStaff {
+                name,
+                organization: item
+                    .organization
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty()),
+                role,
+                arrangement,
+                notes: item
+                    .notes
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty()),
+            })
+        })
+        .collect();
+
     Ok(LlmExtraction {
         amenities,
         food: raw_payload
@@ -549,6 +700,7 @@ pub fn parse_llm_json(raw: &str) -> Result<LlmExtraction, LlmError> {
             .as_deref()
             .and_then(VapingPolicy::from_code),
         staff_licenses,
+        named_staff,
         notes,
         evidence_urls: Vec::new(),
     })
@@ -593,6 +745,7 @@ async fn invoke_codex(cfg: &LlmConfig, prompt: &str) -> Result<String, LlmError>
         .arg("--sandbox")
         .arg("read-only")
         .arg("--ephemeral")
+        .arg("--ignore-user-config")
         .arg("--skip-git-repo-check")
         .arg("--color")
         .arg("never")
@@ -661,7 +814,7 @@ async fn run_cli_with_stdin(
         return Err(LlmError::CliExit {
             program,
             code: output.status.code().unwrap_or(-1),
-            stderr: truncate_utf8(&stderr, 400).to_string(),
+            stderr: truncate_tail_utf8(&stderr, 500).to_string(),
         });
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())

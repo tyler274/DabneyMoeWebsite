@@ -30,6 +30,7 @@ SKIP_FILES = {"scripts/setup-cloudflare-edge.sh"}
 # `nix/web-server.nix`, which is web-only).
 TAURI_PREFIXES = (
     "src-tauri/",
+    "crates/recovery-index/",
     "crates/ui/",
     "crates/clinical-workspace/",
     "crates/tauri-ui/",
