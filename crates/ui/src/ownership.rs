@@ -909,8 +909,12 @@ mod data_tests {
         // Zero legacy branding in embedded JSON
         let lowered = OWNERSHIP_METRICS_JSON.to_ascii_lowercase();
         let legacy_brand = ["co", "da"].concat();
+        let legacy_patient_brand = ["du", "et"].concat();
+        let legacy_other_brand = ["cho", "rds"].concat();
         let legacy_credit = ["hoyo", "verse"].concat();
         assert!(!lowered.contains(&legacy_brand));
+        assert!(!lowered.contains(&legacy_patient_brand));
+        assert!(!lowered.contains(&legacy_other_brand));
         assert!(!lowered.contains(&legacy_credit));
     }
 }
@@ -979,8 +983,13 @@ mod tests {
             );
         }
         let legacy_brand = ["co", "da"].concat();
+        let legacy_patient_brand = ["du", "et"].concat();
+        let legacy_other_brand = ["cho", "rds"].concat();
         let legacy_credit = ["hoyo", "verse"].concat();
-        assert!(!html.to_ascii_lowercase().contains(&legacy_brand));
-        assert!(!html.to_ascii_lowercase().contains(&legacy_credit));
+        let lowered_html = html.to_ascii_lowercase();
+        assert!(!lowered_html.contains(&legacy_brand));
+        assert!(!lowered_html.contains(&legacy_patient_brand));
+        assert!(!lowered_html.contains(&legacy_other_brand));
+        assert!(!lowered_html.contains(&legacy_credit));
     }
 }

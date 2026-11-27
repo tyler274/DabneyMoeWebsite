@@ -94,7 +94,7 @@ class UpdateOwnershipTests(unittest.TestCase):
             "Initial website commit",
         )
 
-        # Upstream repo: multi-author files across tiers + patients/ + excluded duet-wire/.
+        # Upstream repo: multi-author files across tiers + patients/ + excluded mobile-wire/.
         (upstream / "crates" / "alpha" / "src").mkdir(parents=True)
         (upstream / "crates" / "alpha" / "src" / "lib.rs").write_text(
             "".join(f"pub const A{i}: usize = {i};\n" for i in range(10)),
@@ -120,8 +120,8 @@ class UpdateOwnershipTests(unittest.TestCase):
             '{\n  "id": "pt-001",\n  "synthetic": true\n}\n',
             encoding="utf-8",
         )
-        (upstream / "crates" / "duet-wire" / "src").mkdir(parents=True)
-        (upstream / "crates" / "duet-wire" / "src" / "generated.rs").write_text(
+        (upstream / "crates" / "mobile-wire" / "src").mkdir(parents=True)
+        (upstream / "crates" / "mobile-wire" / "src" / "generated.rs").write_text(
             "// generated wire output should be excluded\n" * 50,
             encoding="utf-8",
         )
@@ -229,7 +229,7 @@ class UpdateOwnershipTests(unittest.TestCase):
             self.assertEqual(ws["tyler_pct"], 100.0)
             self.assertEqual(ws["external_lines"], 0)
 
-            # Upstream assertions (duet-wire excluded!).
+            # Upstream assertions (mobile-wire excluded!).
             up = data["upstream"]
             self.assertEqual(up["name"], "dabney-moe")
             # Source files: alpha(10), boundaries(5), beta(10), gamma(4), Cargo.lock(1) = 30 lines, 5 files.

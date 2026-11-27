@@ -1,7 +1,7 @@
 # Tier 1: the sovereign dabney.moe stack on one EU VPS (Hetzner CX23 from
 # terraform/eu). Docker Compose or Podman Compose.
 #
-#   Caddy          HTTPS for dabney.moe, www, git, coda, cache, auth, app, api
+#   Caddy          HTTPS for dabney.moe, www, git, curie, cache, auth, app, api
 #   dabney-web     Leptos SSR site
 #   dabney-forge   Rust Git forge (profile "forge"; HTTP behind Caddy, SSH on FORGE_SSH_PORT)
 #   radicle        Radicle seed node (profile "radicle")
@@ -9,7 +9,7 @@
 #   valkey         Valkey 8, in-memory only
 #   attic          Nix binary cache
 #   pocket-id      OIDC provider with passkeys
-#   physician-sample, physician-worker, duet-api   Coda demo (profile "coda")
+#   physician-sample, physician-worker, mobile-api   Curie demo (profile "curie")
 #
 # Public, demo and non-PHI only: nothing in this stack may receive protected
 # health information.
@@ -24,9 +24,9 @@
 #   secrets/forge.env      dabney-forge database URL
 #   secrets/pocket-id.env  pocket-id database URL + ENCRYPTION_KEY
 #   secrets/attic.env      attic database URL + RS256 token signing key
-#   secrets/coda.env       Coda demo DB URLs + MAIL_SMTP_* (consumed by
-#                          coda-rust's mail-relay binary and by physician-sample /
-#                          duet-api once wired to SmtpRelayConfig::from_env)
+#   secrets/curie.env       Curie demo DB URLs + MAIL_SMTP_* (consumed by
+#                          dabney-moe's mail-relay binary and by physician-sample /
+#                          mobile-api once wired to SmtpRelayConfig::from_env)
 #
 # Networks:
 #   edge      Caddy and its HTTP upstreams only
@@ -57,7 +57,7 @@ services:
       FORGE_UPSTREAM: ${FORGE_UPSTREAM:-dabney-forge:8080}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./coda-site:/srv/coda-site:ro
+      - ./curie-site:/srv/curie-site:ro
       - caddy_data:/data
       - caddy_config:/config
     networks:
@@ -123,7 +123,7 @@ services:
     environment:
       # POSTGRES_PASSWORD and the per-service *_DB_PASSWORD values come from
       # secrets/postgres.env; postgres-init creates one database and role per service.
-      POSTGRES_SERVICE_DATABASES: forge attic pocketid physician duet
+      POSTGRES_SERVICE_DATABASES: forge attic pocketid physician mobile
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
@@ -191,10 +191,10 @@ services:
 
   physician-sample:
     <<: *restart
-    profiles: ["coda"]
+    profiles: ["curie"]
     image: ${PHYSICIAN_IMAGE:-physician-sample:latest}
     env_file:
-      - path: ./secrets/coda.env
+      - path: ./secrets/curie.env
         required: false
     expose:
       - "8080"
@@ -214,10 +214,10 @@ services:
 
   physician-worker:
     <<: *restart
-    profiles: ["coda"]
+    profiles: ["curie"]
     image: ${PHYSICIAN_IMAGE:-physician-sample:latest}
     env_file:
-      - path: ./secrets/coda.env
+      - path: ./secrets/curie.env
         required: false
     entrypoint: ["/bin/physician-worker"]
     environment:
@@ -232,18 +232,18 @@ services:
       valkey:
         condition: service_healthy
 
-  duet-api:
+  mobile-api:
     <<: *restart
-    profiles: ["coda"]
-    image: ${DUET_IMAGE:-duet-api:latest}
+    profiles: ["curie"]
+    image: ${MOBILE_API_IMAGE:-mobile-api:latest}
     env_file:
-      - path: ./secrets/coda.env
+      - path: ./secrets/curie.env
         required: false
     expose:
       - "8080"
     environment:
-      DUET_LISTEN_ADDR: 0.0.0.0:8080
-      DUET_PUBLIC_ORIGIN: https://api.${SITE_DOMAIN:-dabney.moe}
+      MOBILE_LISTEN_ADDR: 0.0.0.0:8080
+      MOBILE_PUBLIC_ORIGIN: https://api.${SITE_DOMAIN:-dabney.moe}
     networks:
       - edge
       - internal

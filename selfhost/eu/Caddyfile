@@ -44,11 +44,11 @@ git.{$SITE_DOMAIN:dabney.moe} {
 	}
 }
 
-# Coda's static site and book, when served from this host instead of
-# Codeberg git-pages (terraform/eu coda_on_vps = true).
-coda.{$SITE_DOMAIN:dabney.moe} {
+# Curie's static site and book, when served from this host instead of
+# Codeberg git-pages (terraform/eu curie_on_vps = true).
+curie.{$SITE_DOMAIN:dabney.moe} {
 	import common
-	root * /srv/coda-site
+	root * /srv/curie-site
 	file_server
 }
 
@@ -72,7 +72,7 @@ auth.{$SITE_DOMAIN:dabney.moe} {
 	reverse_proxy pocket-id:1411
 }
 
-# Coda demo services (compose profile "coda"); DNS from coda-rust infra/eu.
+# Curie demo services (compose profile "curie"); DNS from dabney-moe infra/eu.
 app.{$SITE_DOMAIN:dabney.moe} {
 	import common
 	reverse_proxy physician-sample:8080 {
@@ -82,5 +82,5 @@ app.{$SITE_DOMAIN:dabney.moe} {
 
 api.{$SITE_DOMAIN:dabney.moe} {
 	import common
-	reverse_proxy duet-api:8080
+	reverse_proxy mobile-api:8080
 }

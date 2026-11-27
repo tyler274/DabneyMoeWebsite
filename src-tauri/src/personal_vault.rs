@@ -40,6 +40,10 @@ pub struct PersonalVaultSnapshot {
     pub checkins_json: Option<String>,
     pub notes_json: Option<String>,
     pub chat_history_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passport_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roi_requests_json: Option<String>,
 }
 
 /// Partial update payload merged into the encrypted personal vault.
@@ -57,6 +61,10 @@ pub struct PersonalVaultSaveRequest {
     pub notes_json: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_history_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passport_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roi_requests_json: Option<String>,
 }
 
 impl PersonalVaultSaveRequest {
@@ -66,6 +74,8 @@ impl PersonalVaultSaveRequest {
             + self.checkins_json.as_deref().map_or(0, str::len)
             + self.notes_json.as_deref().map_or(0, str::len)
             + self.chat_history_json.as_deref().map_or(0, str::len)
+            + self.passport_json.as_deref().map_or(0, str::len)
+            + self.roi_requests_json.as_deref().map_or(0, str::len)
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -150,6 +160,8 @@ pub async fn personal_vault_load(app: tauri::AppHandle) -> Result<PersonalVaultS
             checkins_json: None,
             notes_json: None,
             chat_history_json: None,
+            passport_json: None,
+            roi_requests_json: None,
         })
     }
 }

@@ -265,7 +265,7 @@ mod tests {
         let shared = [Secret::new("Jefe")];
         let other = [Secret::new("other-secret")];
         let r1 = RepoPath::parse("tyler/site").unwrap();
-        let r2 = RepoPath::parse("tyler/coda-rust").unwrap();
+        let r2 = RepoPath::parse("tyler/dabney-moe").unwrap();
         let r3 = RepoPath::parse("tyler/isolated").unwrap();
         let h = headers(&[("x-forgejo-signature", RFC4231_SIG)]);
         let v = verify(

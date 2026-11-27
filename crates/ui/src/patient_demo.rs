@@ -9,9 +9,10 @@ use std::collections::{HashMap, HashSet};
 #[cfg(any(feature = "csr", feature = "hydrate"))]
 use clinical_workspace::build_harness_llm_prompt;
 use clinical_workspace::{
-    build_doctor_share_preview, default_patient_demo_state, default_patient_questions,
-    run_agent_turn, synthetic_panel, AgentAudience, AgentRunOptions, AgentThread, ChartRecord,
-    DemoConnectionState, PatientChart, PatientVisitNote, RecordKind, RunBudget,
+    build_doctor_share_preview, default_allergies_for_patient, default_patient_demo_state,
+    default_patient_questions, default_roi_requests_for_patient, run_agent_turn, synthetic_panel,
+    AgentAudience, AgentRunOptions, AgentThread, ChartRecord, DemoConnectionState, HealthPassport,
+    LinkedPortalConnection, PassportAudience, PatientVisitNote, RecordKind, RoiStatus, RunBudget,
     ShareDeliveryStatus, SharePacketPreview,
 };
 use leptos::prelude::*;
@@ -27,6 +28,7 @@ use crate::health_bridge::{
     probe_personal_vault, save_personal_vault, PersonalVaultSaveUi,
 };
 use crate::local_ai_chat::LocalLlmStatusBanner;
+use crate::patient_ehr::{AutomatedRoiPanel, PatientEhrPortalsPanel, PortablePassportSection};
 #[cfg(any(feature = "csr", feature = "hydrate"))]
 use crate::sections::open_site_or_external;
 use crate::sections::{Footer, NavBar, SITE_ORIGIN};
@@ -35,7 +37,9 @@ use crate::AppShellMode;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PatientTab {
     You,
+    Portals,
     Shared,
+    Roi,
 }
 
 const fn record_kind_badge_class(kind: RecordKind) -> &'static str {
@@ -106,41 +110,84 @@ pub fn ClinicalSuiteSwitcher() -> impl IntoView {
 #[component]
 pub fn PatientDemoPage() -> impl IntoView {
     let app_mode = use_context::<AppShellMode>().unwrap_or(AppShellMode::Website);
-    let panel = StoredValue::new(synthetic_panel());
+    let baseline_panel = synthetic_panel();
+    let patient_order = StoredValue::new(
+        baseline_panel
+            .iter()
+            .map(|p| p.id.clone())
+            .collect::<Vec<_>>(),
+    );
+    let baseline_charts = StoredValue::new(baseline_panel);
 
-    let (initial_id, initial_states, initial_question, initial_threads) =
-        panel.with_value(|charts| {
-            let mut states = HashMap::new();
-            let mut threads = HashMap::new();
-            for chart in charts {
-                states.insert(chart.id.clone(), default_patient_demo_state(chart));
-            }
-            if let Some(first) = charts.first() {
-                let q = default_patient_questions(&first.id)
-                    .first()
-                    .copied()
-                    .unwrap_or("Summarize my recent synthetic records")
-                    .to_string();
-                let mut thread = AgentThread::new(&first.id, AgentAudience::Patient);
-                let turn = run_agent_turn(
-                    first,
-                    &q,
-                    AgentAudience::Patient,
-                    thread.next_turn_index(),
-                    &thread.working_notes,
-                    AgentRunOptions::default(),
-                );
-                thread.record_turn(turn);
-                threads.insert(first.id.clone(), thread);
-                (first.id.clone(), states, q, threads)
-            } else {
-                (String::new(), states, String::new(), threads)
-            }
-        });
+    let (
+        initial_id,
+        initial_charts_map,
+        initial_states,
+        initial_allergies,
+        initial_rois,
+        initial_question,
+        initial_threads,
+    ) = baseline_charts.with_value(|list| {
+        let mut charts_map = HashMap::new();
+        let mut states = HashMap::new();
+        let mut allergies = HashMap::new();
+        let mut rois = HashMap::new();
+        let mut threads = HashMap::new();
+        for chart in list {
+            charts_map.insert(chart.id.clone(), chart.clone());
+            states.insert(chart.id.clone(), default_patient_demo_state(chart));
+            allergies.insert(chart.id.clone(), default_allergies_for_patient(&chart.id));
+            rois.insert(chart.id.clone(), default_roi_requests_for_patient(chart));
+        }
+        if let Some(first) = list.first() {
+            let q = default_patient_questions(&first.id)
+                .first()
+                .copied()
+                .unwrap_or("Summarize my recent synthetic records")
+                .to_string();
+            let mut thread = AgentThread::new(&first.id, AgentAudience::Patient);
+            let turn = run_agent_turn(
+                first,
+                &q,
+                AgentAudience::Patient,
+                thread.next_turn_index(),
+                &thread.working_notes,
+                AgentRunOptions::default(),
+            );
+            thread.record_turn(turn);
+            threads.insert(first.id.clone(), thread);
+            (
+                first.id.clone(),
+                charts_map,
+                states,
+                allergies,
+                rois,
+                q,
+                threads,
+            )
+        } else {
+            (
+                String::new(),
+                charts_map,
+                states,
+                allergies,
+                rois,
+                String::new(),
+                threads,
+            )
+        }
+    });
 
     let selected_id = RwSignal::new(initial_id);
     let active_tab = RwSignal::new(PatientTab::You);
+    let charts = RwSignal::new(initial_charts_map);
     let demo_states = RwSignal::new(initial_states);
+    let allergies_map = RwSignal::new(initial_allergies);
+    let linked_portals = RwSignal::new(HashMap::<String, Vec<LinkedPortalConnection>>::new());
+    let roi_map = RwSignal::new(initial_rois);
+    let passport_audience = RwSignal::new(PassportAudience::DoctorOrSpecialist);
+    let emergency_note = RwSignal::new(String::new());
+    let ehr_sync_banner = RwSignal::new(Option::<String>::None);
     let question_input = RwSignal::new(initial_question);
     let threads = RwSignal::new(initial_threads);
     let step_budget = RwSignal::new(RunBudget::default().max_steps);
@@ -217,6 +264,7 @@ pub fn PatientDemoPage() -> impl IntoView {
         llm_req_seq.update(|n| *n += 1);
         llm_thinking.set(false);
         active_record.set(None);
+        ehr_sync_banner.set(None);
         selected_id.set(patient_id.clone());
         let default_q = default_patient_questions(&patient_id)
             .first()
@@ -230,8 +278,8 @@ pub fn PatientDemoPage() -> impl IntoView {
         });
         if !has_existing {
             let max_steps = step_budget.get_untracked();
-            if let Some(seeded) = panel.with_value(|charts| {
-                charts.iter().find(|p| p.id == patient_id).map(|p| {
+            if let Some(seeded) = charts.with_untracked(|map| {
+                map.get(&patient_id).map(|p| {
                     let mut thread = AgentThread::new(&p.id, AgentAudience::Patient);
                     let turn = run_agent_turn(
                         p,
@@ -284,8 +332,8 @@ pub fn PatientDemoPage() -> impl IntoView {
                 .map(|t| (t.next_turn_index(), t.working_notes.clone()))
                 .unwrap_or((1, Vec::new()))
         });
-        let next_pair = panel.with_value(|charts| {
-            charts.iter().find(|p| p.id == active_id).map(|p| {
+        let next_pair = charts.with_untracked(|map| {
+            map.get(&active_id).map(|p| {
                 let turn = run_agent_turn(
                     p,
                     &trimmed,
@@ -390,18 +438,95 @@ pub fn PatientDemoPage() -> impl IntoView {
 
     let reset_active_demo = move |_| {
         let active_id = selected_id.get();
-        let default_state = panel.with_value(|charts| {
-            charts
-                .iter()
-                .find(|p| p.id == active_id)
-                .map(default_patient_demo_state)
-        });
-        if let Some(fresh) = default_state {
-            demo_states.update(|map| {
-                map.insert(active_id, fresh);
+        let baseline =
+            baseline_charts.with_value(|list| list.iter().find(|p| p.id == active_id).cloned());
+        if let Some(fresh_chart) = baseline {
+            let fresh_state = default_patient_demo_state(&fresh_chart);
+            let fresh_allergies = default_allergies_for_patient(&active_id);
+            let fresh_rois = default_roi_requests_for_patient(&fresh_chart);
+            charts.update(|map| {
+                map.insert(active_id.clone(), fresh_chart);
             });
+            demo_states.update(|map| {
+                map.insert(active_id.clone(), fresh_state);
+            });
+            allergies_map.update(|map| {
+                map.insert(active_id.clone(), fresh_allergies);
+            });
+            linked_portals.update(|map| {
+                map.remove(&active_id);
+            });
+            roi_map.update(|map| {
+                map.insert(active_id, fresh_rois);
+            });
+            ehr_sync_banner.set(None);
         }
     };
+
+    let restore_from_passport = Callback::new(move |passport: HealthPassport| {
+        let active_id = selected_id.get_untracked();
+        charts.update(|map| {
+            if let Some(chart) = map.get_mut(&active_id) {
+                for rec in &passport.records {
+                    if !chart.records.iter().any(|r| r.id == rec.id) {
+                        chart.records.insert(0, rec.clone());
+                    }
+                }
+                for med in &passport.medications {
+                    if !chart
+                        .medications
+                        .iter()
+                        .any(|m| m.name.eq_ignore_ascii_case(&med.name))
+                    {
+                        chart.medications.push(med.clone());
+                    }
+                }
+                for prob in &passport.problems {
+                    if !chart
+                        .problems
+                        .iter()
+                        .any(|p| p.label.eq_ignore_ascii_case(&prob.label))
+                    {
+                        chart.problems.push(prob.clone());
+                    }
+                }
+            }
+        });
+        allergies_map.update(|map| {
+            let list = map.entry(active_id.clone()).or_default();
+            for alg in &passport.allergies {
+                if !list
+                    .iter()
+                    .any(|a| a.substance.eq_ignore_ascii_case(&alg.substance))
+                {
+                    list.push(alg.clone());
+                }
+            }
+        });
+        demo_states.update(|map| {
+            if let Some(st) = map.get_mut(&active_id) {
+                for rec in &passport.records {
+                    if !st.selected_record_ids.contains(&rec.id) {
+                        st.selected_record_ids.push(rec.id.clone());
+                    }
+                }
+                if !passport.visit_note.is_empty() {
+                    st.visit_note = passport.visit_note.clone();
+                }
+                if !passport.visit_questions.is_empty() {
+                    st.visit_questions = passport.visit_questions.clone();
+                }
+            }
+        });
+        if !passport.emergency_note.is_empty() {
+            emergency_note.set(passport.emergency_note);
+        }
+        ehr_sync_banner.set(Some(format!(
+            "Restored verified Health Passport ({} record(s), {} med(s)) into your local workspace.",
+            passport.records.len(),
+            passport.medications.len()
+        )));
+    });
 
     let on_submit_question = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
@@ -563,9 +688,13 @@ pub fn PatientDemoPage() -> impl IntoView {
                     </button>
                 </div>
                 <div class="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
-                    {panel.with_value(|charts| {
-                        charts
-                            .iter()
+                    {patient_order.with_value(|ids| {
+                        ids.iter()
+                            .filter_map(|pid| {
+                                baseline_charts.with_value(|list| {
+                                    list.iter().find(|p| p.id == *pid).cloned()
+                                })
+                            })
                             .map(|chart| {
                                 let pid_click = chart.id.clone();
                                 let pid_aria = chart.id.clone();
@@ -599,84 +728,218 @@ pub fn PatientDemoPage() -> impl IntoView {
                 </div>
             </section>
 
-            // Patient Tab Bar ("Your Health" vs "For My Doctor")
-            {move || {
-                let active_id = selected_id.get();
-                let active_patient: Option<PatientChart> = panel.with_value(|charts| {
-                    charts.iter().find(|p| p.id == active_id).cloned()
-                });
-                let Some(patient) = active_patient else {
-                    return view! {
-                        <div class="rounded-2xl border border-white/10 bg-white/[0.02] p-6 text-sm text-slate-400">
-                            "Select a fictional sample profile above."
-                        </div>
-                    }
-                    .into_any();
-                };
-
-                let state = demo_states.with(|map| {
-                    map.get(&patient.id)
-                        .cloned()
-                        .unwrap_or_else(|| default_patient_demo_state(&patient))
-                });
-                let preview = build_doctor_share_preview(&patient, &state);
-                let selected_count = preview.shared_records.len();
-                let total_records = patient.records.len();
-
-                view! {
-                    <div class="space-y-6">
-                        <div
-                            role="tablist"
-                            aria-label="Patient companion sections"
-                            class="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-slate-900/70 p-1.5"
+            // Patient Tab Bar ("Your Health", "Doctor Portals", "For My Doctor & Portable File", "Release of Info")
+            // Kept outside chart/ROI data closures so mutating linked portals or ROI
+            // state never unmounts/remounts interactive sub-panels and clears local logs.
+            <div class="space-y-6">
+                {move || ehr_sync_banner.get().map(|msg| view! {
+                    <div role="status" class="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-cyan-400/35 bg-cyan-500/10 px-4 py-3 text-xs text-cyan-100">
+                        <span>{msg}</span>
+                        <button
+                            type="button"
+                            on:click=move |_| ehr_sync_banner.set(None)
+                            class="rounded-full border border-white/15 px-2.5 py-0.5 text-[11px] text-slate-200 hover:bg-white/10"
                         >
-                            <button
-                                type="button"
-                                role="tab"
-                                aria-selected=move || active_tab.get() == PatientTab::You
-                                on:click=move |_| active_tab.set(PatientTab::You)
-                                class=move || {
-                                    if active_tab.get() == PatientTab::You {
-                                        "min-h-[44px] rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 shadow-sm transition"
-                                    } else {
-                                        "min-h-[44px] rounded-xl px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:bg-white/5 hover:text-white"
-                                    }
-                                }
-                            >
-                                "Your Health (You)"
-                            </button>
-                            <button
-                                type="button"
-                                role="tab"
-                                aria-selected=move || active_tab.get() == PatientTab::Shared
-                                on:click=move |_| active_tab.set(PatientTab::Shared)
-                                class=move || {
-                                    if active_tab.get() == PatientTab::Shared {
-                                        "min-h-[44px] rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 shadow-sm transition"
-                                    } else {
-                                        "min-h-[44px] rounded-xl px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:bg-white/5 hover:text-white"
-                                    }
-                                }
-                            >
-                                {format!("For My Doctor ({selected_count}/{total_records})")}
-                            </button>
-                        </div>
+                            "Dismiss"
+                        </button>
+                    </div>
+                })}
 
-                        {if active_tab.get() == PatientTab::You {
-                            let active_thread = threads
-                                .get()
-                                .get(&patient.id)
-                                .filter(|t| !t.turns.is_empty())
-                                .cloned();
-                            let cited_ids: HashSet<String> = active_thread
-                                .as_ref()
-                                .map(AgentThread::latest_cited_ids)
-                                .unwrap_or_default();
-                            let selected_set: HashSet<String> =
-                                state.selected_record_ids.iter().cloned().collect();
-                            let presets = default_patient_questions(&patient.id);
+                <div
+                    role="tablist"
+                    aria-label="Patient companion sections"
+                    class="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-slate-900/70 p-1.5 lg:grid-cols-4"
+                >
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected=move || active_tab.get() == PatientTab::You
+                        on:click=move |_| active_tab.set(PatientTab::You)
+                        class=move || {
+                            if active_tab.get() == PatientTab::You {
+                                "min-h-[44px] rounded-xl bg-emerald-500 px-3.5 py-2.5 text-xs font-semibold text-slate-950 shadow-sm transition sm:text-sm"
+                            } else {
+                                "min-h-[44px] rounded-xl px-3.5 py-2.5 text-xs font-medium text-slate-300 transition hover:bg-white/5 hover:text-white sm:text-sm"
+                            }
+                        }
+                    >
+                        "Your Health (You)"
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected=move || active_tab.get() == PatientTab::Portals
+                        on:click=move |_| active_tab.set(PatientTab::Portals)
+                        class=move || {
+                            if active_tab.get() == PatientTab::Portals {
+                                "min-h-[44px] rounded-xl bg-emerald-500 px-3.5 py-2.5 text-xs font-semibold text-slate-950 shadow-sm transition sm:text-sm"
+                            } else {
+                                "min-h-[44px] rounded-xl px-3.5 py-2.5 text-xs font-medium text-slate-300 transition hover:bg-white/5 hover:text-white sm:text-sm"
+                            }
+                        }
+                    >
+                        {move || {
+                            let id = selected_id.get();
+                            let connected_portal_count = linked_portals.with(|map| {
+                                map.get(&id)
+                                    .map(|list| list.iter().filter(|c| c.status.is_connected()).count())
+                                    .unwrap_or(0)
+                            });
+                            if connected_portal_count > 0 {
+                                format!("Doctor Portals ({connected_portal_count} linked)")
+                            } else {
+                                "Doctor Portals (EHR)".to_string()
+                            }
+                        }}
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected=move || active_tab.get() == PatientTab::Shared
+                        on:click=move |_| active_tab.set(PatientTab::Shared)
+                        class=move || {
+                            if active_tab.get() == PatientTab::Shared {
+                                "min-h-[44px] rounded-xl bg-emerald-500 px-3.5 py-2.5 text-xs font-semibold text-slate-950 shadow-sm transition sm:text-sm"
+                            } else {
+                                "min-h-[44px] rounded-xl px-3.5 py-2.5 text-xs font-medium text-slate-300 transition hover:bg-white/5 hover:text-white sm:text-sm"
+                            }
+                        }
+                    >
+                        {move || {
+                            let id = selected_id.get();
+                            let (selected_count, total_records) = charts.with(|cmap| {
+                                cmap.get(&id)
+                                    .map(|patient| {
+                                        let state = demo_states.with(|dmap| {
+                                            dmap.get(&patient.id)
+                                                .cloned()
+                                                .unwrap_or_else(|| default_patient_demo_state(patient))
+                                        });
+                                        let preview = build_doctor_share_preview(patient, &state);
+                                        (preview.shared_records.len(), patient.records.len())
+                                    })
+                                    .unwrap_or((0, 0))
+                            });
+                            format!("For My Doctor ({selected_count}/{total_records})")
+                        }}
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected=move || active_tab.get() == PatientTab::Roi
+                        on:click=move |_| active_tab.set(PatientTab::Roi)
+                        class=move || {
+                            if active_tab.get() == PatientTab::Roi {
+                                "min-h-[44px] rounded-xl bg-emerald-500 px-3.5 py-2.5 text-xs font-semibold text-slate-950 shadow-sm transition sm:text-sm"
+                            } else {
+                                "min-h-[44px] rounded-xl px-3.5 py-2.5 text-xs font-medium text-slate-300 transition hover:bg-white/5 hover:text-white sm:text-sm"
+                            }
+                        }
+                    >
+                        {move || {
+                            let id = selected_id.get();
+                            let roi_queued_count = roi_map.with(|map| {
+                                map.get(&id)
+                                    .map(|list| {
+                                        list.iter()
+                                            .filter(|r| {
+                                                matches!(
+                                                    r.status,
+                                                    RoiStatus::SignedReadyToSend { .. }
+                                                        | RoiStatus::Dispatched { .. }
+                                                )
+                                            })
+                                            .count()
+                                    })
+                                    .unwrap_or(0)
+                            });
+                            format!("Release of Info (ROI · {roi_queued_count})")
+                        }}
+                    </button>
+                </div>
 
+                {move || {
+                    let active_id = selected_id.get();
+                    match active_tab.get() {
+                        PatientTab::Portals => {
+                            let Some(patient) = charts.with_untracked(|map| map.get(&active_id).cloned()) else {
+                                return view! {
+                                    <div class="rounded-2xl border border-white/10 bg-white/[0.02] p-6 text-sm text-slate-400">
+                                        "Select a fictional sample profile above."
+                                    </div>
+                                }
+                                .into_any();
+                            };
                             view! {
+                                <PatientEhrPortalsPanel
+                                    patient=patient
+                                    linked_portals=linked_portals
+                                    charts=charts
+                                    allergies_map=allergies_map
+                                    demo_states=demo_states
+                                    on_records_updated=Callback::new(move |msg| {
+                                        ehr_sync_banner.set(Some(msg));
+                                    })
+                                />
+                            }
+                            .into_any()
+                        }
+                        PatientTab::Roi => {
+                            let Some(patient) = charts.with_untracked(|map| map.get(&active_id).cloned()) else {
+                                return view! {
+                                    <div class="rounded-2xl border border-white/10 bg-white/[0.02] p-6 text-sm text-slate-400">
+                                        "Select a fictional sample profile above."
+                                    </div>
+                                }
+                                .into_any();
+                            };
+                            view! {
+                                <AutomatedRoiPanel
+                                    patient=patient
+                                    roi_map=roi_map
+                                />
+                            }
+                            .into_any()
+                        }
+                        PatientTab::You => {
+                            let active_id_you = active_id.clone();
+                            view! {
+                                {move || {
+                                    let Some(patient) = charts.with(|map| map.get(&active_id_you).cloned()) else {
+                                        return view! {
+                                            <div class="rounded-2xl border border-white/10 bg-white/[0.02] p-6 text-sm text-slate-400">
+                                                "Select a fictional sample profile above."
+                                            </div>
+                                        }
+                                        .into_any();
+                                    };
+                                    let state = demo_states.with(|map| {
+                                        map.get(&patient.id)
+                                            .cloned()
+                                            .unwrap_or_else(|| default_patient_demo_state(&patient))
+                                    });
+                                    let patient_allergies = allergies_map
+                                        .with(|map| map.get(&patient.id).cloned().unwrap_or_default());
+                                    let active_thread = threads
+                                        .get()
+                                        .get(&patient.id)
+                                        .filter(|t| !t.turns.is_empty())
+                                        .cloned();
+                                    let cited_ids: HashSet<String> = active_thread
+                                        .as_ref()
+                                        .map(AgentThread::latest_cited_ids)
+                                        .unwrap_or_default();
+                                    let selected_set: HashSet<String> =
+                                        state.selected_record_ids.iter().cloned().collect();
+                                    let selected_count = patient
+                                        .records
+                                        .iter()
+                                        .filter(|r| selected_set.contains(&r.id))
+                                        .count();
+                                    let total_records = patient.records.len();
+                                    let presets = default_patient_questions(&patient.id);
+
+                                    view! {
                                 <div class="space-y-6">
                                     // Summary & Next Visit Card
                                     <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4">
@@ -709,18 +972,46 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         <div class="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-3">
                                             <p class="text-xs text-slate-300">
                                                 {format!(
-                                                    "{} of {} synthetic records selected for your doctor packet.",
+                                                    "{} of {} synthetic records selected for your portable file & doctor packet.",
                                                     selected_count, total_records
                                                 )}
                                             </p>
-                                            <button
-                                                type="button"
-                                                on:click=move |_| active_tab.set(PatientTab::Shared)
-                                                class="inline-flex min-h-[38px] items-center rounded-full border border-emerald-400/40 bg-emerald-500/15 px-4 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
-                                            >
-                                                "Review For My Doctor →"
-                                            </button>
+                                            <div class="flex flex-wrap gap-2">
+                                                <button
+                                                    type="button"
+                                                    on:click=move |_| active_tab.set(PatientTab::Portals)
+                                                    class="inline-flex min-h-[38px] items-center rounded-full border border-cyan-400/40 bg-cyan-500/10 px-3.5 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
+                                                >
+                                                    "Link Doctor Portals →"
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    on:click=move |_| active_tab.set(PatientTab::Shared)
+                                                    class="inline-flex min-h-[38px] items-center rounded-full border border-emerald-400/40 bg-emerald-500/15 px-3.5 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
+                                                >
+                                                    "Save / Share Portable File →"
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    on:click=move |_| active_tab.set(PatientTab::Roi)
+                                                    class="inline-flex min-h-[38px] items-center rounded-full border border-white/15 bg-white/5 px-3.5 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-emerald-400/40 hover:text-white"
+                                                >
+                                                    "Automate ROI Forms →"
+                                                </button>
+                                            </div>
                                         </div>
+                                        {(!patient_allergies.is_empty()).then(|| view! {
+                                            <div class="flex flex-wrap items-center gap-2 border-t border-white/10 pt-3 text-xs">
+                                                <span class="font-semibold uppercase tracking-wider text-rose-300 text-[11px]">
+                                                    "Documented Allergies:"
+                                                </span>
+                                                {patient_allergies.iter().map(|alg| view! {
+                                                    <span class="rounded-full border border-rose-400/35 bg-rose-500/10 px-2.5 py-0.5 text-[11px] text-rose-200">
+                                                        {format!("{} ({})", alg.substance, alg.reaction)}
+                                                    </span>
+                                                }).collect_view()}
+                                            </div>
+                                        })}
                                     </section>
 
                                     // Medications & Conditions
@@ -1006,25 +1297,61 @@ pub fn PatientDemoPage() -> impl IntoView {
                                 </div>
                             }
                             .into_any()
-                        } else {
-                            let active_pid_note = patient.id.clone();
-                            let active_pid_send = patient.id.clone();
-                            let active_pid_withdraw = patient.id.clone();
-                            let active_pid_q = patient.id.clone();
-                            let default_conn = default_patient_demo_state(&patient).connection;
-                            let paused_conn = DemoConnectionState::Paused {
-                                practice_name: "Dabney.moe Synthetic Clinic".into(),
-                            };
-                            let delivery = state.delivery_status;
-                            let can_send = preview.sharing_enabled
-                                && (!preview.shared_records.is_empty()
-                                    || !preview.visit_note.is_empty()
-                                    || !preview.visit_questions.is_empty());
-                            let sent_records_count = preview.shared_records.len();
-                            let sent_questions_count = preview.visit_questions.len();
-
+                                }}
+                            }
+                            .into_any()
+                        }
+                        PatientTab::Shared => {
+                            let active_id_shared = active_id.clone();
                             view! {
+                                {move || {
+                                    let Some(patient) = charts.with(|map| map.get(&active_id_shared).cloned()) else {
+                                        return view! {
+                                            <div class="rounded-2xl border border-white/10 bg-white/[0.02] p-6 text-sm text-slate-400">
+                                                "Select a fictional sample profile above."
+                                            </div>
+                                        }
+                                        .into_any();
+                                    };
+                                    let state = demo_states.with(|map| {
+                                        map.get(&patient.id)
+                                            .cloned()
+                                            .unwrap_or_else(|| default_patient_demo_state(&patient))
+                                    });
+                                    let patient_allergies = allergies_map
+                                        .with(|map| map.get(&patient.id).cloned().unwrap_or_default());
+                                    let patient_portals = linked_portals
+                                        .with(|map| map.get(&patient.id).cloned().unwrap_or_default());
+                                    let preview = build_doctor_share_preview(&patient, &state);
+                                    let active_pid_note = patient.id.clone();
+                                    let active_pid_send = patient.id.clone();
+                                    let active_pid_withdraw = patient.id.clone();
+                                    let active_pid_q = patient.id.clone();
+                                    let default_conn = default_patient_demo_state(&patient).connection;
+                                    let paused_conn = DemoConnectionState::Paused {
+                                        practice_name: "Dabney.moe Synthetic Clinic".into(),
+                                    };
+                                    let delivery = state.delivery_status;
+                                    let can_send = preview.sharing_enabled
+                                        && (!preview.shared_records.is_empty()
+                                            || !preview.visit_note.is_empty()
+                                            || !preview.visit_questions.is_empty());
+                                    let sent_records_count = preview.shared_records.len();
+                                    let sent_questions_count = preview.visit_questions.len();
+
+                                    view! {
                                 <div class="space-y-6">
+                                    // Portable Shareable Health Passport File (persist & share with ANY doctor or person)
+                                    <PortablePassportSection
+                                        patient=patient.clone()
+                                        state=state.clone()
+                                        allergies=patient_allergies
+                                        linked_portals=patient_portals
+                                        audience=passport_audience
+                                        emergency_note=emergency_note
+                                        on_restore_passport=restore_from_passport
+                                    />
+
                                     // Practice Connection Control
                                     <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4">
                                         <div class="flex flex-wrap items-start justify-between gap-3">
@@ -1201,11 +1528,13 @@ pub fn PatientDemoPage() -> impl IntoView {
                                 </div>
                             }
                             .into_any()
-                        }}
-                    </div>
-                }
-                .into_any()
-            }}
+                                }}
+                            }
+                            .into_any()
+                        }
+                    }
+                }}
+            </div>
         </div>
 
         <Footer />
@@ -1246,6 +1575,11 @@ fn PatientRecordCard(
                     <span class=format!("rounded-full border px-2.5 py-0.5 text-[11px] font-semibold {kind_cls}")>
                         {record.kind.label()}
                     </span>
+                    {record.confidentiality.is_part2_sud().then(|| view! {
+                        <span class="rounded-full border border-amber-400/45 bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-200">
+                            {record.confidentiality.short_badge()}
+                        </span>
+                    })}
                     {is_cited.then(|| view! {
                         <span class="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-cyan-200">
                             "Cited"
@@ -1538,7 +1872,9 @@ mod tests {
         assert!(html.contains("Priya Nair"));
         assert!(html.contains("David Okafor"));
         assert!(html.contains("Your Health (You)"));
+        assert!(html.contains("Doctor Portals (EHR)"));
         assert!(html.contains("For My Doctor"));
+        assert!(html.contains("Release of Info (ROI"));
         assert!(html.contains("Private Notes (Never Shared)"));
         assert!(html.contains("Included for doctor"));
         assert!(html.contains("Bounded Agentic Chat Harness (Patient Mode)"));
