@@ -75,7 +75,12 @@ pub fn ToolsMenu() -> impl IntoView {
                     </A>
                     <A href="/mental-health" on:click=close>
                         <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            "Mental Health & Lingo CGM"
+                            "Mental Health & CGM"
+                        </span>
+                    </A>
+                    <A href="/tools/recovery" on:click=close>
+                        <span class="block px-4 py-2 text-emerald-300 transition hover:bg-white/5 hover:text-emerald-200" role="menuitem">
+                            "Recovery Care Finder"
                         </span>
                     </A>
                     <A href="/android" on:click=close>

@@ -912,4 +912,50 @@ mod tests {
         .unwrap();
         assert!(clinical_html.contains("href=\"/android\""));
     }
+
+    #[tokio::test]
+    async fn tools_recovery_page_is_server_rendered_under_tools() {
+        use leptos::prelude::LeptosOptions;
+        use leptos_axum::LeptosRoutes;
+
+        let options = LeptosOptions::builder().output_name("dabney").build();
+        let app = Router::new()
+            .leptos_routes(&options, generate_route_list(App), {
+                let options = options.clone();
+                move || ui::shell(options.clone())
+            })
+            .with_state(options);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/tools/recovery")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let html = String::from_utf8(
+            to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        for expected in [
+            "Recovery &amp; Mental Health Facility Finder",
+            "https://dabney.moe/tools/recovery",
+            "Amenities, Food &amp; Devices",
+            "Staff Licenses",
+            "tel:988",
+            "Colorado",
+            "100% On-Device Search",
+        ] {
+            assert!(
+                html.contains(expected),
+                "missing from /tools/recovery: {expected}"
+            );
+        }
+    }
 }

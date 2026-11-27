@@ -14,6 +14,16 @@ use leptos::prelude::*;
 use leptos_meta::{Link, Meta, Title};
 use leptos_router::components::A;
 
+use crate::chart_citations::{
+    record_anchor_id, scroll_to_record_anchor, CitationAccent, CitationBadgeLink, CitationCardLink,
+    CitationLinkedText,
+};
+#[cfg(any(feature = "csr", feature = "hydrate"))]
+use crate::dashboard_layout::{load_layout_prefs, save_layout_prefs, STORAGE_KEY_PHYSICIAN_LAYOUT};
+use crate::dashboard_layout::{
+    LayoutDensity, PhysicianFocusOrder, PhysicianLayoutCustomizer, PhysicianLayoutPrefs,
+    SidebarPlacement,
+};
 use crate::health_bridge::LocalLlmStatusUi;
 #[cfg(any(feature = "csr", feature = "hydrate"))]
 use crate::health_bridge::{
@@ -372,9 +382,28 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
     let panel = StoredValue::new(synthetic_panel());
     let overview = today_overview();
     let app_mode = use_context::<AppShellMode>().unwrap_or(AppShellMode::Website);
-    let container_cls = match app_mode {
-        AppShellMode::Website => "mx-auto max-w-6xl px-6 py-10 space-y-6",
-        AppShellMode::ClinicalDemoApp => "mx-auto max-w-6xl px-4 pt-5 pb-28 sm:px-6 space-y-5",
+    let layout_prefs = RwSignal::new(PhysicianLayoutPrefs::default());
+    let layout_open = RwSignal::new(false);
+    let layout_notice = RwSignal::new(Option::<String>::None);
+
+    #[cfg(any(feature = "csr", feature = "hydrate"))]
+    Effect::new(move |_| {
+        if let Some(saved) = load_layout_prefs::<PhysicianLayoutPrefs>(STORAGE_KEY_PHYSICIAN_LAYOUT)
+        {
+            layout_prefs.set(saved);
+        }
+    });
+
+    let container_cls = move || {
+        let prefs = layout_prefs.get();
+        let width = prefs.density.container_width_class();
+        let gap = prefs.density.stack_gap_class();
+        match app_mode {
+            AppShellMode::Website => format!("mx-auto {width} px-6 py-10 {gap}"),
+            AppShellMode::ClinicalDemoApp => {
+                format!("mx-auto {width} px-4 pt-5 pb-28 sm:px-6 {gap}")
+            }
+        }
     };
 
     let (initial_id, initial_question, initial_answer, initial_draft_states, initial_draft_texts) =
@@ -401,7 +430,9 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
         });
 
     let selected_id = RwSignal::new(initial_id);
+    let focused_record_id = RwSignal::new(Option::<String>::None);
     let panel_filter = RwSignal::new(PanelFilter::All);
+    let panel_search = RwSignal::new(String::new());
     let question_input = RwSignal::new(initial_question);
     let latest_answer = RwSignal::new(initial_answer);
     let draft_states = RwSignal::new(initial_draft_states);
@@ -449,6 +480,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
         llm_req_seq.update(|n| *n += 1);
         llm_thinking.set(false);
         llm_error.set(None);
+        focused_record_id.set(None);
         selected_id.set(patient_id.clone());
         let default_q = preset_questions_for_patient(&patient_id)
             .first()
@@ -464,6 +496,23 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
         });
         latest_answer.set(next_answer);
     };
+
+    let jump_to_record = Callback::new(move |record_id: String| {
+        let mut prefs = layout_prefs.get_untracked();
+        if !prefs.show_source_records {
+            prefs.preset = None;
+            prefs.show_source_records = true;
+            #[cfg(any(feature = "csr", feature = "hydrate"))]
+            save_layout_prefs(STORAGE_KEY_PHYSICIAN_LAYOUT, &prefs);
+            layout_prefs.set(prefs);
+        }
+        focused_record_id.set(Some(record_id.clone()));
+        scroll_to_record_anchor(&record_anchor_id("chart-record", &record_id));
+    });
+
+    let clear_focused_record = Callback::new(move |()| {
+        focused_record_id.set(None);
+    });
 
     let ask_question = move |raw_q: String| {
         let trimmed = raw_q.trim().to_string();
@@ -660,25 +709,141 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                         }
                     })
                     .collect_view()}
+                    {move || {
+                        (layout_prefs.get().sidebar == SidebarPlacement::Hidden).then(|| {
+                            view! {
+                                <button
+                                    type="button"
+                                    on:click=move |_| {
+                                        let mut next = layout_prefs.get();
+                                        next.preset = None;
+                                        next.sidebar = SidebarPlacement::Left;
+                                        #[cfg(any(feature = "csr", feature = "hydrate"))]
+                                        save_layout_prefs(STORAGE_KEY_PHYSICIAN_LAYOUT, &next);
+                                        layout_prefs.set(next);
+                                    }
+                                    class="min-h-[34px] rounded-full border border-emerald-400/40 bg-emerald-500/15 px-3 py-1 font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
+                                >
+                                    "Show Patient Panel"
+                                </button>
+                            }
+                        })
+                    }}
+                    <button
+                        type="button"
+                        aria-expanded=move || layout_open.get().to_string()
+                        on:click=move |_| layout_open.update(|v| *v = !*v)
+                        class=move || {
+                            if layout_open.get() {
+                                "min-h-[34px] rounded-full border border-cyan-400/60 bg-cyan-500/20 px-3 py-1 font-semibold text-cyan-100 transition"
+                            } else {
+                                "min-h-[34px] rounded-full border border-white/15 bg-slate-950/60 px-3 py-1 font-medium text-slate-200 transition hover:border-cyan-400/40 hover:text-white"
+                            }
+                        }
+                    >
+                        {move || format!("Layout: {} ▾", layout_prefs.get().active_label())}
+                    </button>
                 </div>
             </section>
 
+            <PhysicianLayoutCustomizer
+                prefs=layout_prefs
+                open=layout_open
+                saved_notice=layout_notice
+            />
+
+            // Compact horizontal patient switcher when sidebar is tucked away in Full-Width / Calm Reading layout
+            {move || {
+                (layout_prefs.get().sidebar == SidebarPlacement::Hidden).then(|| {
+                    panel.with_value(|charts| {
+                        view! {
+                            <nav
+                                aria-label="Quick patient switcher"
+                                class="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-2.5 text-xs"
+                            >
+                                <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                                    "Patient:"
+                                </span>
+                                {charts
+                                    .iter()
+                                    .map(|p| {
+                                        let pid_click = p.id.clone();
+                                        let pid_active = p.id.clone();
+                                        let pid_cls = p.id.clone();
+                                        let label = p.display_name.clone();
+                                        view! {
+                                            <button
+                                                type="button"
+                                                aria-pressed=move || selected_id.get() == pid_active
+                                                on:click=move |_| select_patient(pid_click.clone())
+                                                class=move || {
+                                                    if selected_id.get() == pid_cls {
+                                                        "min-h-[34px] rounded-full bg-cyan-400 px-3 py-1 font-semibold text-slate-950 transition"
+                                                    } else {
+                                                        "min-h-[34px] rounded-full border border-white/15 bg-slate-950/60 px-3 py-1 text-slate-200 transition hover:border-white/30 hover:text-white"
+                                                    }
+                                                }
+                                            >
+                                                {label}
+                                            </button>
+                                        }
+                                    })
+                                    .collect_view()}
+                            </nav>
+                        }
+                    })
+                })
+            }}
+
             // Main workspace: Single authoritative Patient Panel + Selected patient chart
             <div class="grid gap-6 lg:grid-cols-12">
-                // Left sidebar: Clickable patient panel selector
-                <aside class="lg:col-span-4 space-y-3">
+                // Patient panel sidebar (left, right, or tucked away per user layout preference)
+                <aside class=move || match layout_prefs.get().sidebar {
+                    SidebarPlacement::Left => {
+                        "lg:col-span-4 space-y-3 lg:sticky lg:top-[132px] lg:self-start"
+                    }
+                    SidebarPlacement::Right => {
+                        "lg:col-span-4 lg:order-last space-y-3 lg:sticky lg:top-[132px] lg:self-start"
+                    }
+                    SidebarPlacement::Hidden => "hidden",
+                }>
                     <div class="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-                        <h2 class="mb-3 text-xs font-semibold uppercase tracking-widest text-slate-400">
-                            "Patient Panel"
-                        </h2>
+                        <div class="mb-3 flex items-center justify-between gap-2">
+                            <h2 class="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                                "Patient Panel"
+                            </h2>
+                            <span class="text-[11px] text-slate-500">{format!("{total_patients} total")}</span>
+                        </div>
+                        <div class="mb-3">
+                            <label for="physician-panel-search" class="sr-only">
+                                "Filter patients by name, MRN, or focus"
+                            </label>
+                            <input
+                                id="physician-panel-search"
+                                type="search"
+                                placeholder="Find patient by name, MRN, or focus…"
+                                prop:value=move || panel_search.get()
+                                on:input=move |ev| panel_search.set(event_target_value(&ev))
+                                class="min-h-[38px] w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-cyan-400 focus:outline-none"
+                            />
+                        </div>
                         <div class="space-y-2.5">
                             {move || {
                                 let active_filter = panel_filter.get();
+                                let search_q = panel_search.get().trim().to_lowercase();
                                 let states_map = draft_states.get();
                                 panel.with_value(|charts| {
                                     let visible: Vec<&PatientChart> = charts
                                         .iter()
                                         .filter(|p| active_filter.matches(p))
+                                        .filter(|p| {
+                                            if search_q.is_empty() {
+                                                return true;
+                                            }
+                                            p.display_name.to_lowercase().contains(&search_q)
+                                                || p.mrn.to_lowercase().contains(&search_q)
+                                                || p.primary_focus.to_lowercase().contains(&search_q)
+                                        })
                                         .collect();
                                     if visible.is_empty() {
                                         return view! {
@@ -771,8 +936,14 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                     </div>
                 </aside>
 
-                // Right column: Selected patient chart & grounded Q&A
-                <section class="lg:col-span-8 space-y-6">
+                // Selected patient chart & grounded Q&A
+                <section class=move || {
+                    if layout_prefs.get().sidebar == SidebarPlacement::Hidden {
+                        "lg:col-span-12"
+                    } else {
+                        "lg:col-span-8"
+                    }
+                }>
                     {move || {
                         let active_id = selected_id.get();
                         let active_patient: Option<PatientChart> = panel.with_value(|charts| {
@@ -797,10 +968,45 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                         let presets = preset_questions_for_patient(&patient.id);
                         let urgency_cls = urgency_badge_class(patient.urgency);
 
+                        let has_reply_draft = patient.reply_draft.is_some();
+                        let rec_total = patient.records.len();
+
                         view! {
-                            <div class="space-y-6">
+                            <div class=move || {
+                                let gap = match layout_prefs.get().density {
+                                    LayoutDensity::Compact => "gap-4",
+                                    LayoutDensity::Balanced => "gap-6",
+                                    LayoutDensity::Spacious => "gap-8",
+                                };
+                                format!("flex flex-col {gap}")
+                            }>
+                                // Quick in-chart jump bar
+                                <nav
+                                    aria-label="Chart sections"
+                                    class="order-1 flex flex-wrap items-center gap-1.5 rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-xs"
+                                >
+                                    <span class="pr-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                                        "Jump to:"
+                                    </span>
+                                    <a href="#chart-summary" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-cyan-400/40 hover:text-white">"Summary"</a>
+                                    {move || layout_prefs.get().show_qa.then(|| view! {
+                                        <a href="#chart-qa" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-cyan-400/40 hover:text-white">"Chart Q&A"</a>
+                                    })}
+                                    {move || layout_prefs.get().show_clinical_grid.then(|| view! {
+                                        <a href="#chart-clinical" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-emerald-400/40 hover:text-white">"Problems & Meds"</a>
+                                    })}
+                                    {move || (has_reply_draft && layout_prefs.get().show_reply_draft).then(|| view! {
+                                        <a href="#chart-reply" class="rounded-full border border-amber-400/30 bg-amber-500/10 px-2.5 py-1 font-medium text-amber-200 transition hover:bg-amber-500/20">"Proposed Reply"</a>
+                                    })}
+                                    {move || layout_prefs.get().show_source_records.then(|| view! {
+                                        <a href="#chart-records" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-white/30 hover:text-white">
+                                            {format!("Source Records ({rec_total})")}
+                                        </a>
+                                    })}
+                                </nav>
+
                                 // Selected patient header
-                                <div class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
+                                <div id="chart-summary" class="order-2 scroll-mt-32 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
                                     <div class="flex flex-wrap items-start justify-between gap-4">
                                         <div>
                                             <div class="flex flex-wrap items-center gap-2.5">
@@ -831,7 +1037,18 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                 </div>
 
                                 // Interactive Chart-Grounded Q&A
-                                <div class="rounded-2xl border border-cyan-400/25 bg-slate-900/50 p-6 space-y-4">
+                                <div
+                                    id="chart-qa"
+                                    class=move || {
+                                        let prefs = layout_prefs.get();
+                                        let vis = if prefs.show_qa { "" } else { "hidden " };
+                                        let ord = match prefs.order {
+                                            PhysicianFocusOrder::QaFirst => "order-3",
+                                            PhysicianFocusOrder::ClinicalFirst => "order-4",
+                                        };
+                                        format!("{vis}{ord} scroll-mt-32 rounded-2xl border border-cyan-400/25 bg-slate-900/50 p-6 space-y-4")
+                                    }
+                                >
                                     <div>
                                         <p class="text-xs font-semibold uppercase tracking-widest text-cyan-400">
                                             "Chart-Grounded Q&A"
@@ -921,12 +1138,32 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                     })}
 
                                     <div aria-live="polite">
-                                        {active_answer.map(|ans| view! { <GroundedAnswerView answer=ans /> })}
+                                        {active_answer.map(|ans| {
+                                            let records = patient.records.clone();
+                                            view! {
+                                                <GroundedAnswerView
+                                                    answer=ans
+                                                    records=records
+                                                    on_select_record=jump_to_record
+                                                />
+                                            }
+                                        })}
                                     </div>
                                 </div>
 
                                 // Problems, Medications, Follow-ups
-                                <div class="grid gap-4 md:grid-cols-3">
+                                <div
+                                    id="chart-clinical"
+                                    class=move || {
+                                        let prefs = layout_prefs.get();
+                                        let vis = if prefs.show_clinical_grid { "" } else { "hidden " };
+                                        let ord = match prefs.order {
+                                            PhysicianFocusOrder::QaFirst => "order-4",
+                                            PhysicianFocusOrder::ClinicalFirst => "order-3",
+                                        };
+                                        format!("{vis}{ord} scroll-mt-32 grid gap-4 md:grid-cols-3")
+                                    }
+                                >
                                     <div class="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
                                         <h3 class="text-xs font-semibold uppercase tracking-widest text-cyan-300">
                                             "Problems"
@@ -1017,18 +1254,41 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                 // Optional reviewable draft reply card (per-patient state & editable text persisted across patient switches)
                                 {patient.reply_draft.clone().map(|draft| {
                                     let pid = patient.id.clone();
+                                    let records = patient.records.clone();
                                     view! {
-                                        <ReplyDraftCard
-                                            patient_id=pid
-                                            draft=draft
-                                            states=draft_states
-                                            texts=draft_texts
-                                        />
+                                        <div
+                                            id="chart-reply"
+                                            class=move || {
+                                                if layout_prefs.get().show_reply_draft {
+                                                    "order-5 scroll-mt-32"
+                                                } else {
+                                                    "hidden"
+                                                }
+                                            }
+                                        >
+                                            <ReplyDraftCard
+                                                patient_id=pid
+                                                draft=draft
+                                                records=records
+                                                on_select_record=jump_to_record
+                                                states=draft_states
+                                                texts=draft_texts
+                                            />
+                                        </div>
                                     }
                                 })}
 
                                 // Longitudinal source records
-                                <div class="rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-4">
+                                <div
+                                    id="chart-records"
+                                    class=move || {
+                                        if layout_prefs.get().show_source_records {
+                                            "order-6 scroll-mt-32 rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-4"
+                                        } else {
+                                            "hidden"
+                                        }
+                                    }
+                                >
                                     <div class="flex flex-wrap items-center justify-between gap-2">
                                         <div>
                                             <h3 class="text-lg font-semibold text-white">
@@ -1048,7 +1308,24 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                             .into_iter()
                                             .map(|rec| {
                                                 let is_cited = cited_ids.contains(&rec.id);
-                                                view! { <SourceRecordCard record=rec is_cited=is_cited /> }
+                                                let rec_id = rec.id.clone();
+                                                let is_focused = Memo::new(move |_| {
+                                                    focused_record_id.with(|f| {
+                                                        f.as_deref() == Some(rec_id.as_str())
+                                                    })
+                                                });
+                                                view! {
+                                                    {move || {
+                                                        view! {
+                                                            <SourceRecordCard
+                                                                record=rec.clone()
+                                                                is_cited=is_cited
+                                                                is_focused=is_focused.get()
+                                                                on_clear_focus=clear_focused_record
+                                                            />
+                                                        }
+                                                    }}
+                                                }
                                             })
                                             .collect_view()}
                                     </div>
@@ -1066,7 +1343,18 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
 }
 
 #[component]
-fn GroundedAnswerView(answer: ChatAnswer) -> impl IntoView {
+fn GroundedAnswerView(
+    answer: ChatAnswer,
+    records: Vec<ChartRecord>,
+    on_select_record: Callback<String>,
+) -> impl IntoView {
+    let record_map: HashMap<String, ChartRecord> = records
+        .iter()
+        .cloned()
+        .map(|rec| (rec.id.clone(), rec))
+        .collect();
+    let records_for_basis = records.clone();
+
     view! {
         <div class="rounded-xl border border-white/10 bg-slate-950/80 p-4 space-y-4">
             <div class="flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-3">
@@ -1078,9 +1366,14 @@ fn GroundedAnswerView(answer: ChatAnswer) -> impl IntoView {
                 </span>
             </div>
 
-            <p class="whitespace-pre-line text-sm leading-relaxed text-slate-200">
-                {answer.answer}
-            </p>
+            <CitationLinkedText
+                text=answer.answer
+                records=records
+                anchor_prefix="chart-record"
+                accent=CitationAccent::Cyan
+                on_select=on_select_record
+                class="text-sm leading-relaxed text-slate-200"
+            />
 
             <div class="space-y-2.5">
                 <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
@@ -1091,36 +1384,30 @@ fn GroundedAnswerView(answer: ChatAnswer) -> impl IntoView {
                         .citations
                         .into_iter()
                         .map(|cite| {
-                            let kind_cls = record_kind_badge_class(cite.kind);
+                            let matching_record = record_map.get(&cite.record_id).cloned();
                             view! {
-                                <div class="rounded-xl border border-cyan-400/40 bg-cyan-500/[0.08] p-3">
-                                    <div class="flex flex-wrap items-center justify-between gap-1.5">
-                                        <span class="rounded bg-cyan-500/20 px-2 py-0.5 font-mono text-[11px] font-semibold text-cyan-200">
-                                            {cite.record_id}
-                                        </span>
-                                        <span class=format!("rounded-full border px-2 py-0.5 text-[10px] font-semibold {kind_cls}")>
-                                            {cite.kind.label()}
-                                        </span>
-                                    </div>
-                                    <p class="mt-1.5 text-xs font-semibold text-white">
-                                        {cite.title}
-                                        <span class="ml-1.5 font-mono font-normal text-slate-400">
-                                            {cite.recorded_at}
-                                        </span>
-                                    </p>
-                                    <p class="mt-1 text-xs leading-relaxed text-slate-300">
-                                        {cite.excerpt}
-                                    </p>
-                                </div>
+                                <CitationCardLink
+                                    citation=cite
+                                    record=matching_record
+                                    anchor_prefix="chart-record"
+                                    accent=CitationAccent::Cyan
+                                    on_select=on_select_record
+                                />
                             }
                         })
                         .collect_view()}
                 </div>
             </div>
 
-            <p class="border-t border-white/5 pt-2.5 font-mono text-[11px] text-slate-400">
-                {answer.basis}
-            </p>
+            <div class="border-t border-white/5 pt-2.5 font-mono text-[11px] text-slate-400">
+                <CitationLinkedText
+                    text=answer.basis
+                    records=records_for_basis
+                    anchor_prefix="chart-record"
+                    accent=CitationAccent::Cyan
+                    on_select=on_select_record
+                />
+            </div>
         </div>
     }
 }
@@ -1129,10 +1416,16 @@ fn GroundedAnswerView(answer: ChatAnswer) -> impl IntoView {
 fn ReplyDraftCard(
     patient_id: String,
     draft: ReplyDraft,
+    records: Vec<ChartRecord>,
+    on_select_record: Callback<String>,
     states: RwSignal<HashMap<String, DraftReviewState>>,
     texts: RwSignal<HashMap<String, String>>,
 ) -> impl IntoView {
     let original_reply = draft.proposed_reply.clone();
+    let message_record = records
+        .iter()
+        .find(|rec| rec.id == draft.message_record_id)
+        .cloned();
     let pid_state = patient_id.clone();
     let pid_text = patient_id.clone();
     let pid_edited = patient_id.clone();
@@ -1176,7 +1469,21 @@ fn ReplyDraftCard(
                     </p>
                     <p class="mt-0.5 text-xs text-slate-400">
                         "In response to message "
-                        <span class="font-mono text-amber-200">{draft.message_record_id}</span>
+                        {match message_record {
+                            Some(rec) => view! {
+                                <CitationBadgeLink
+                                    record=rec
+                                    anchor_prefix="chart-record"
+                                    accent=CitationAccent::Cyan
+                                    on_select=on_select_record
+                                />
+                            }
+                            .into_any(),
+                            None => view! {
+                                <span class="font-mono text-amber-200">{draft.message_record_id}</span>
+                            }
+                            .into_any(),
+                        }}
                         " — clinician review and editing required; never auto-sent."
                     </p>
                 </div>
@@ -1228,7 +1535,14 @@ fn ReplyDraftCard(
                 />
             </label>
 
-            <p class="font-mono text-[11px] text-slate-400">{draft.basis}</p>
+            <CitationLinkedText
+                text=draft.basis
+                records=records
+                anchor_prefix="chart-record"
+                accent=CitationAccent::Cyan
+                on_select=on_select_record
+                class="font-mono text-[11px] text-slate-400"
+            />
 
             <div class="flex flex-wrap gap-2 pt-1">
                 <button
@@ -1277,21 +1591,29 @@ fn ReplyDraftCard(
 }
 
 #[component]
-fn SourceRecordCard(record: ChartRecord, is_cited: bool) -> impl IntoView {
+fn SourceRecordCard(
+    record: ChartRecord,
+    is_cited: bool,
+    is_focused: bool,
+    on_clear_focus: Callback<()>,
+) -> impl IntoView {
+    let anchor_id = record_anchor_id("chart-record", &record.id);
     let kind_cls = record_kind_badge_class(record.kind);
-    let container_cls = if is_cited {
-        "rounded-xl border border-cyan-400/60 bg-cyan-500/[0.08] p-4 ring-1 ring-cyan-400/25 transition"
+    let container_cls = if is_focused {
+        "scroll-mt-32 rounded-xl border border-cyan-300 bg-cyan-500/[0.12] p-4 ring-2 ring-cyan-400/80 shadow-lg shadow-cyan-500/10 transition"
+    } else if is_cited {
+        "scroll-mt-32 rounded-xl border border-cyan-400/60 bg-cyan-500/[0.08] p-4 ring-1 ring-cyan-400/25 transition"
     } else {
-        "rounded-xl border border-white/10 bg-slate-950/60 p-4 transition"
+        "scroll-mt-32 rounded-xl border border-white/10 bg-slate-950/60 p-4 transition"
     };
-    let id_badge_cls = if is_cited {
+    let id_badge_cls = if is_focused || is_cited {
         "rounded bg-cyan-500/25 px-2 py-0.5 font-mono text-xs font-semibold text-cyan-200"
     } else {
         "rounded bg-white/5 px-2 py-0.5 font-mono text-xs font-medium text-slate-300"
     };
 
     view! {
-        <article class=container_cls>
+        <article id=anchor_id class=container_cls>
             <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="flex flex-wrap items-center gap-2">
                     <span class=id_badge_cls>{record.id}</span>
@@ -1303,10 +1625,34 @@ fn SourceRecordCard(record: ChartRecord, is_cited: bool) -> impl IntoView {
                             "Cited in answer"
                         </span>
                     })}
+                    {is_focused.then(|| view! {
+                        <span class="rounded-full border border-cyan-300/60 bg-cyan-400/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-cyan-100">
+                            "Focused from citation"
+                        </span>
+                    })}
                 </div>
-                <span class="font-mono text-xs text-slate-400">
-                    {format!("{} · {}", record.recorded_at, record.source_label)}
-                </span>
+                <div class="flex flex-wrap items-center gap-2">
+                    {is_focused.then(|| view! {
+                        <div class="flex items-center gap-1.5">
+                            <a
+                                href="#chart-qa"
+                                class="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-cyan-200 transition hover:border-cyan-300 hover:bg-cyan-500/25 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                            >
+                                "Back to Q&A ↑"
+                            </a>
+                            <button
+                                type="button"
+                                on:click=move |_| on_clear_focus.run(())
+                                class="rounded-full border border-white/15 bg-slate-950/70 px-2.5 py-0.5 text-[11px] font-medium text-slate-200 transition hover:border-white/30 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                            >
+                                "Clear"
+                            </button>
+                        </div>
+                    })}
+                    <span class="font-mono text-xs text-slate-400">
+                        {format!("{} · {}", record.recorded_at, record.source_label)}
+                    </span>
+                </div>
             </div>
 
             <h4 class="mt-2.5 text-sm font-semibold text-white">{record.title}</h4>
@@ -1417,6 +1763,18 @@ mod tests {
         assert!(html.contains("Metformin ER"));
         assert!(html.contains("Cited in answer"));
         assert!(html.contains("Reviewable Patient Reply Draft"));
+        assert!(html.contains("href=\"#chart-record-nk-cgm-01\""));
+        assert!(html.contains("href=\"#chart-record-nk-lab-02\""));
+        assert!(html.contains("href=\"#chart-record-nk-msg-03\""));
+        assert!(html.contains("id=\"chart-record-nk-cgm-01\""));
+        assert!(html.contains("id=\"chart-record-nk-lab-02\""));
+        assert!(html.contains("id=\"chart-record-nk-msg-03\""));
+        assert!(html.contains("role=\"tooltip\""));
+        assert!(html.contains("aria-describedby=\"cite-tip-"));
+        assert!(html.contains("Jump to source record ↓"));
+        assert!(!html.contains("href=\"#chart-record-cm-lab-02\""));
+        assert!(!html.contains("href=\"#chart-record-pn-note-01\""));
+        assert!(!html.contains("href=\"#chart-record-do-img-01\""));
         for legacy_brand in [
             ["co", "da"].concat(),
             ["du", "et"].concat(),
@@ -1427,5 +1785,51 @@ mod tests {
                 "physician workspace HTML must not contain legacy brand string: {legacy_brand}"
             );
         }
+    }
+
+    #[test]
+    fn source_record_card_renders_anchor_and_focused_controls() {
+        let record = synthetic_panel()
+            .into_iter()
+            .next()
+            .and_then(|chart| chart.records.into_iter().next())
+            .expect("nadia primary record");
+
+        let rec_focused = record.clone();
+        let focused_html = render_in_app_context("/clinical/physician", move || {
+            let on_clear = Callback::new(|()| {});
+            view! {
+                <SourceRecordCard
+                    record=rec_focused
+                    is_cited=true
+                    is_focused=true
+                    on_clear_focus=on_clear
+                />
+            }
+            .into_any()
+        });
+        assert!(focused_html.contains("id=\"chart-record-nk-cgm-01\""));
+        assert!(focused_html.contains("scroll-mt-32"));
+        assert!(focused_html.contains("ring-cyan-400/80"));
+        assert!(focused_html.contains("Focused from citation"));
+        assert!(focused_html.contains("href=\"#chart-qa\""));
+        assert!(focused_html.contains("Back to Q&A ↑"));
+        assert!(focused_html.contains("Clear"));
+
+        let unfocused_html = render_in_app_context("/clinical/physician", move || {
+            let on_clear = Callback::new(|()| {});
+            view! {
+                <SourceRecordCard
+                    record=record
+                    is_cited=false
+                    is_focused=false
+                    on_clear_focus=on_clear
+                />
+            }
+            .into_any()
+        });
+        assert!(unfocused_html.contains("id=\"chart-record-nk-cgm-01\""));
+        assert!(!unfocused_html.contains("Focused from citation"));
+        assert!(!unfocused_html.contains("Back to Q&A ↑"));
     }
 }

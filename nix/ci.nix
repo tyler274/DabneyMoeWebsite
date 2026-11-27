@@ -28,6 +28,9 @@ pkgs.writeShellApplication {
     echo "==> clippy: clinical-workspace (ssr + wasm32)"
     cargo clippy -p clinical-workspace --features ssr -- -D warnings
     cargo clippy -p clinical-workspace --target wasm32-unknown-unknown -- -D warnings
+    echo "==> clippy: recovery-index (cli + wasm32)"
+    cargo clippy -p recovery-index --features cli -- -D warnings
+    cargo clippy -p recovery-index --target wasm32-unknown-unknown -- -D warnings
     echo "==> clippy: ui (ssr)"
     cargo clippy -p ui --features ssr -- -D warnings
     echo "==> clippy: web (ssr)"
@@ -41,6 +44,8 @@ pkgs.writeShellApplication {
 
     echo "==> test: clinical-workspace (ssr)"
     cargo test -p clinical-workspace --features ssr
+    echo "==> test: recovery-index (cli)"
+    cargo test -p recovery-index --features cli
     echo "==> test: ui (data + ssr render)"
     cargo test -p ui --features ssr
     echo "==> test: web (ssr route list)"

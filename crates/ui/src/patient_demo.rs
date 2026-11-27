@@ -16,6 +16,16 @@ use leptos_meta::{Link, Meta, Title};
 use leptos_router::components::A;
 use leptos_router::hooks::use_location;
 
+use crate::chart_citations::{
+    record_anchor_id, scroll_to_record_anchor, CitationAccent, CitationBadgeLink, CitationCardLink,
+    CitationLinkedText,
+};
+#[cfg(any(feature = "csr", feature = "hydrate"))]
+use crate::dashboard_layout::{load_layout_prefs, STORAGE_KEY_PATIENT_LAYOUT};
+use crate::dashboard_layout::{
+    LayoutDensity, PatientLayoutCustomizer, PatientLayoutPrefs, PatientSectionOrder,
+    PatientStartTab,
+};
 use crate::health_bridge::LocalLlmStatusUi;
 #[cfg(any(feature = "csr", feature = "hydrate"))]
 use crate::health_bridge::{
@@ -44,12 +54,20 @@ const fn record_kind_badge_class(kind: RecordKind) -> &'static str {
     }
 }
 
-/// Compact clinical demo suite switcher shared across `/clinical`,
+/// Sticky clinical suite switcher shared across `/clinical`,
 /// `/clinical/patient`, `/clinical/physician`, and `/mental-health`.
 #[component]
 pub fn ClinicalSuiteSwitcher() -> impl IntoView {
     let location = use_location();
     let app_mode = use_context::<AppShellMode>().unwrap_or(AppShellMode::Website);
+
+    let is_recovery_tab = move || {
+        let search = location.search.get();
+        search
+            .trim_start_matches('?')
+            .split('&')
+            .any(|pair| pair == "tab=recovery")
+    };
 
     let is_active = move |target: &'static str| {
         let path = location.pathname.get();
@@ -57,6 +75,10 @@ pub fn ClinicalSuiteSwitcher() -> impl IntoView {
         let normalized = if trimmed.is_empty() { "/" } else { trimmed };
         if target == "/clinical/patient" && app_mode == AppShellMode::ClinicalDemoApp {
             normalized == "/" || normalized == "/clinical/patient"
+        } else if target == "/mental-health?tab=recovery" {
+            normalized == "/mental-health" && is_recovery_tab()
+        } else if target == "/mental-health" {
+            normalized == "/mental-health" && !is_recovery_tab()
         } else {
             normalized == target
         }
@@ -64,9 +86,9 @@ pub fn ClinicalSuiteSwitcher() -> impl IntoView {
 
     let tab_class = move |target: &'static str| {
         if is_active(target) {
-            "inline-flex min-h-[38px] items-center rounded-full border border-emerald-400/50 bg-emerald-500/15 px-3.5 py-1.5 text-xs font-semibold text-emerald-200 transition"
+            "inline-flex min-h-[38px] shrink-0 items-center rounded-full border border-emerald-400/50 bg-emerald-500/15 px-3.5 py-1.5 text-xs font-semibold text-emerald-200 transition"
         } else {
-            "inline-flex min-h-[38px] items-center rounded-full border border-white/10 bg-slate-950/60 px-3.5 py-1.5 text-xs font-medium text-slate-300 transition hover:border-white/25 hover:text-white"
+            "inline-flex min-h-[38px] shrink-0 items-center rounded-full border border-white/10 bg-slate-950/60 px-3.5 py-1.5 text-xs font-medium text-slate-300 transition hover:border-white/25 hover:text-white"
         }
     };
 
@@ -79,18 +101,41 @@ pub fn ClinicalSuiteSwitcher() -> impl IntoView {
     view! {
         <nav
             aria-label="Clinical demo suite"
-            class="print-hide print:hidden flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.02] p-2"
+            class="print-hide print:hidden sticky top-[61px] z-30 flex items-center gap-2 overflow-x-auto rounded-2xl border border-white/10 bg-slate-950/85 p-2 shadow-lg shadow-slate-950/40 backdrop-blur"
         >
-            <A href=patient_href attr:class=move || tab_class("/clinical/patient")>
+            <A
+                href=patient_href
+                attr:class=move || tab_class("/clinical/patient")
+                attr:aria-current=move || is_active("/clinical/patient").then_some("page")
+            >
                 "Curie Mobile (Patient)"
             </A>
-            <A href="/clinical/physician" attr:class=move || tab_class("/clinical/physician")>
+            <A
+                href="/clinical/physician"
+                attr:class=move || tab_class("/clinical/physician")
+                attr:aria-current=move || is_active("/clinical/physician").then_some("page")
+            >
                 "Curie Clinic (Physician)"
             </A>
-            <A href="/mental-health" attr:class=move || tab_class("/mental-health")>
+            <A
+                href="/mental-health"
+                attr:class=move || tab_class("/mental-health")
+                attr:aria-current=move || is_active("/mental-health").then_some("page")
+            >
                 "Mental Health & CGM"
             </A>
-            <A href="/clinical" attr:class=move || tab_class("/clinical")>
+            <A
+                href="/mental-health?tab=recovery"
+                attr:class=move || tab_class("/mental-health?tab=recovery")
+                attr:aria-current=move || is_active("/mental-health?tab=recovery").then_some("page")
+            >
+                "Recovery Care Finder"
+            </A>
+            <A
+                href="/clinical"
+                attr:class=move || tab_class("/clinical")
+                attr:aria-current=move || is_active("/clinical").then_some("page")
+            >
                 "Suite Overview"
             </A>
         </nav>
@@ -125,6 +170,10 @@ pub fn PatientDemoPage() -> impl IntoView {
 
     let selected_id = RwSignal::new(initial_id);
     let active_tab = RwSignal::new(PatientTab::You);
+    let focused_record_id = RwSignal::new(Option::<String>::None);
+    let layout_prefs = RwSignal::new(PatientLayoutPrefs::default());
+    let layout_open = RwSignal::new(false);
+    let layout_notice = RwSignal::new(Option::<String>::None);
     let demo_states = RwSignal::new(initial_states);
     let question_input = RwSignal::new(initial_question);
     let latest_answer = RwSignal::new(initial_answer);
@@ -145,6 +194,14 @@ pub fn PatientDemoPage() -> impl IntoView {
     Effect::new(move |_| {
         #[cfg(any(feature = "csr", feature = "hydrate"))]
         {
+            if let Some(saved) = load_layout_prefs::<PatientLayoutPrefs>(STORAGE_KEY_PATIENT_LAYOUT)
+            {
+                active_tab.set(match saved.start_tab {
+                    PatientStartTab::You => PatientTab::You,
+                    PatientStartTab::Shared => PatientTab::Shared,
+                });
+                layout_prefs.set(saved);
+            }
             probe_local_llm(move |status| {
                 llm_status.set(Some(status));
             });
@@ -201,6 +258,7 @@ pub fn PatientDemoPage() -> impl IntoView {
         llm_req_seq.update(|n| *n += 1);
         llm_thinking.set(false);
         llm_error.set(None);
+        focused_record_id.set(None);
         selected_id.set(patient_id.clone());
         let default_q = default_patient_questions(&patient_id)
             .first()
@@ -310,6 +368,7 @@ pub fn PatientDemoPage() -> impl IntoView {
 
     let reset_active_demo = move |_| {
         let active_id = selected_id.get();
+        focused_record_id.set(None);
         let default_state = panel.with_value(|charts| {
             charts
                 .iter()
@@ -322,6 +381,12 @@ pub fn PatientDemoPage() -> impl IntoView {
             });
         }
     };
+
+    let jump_to_record = Callback::new(move |record_id: String| {
+        active_tab.set(PatientTab::You);
+        focused_record_id.set(Some(record_id.clone()));
+        scroll_to_record_anchor(&record_anchor_id("patient-record", &record_id));
+    });
 
     let on_submit_question = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
@@ -415,7 +480,14 @@ pub fn PatientDemoPage() -> impl IntoView {
 
         <NavBar />
 
-        <div class="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-10 space-y-6">
+        <div class=move || {
+            let prefs = layout_prefs.get();
+            format!(
+                "mx-auto {} px-4 py-6 sm:px-6 sm:py-10 {}",
+                prefs.density.container_width_class(),
+                prefs.density.stack_gap_class()
+            )
+        }>
             // Top Header
             <header class="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-5">
                 <div class="flex items-center gap-3.5">
@@ -488,13 +560,29 @@ pub fn PatientDemoPage() -> impl IntoView {
                     <h2 class="text-xs font-semibold uppercase tracking-widest text-slate-300">
                         "Choose a Fictional Sample Profile"
                     </h2>
-                    <button
-                        type="button"
-                        on:click=reset_active_demo
-                        class="rounded-full border border-white/15 px-3 py-1 text-[11px] font-medium text-slate-300 transition hover:border-white/30 hover:text-white"
-                    >
-                        "Reset sample state"
-                    </button>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            aria-expanded=move || layout_open.get().to_string()
+                            on:click=move |_| layout_open.update(|v| *v = !*v)
+                            class=move || {
+                                if layout_open.get() {
+                                    "min-h-[34px] rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 text-[11px] font-semibold text-emerald-100 transition"
+                                } else {
+                                    "min-h-[34px] rounded-full border border-white/15 bg-slate-950/60 px-3 py-1 text-[11px] font-medium text-slate-200 transition hover:border-emerald-400/40 hover:text-white"
+                                }
+                            }
+                        >
+                            {move || format!("Layout: {} ▾", layout_prefs.get().active_label())}
+                        </button>
+                        <button
+                            type="button"
+                            on:click=reset_active_demo
+                            class="min-h-[34px] rounded-full border border-white/15 px-3 py-1 text-[11px] font-medium text-slate-300 transition hover:border-white/30 hover:text-white"
+                        >
+                            "Reset sample state"
+                        </button>
+                    </div>
                 </div>
                 <div class="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
                     {panel.with_value(|charts| {
@@ -532,6 +620,18 @@ pub fn PatientDemoPage() -> impl IntoView {
                     })}
                 </div>
             </section>
+
+            <PatientLayoutCustomizer
+                prefs=layout_prefs
+                open=layout_open
+                saved_notice=layout_notice
+                on_apply_start_tab=Callback::new(move |tab: PatientStartTab| {
+                    active_tab.set(match tab {
+                        PatientStartTab::You => PatientTab::You,
+                        PatientStartTab::Shared => PatientTab::Shared,
+                    });
+                })
+            />
 
             // Patient Tab Bar ("Your Health" vs "For My Doctor")
             {move || {
@@ -611,16 +711,53 @@ pub fn PatientDemoPage() -> impl IntoView {
                             let selected_set: HashSet<String> =
                                 state.selected_record_ids.iter().cloned().collect();
                             let presets = default_patient_questions(&patient.id);
+                            let records_for_answer = patient.records.clone();
+                            let records_for_list = patient.records.clone();
 
                             view! {
                                 <div
                                     id="patient-panel-you"
                                     role="tabpanel"
                                     aria-labelledby="patient-tab-you"
-                                    class="space-y-6"
+                                    class=move || {
+                                        let gap = match layout_prefs.get().density {
+                                            LayoutDensity::Compact => "gap-4",
+                                            LayoutDensity::Balanced => "gap-6",
+                                            LayoutDensity::Spacious => "gap-8",
+                                        };
+                                        format!("flex flex-col {gap}")
+                                    }
                                 >
+                                    // Quick jump pills inside Your Health
+                                    <nav
+                                        aria-label="Jump to section"
+                                        class="order-1 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-xs"
+                                    >
+                                        <div class="flex flex-wrap items-center gap-1.5">
+                                            <span class="pr-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                                                "Jump to:"
+                                            </span>
+                                            <a href="#patient-summary" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-emerald-400/40 hover:text-white">"Summary"</a>
+                                            {move || layout_prefs.get().show_ask_section.then(|| view! {
+                                                <a href="#patient-ask" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-cyan-400/40 hover:text-white">"Ask Curie"</a>
+                                            })}
+                                            <a href="#patient-records" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-emerald-400/40 hover:text-white">
+                                                {format!("Records ({total_records})")}
+                                            </a>
+                                            {move || layout_prefs.get().show_private_notes.then(|| view! {
+                                                <a href="#patient-notes" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-white/30 hover:text-white">"Private Notes"</a>
+                                            })}
+                                        </div>
+                                        <A
+                                            href="/mental-health?tab=recovery"
+                                            attr:class="text-xs font-medium text-emerald-300 underline-offset-2 hover:underline"
+                                        >
+                                            "Find Recovery Care →"
+                                        </A>
+                                    </nav>
+
                                     // Summary & Next Visit Card
-                                    <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4">
+                                    <section id="patient-summary" class="order-2 scroll-mt-32 rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4">
                                         <div class="flex flex-wrap items-start justify-between gap-3">
                                             <div>
                                                 <div class="flex flex-wrap items-center gap-2">
@@ -665,7 +802,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                     </section>
 
                                     // Medications & Conditions
-                                    <div class="grid gap-4 md:grid-cols-2">
+                                    <div class="order-3 grid gap-4 md:grid-cols-2">
                                         <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
                                             <h3 class="text-xs font-semibold uppercase tracking-widest text-emerald-300">
                                                 "Sample Medications"
@@ -724,7 +861,18 @@ pub fn PatientDemoPage() -> impl IntoView {
                                     </div>
 
                                     // Ask About Your Synthetic Records
-                                    <section class="rounded-2xl border border-cyan-400/25 bg-slate-900/50 p-5 space-y-4">
+                                    <section
+                                        id="patient-ask"
+                                        class=move || {
+                                            let prefs = layout_prefs.get();
+                                            let vis = if prefs.show_ask_section { "" } else { "hidden " };
+                                            let ord = match prefs.order {
+                                                PatientSectionOrder::AskFirst => "order-4",
+                                                PatientSectionOrder::RecordsFirst => "order-5",
+                                            };
+                                            format!("{vis}{ord} scroll-mt-32 rounded-2xl border border-cyan-400/25 bg-slate-900/50 p-5 space-y-4")
+                                        }
+                                    >
                                         <div>
                                             <p class="text-xs font-semibold uppercase tracking-widest text-cyan-300">
                                                 "Record-Grounded Explanation (Local Demo)"
@@ -813,12 +961,29 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         })}
 
                                         <div aria-live="polite">
-                                            {active_answer.map(|ans| view! { <PatientGroundedAnswer answer=ans /> })}
+                                            {active_answer.map(|ans| {
+                                                view! {
+                                                    <PatientGroundedAnswer
+                                                        answer=ans
+                                                        records=records_for_answer
+                                                        on_select_record=jump_to_record
+                                                    />
+                                                }
+                                            })}
                                         </div>
                                     </section>
 
                                     // Records Timeline with Explicit "Include for My Doctor" Toggle
-                                    <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4">
+                                    <section
+                                        id="patient-records"
+                                        class=move || {
+                                            let ord = match layout_prefs.get().order {
+                                                PatientSectionOrder::AskFirst => "order-5",
+                                                PatientSectionOrder::RecordsFirst => "order-4",
+                                            };
+                                            format!("{ord} scroll-mt-32 rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4")
+                                        }
+                                    >
                                         <div class="flex flex-wrap items-center justify-between gap-2">
                                             <div>
                                                 <h3 class="text-lg font-semibold text-white">
@@ -834,29 +999,43 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         </div>
 
                                         <div class="space-y-3">
-                                            {patient
-                                                .records
-                                                .clone()
-                                                .into_iter()
-                                                .map(|rec| {
-                                                    let is_selected = selected_set.contains(&rec.id);
-                                                    let is_cited = cited_ids.contains(&rec.id);
-                                                    let rec_id_toggle = rec.id.clone();
-                                                    view! {
-                                                        <PatientRecordCard
-                                                            record=rec
-                                                            is_selected=is_selected
-                                                            is_cited=is_cited
-                                                            on_toggle=Callback::new(move |_| toggle_record_selection(rec_id_toggle.clone()))
-                                                        />
-                                                    }
-                                                })
-                                                .collect_view()}
+                                            {move || {
+                                                let focused_id = focused_record_id.get();
+                                                records_for_list
+                                                    .iter()
+                                                    .cloned()
+                                                    .map(|rec| {
+                                                        let is_selected = selected_set.contains(&rec.id);
+                                                        let is_cited = cited_ids.contains(&rec.id);
+                                                        let is_focused = focused_id.as_deref() == Some(rec.id.as_str());
+                                                        let rec_id_toggle = rec.id.clone();
+                                                        view! {
+                                                            <PatientRecordCard
+                                                                record=rec
+                                                                is_selected=is_selected
+                                                                is_cited=is_cited
+                                                                is_focused=is_focused
+                                                                on_toggle=Callback::new(move |_| toggle_record_selection(rec_id_toggle.clone()))
+                                                                on_clear_focus=Callback::new(move |_| focused_record_id.set(None))
+                                                            />
+                                                        }
+                                                    })
+                                                    .collect_view()
+                                            }}
                                         </div>
                                     </section>
 
                                     // Device-Only Private Notes (Always Excluded From Doctor Packet)
-                                    <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4">
+                                    <section
+                                        id="patient-notes"
+                                        class=move || {
+                                            if layout_prefs.get().show_private_notes {
+                                                "order-6 scroll-mt-32 rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4"
+                                            } else {
+                                                "hidden"
+                                            }
+                                        }
+                                    >
                                         <div class="flex flex-wrap items-center justify-between gap-2">
                                             <div>
                                                 <h3 class="text-base font-semibold text-white">
@@ -1126,6 +1305,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         delivery=delivery
                                         can_send=can_send
                                         on_toggle_record=Callback::new(toggle_record_selection)
+                                        on_select_record=jump_to_record
                                         on_simulate_send=Callback::new(move |_| {
                                             let pid = active_pid_send.clone();
                                             demo_states.update(|map| {
@@ -1166,7 +1346,18 @@ pub fn PatientDemoPage() -> impl IntoView {
 }
 
 #[component]
-fn PatientGroundedAnswer(answer: ChatAnswer) -> impl IntoView {
+fn PatientGroundedAnswer(
+    answer: ChatAnswer,
+    records: Vec<ChartRecord>,
+    on_select_record: Callback<String>,
+) -> impl IntoView {
+    let records_for_answer = records.clone();
+    let records_for_basis = records.clone();
+    let record_map: HashMap<String, ChartRecord> = records
+        .into_iter()
+        .map(|rec| (rec.id.clone(), rec))
+        .collect();
+
     view! {
         <div class="rounded-xl border border-white/10 bg-slate-950/80 p-4 space-y-3">
             <div class="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2.5">
@@ -1182,8 +1373,15 @@ fn PatientGroundedAnswer(answer: ChatAnswer) -> impl IntoView {
                 </span>
             </div>
 
-            <p class="whitespace-pre-line text-sm leading-relaxed text-slate-200">
-                {answer.answer}
+            <p class="text-sm leading-relaxed text-slate-200">
+                <CitationLinkedText
+                    text=answer.answer
+                    records=records_for_answer
+                    anchor_prefix="patient-record"
+                    accent=CitationAccent::Emerald
+                    on_select=on_select_record
+                    class="inline"
+                />
             </p>
 
             {(!answer.citations.is_empty()).then(|| view! {
@@ -1192,27 +1390,15 @@ fn PatientGroundedAnswer(answer: ChatAnswer) -> impl IntoView {
                         .citations
                         .into_iter()
                         .map(|cite| {
-                            let kind_cls = record_kind_badge_class(cite.kind);
+                            let matching_record = record_map.get(&cite.record_id).cloned();
                             view! {
-                                <div class="rounded-xl border border-emerald-400/35 bg-emerald-500/[0.07] p-3">
-                                    <div class="flex flex-wrap items-center justify-between gap-1.5">
-                                        <span class="rounded bg-emerald-500/20 px-2 py-0.5 font-mono text-[11px] font-semibold text-emerald-200">
-                                            {cite.record_id}
-                                        </span>
-                                        <span class=format!("rounded-full border px-2 py-0.5 text-[10px] font-semibold {kind_cls}")>
-                                            {cite.kind.label()}
-                                        </span>
-                                    </div>
-                                    <p class="mt-1.5 text-xs font-semibold text-white">
-                                        {cite.title}
-                                        <span class="ml-1.5 font-mono font-normal text-slate-400">
-                                            {cite.recorded_at}
-                                        </span>
-                                    </p>
-                                    <p class="mt-1 text-xs leading-relaxed text-slate-300">
-                                        {cite.excerpt}
-                                    </p>
-                                </div>
+                                <CitationCardLink
+                                    citation=cite
+                                    record=matching_record
+                                    anchor_prefix="patient-record"
+                                    accent=CitationAccent::Emerald
+                                    on_select=on_select_record
+                                />
                             }
                         })
                         .collect_view()}
@@ -1220,7 +1406,14 @@ fn PatientGroundedAnswer(answer: ChatAnswer) -> impl IntoView {
             })}
 
             <p class="border-t border-white/10 pt-2 font-mono text-[11px] text-slate-400">
-                {answer.basis}
+                <CitationLinkedText
+                    text=answer.basis
+                    records=records_for_basis
+                    anchor_prefix="patient-record"
+                    accent=CitationAccent::Emerald
+                    on_select=on_select_record
+                    class="inline"
+                />
             </p>
         </div>
     }
@@ -1231,19 +1424,24 @@ fn PatientRecordCard(
     record: ChartRecord,
     is_selected: bool,
     is_cited: bool,
+    is_focused: bool,
     on_toggle: Callback<()>,
+    on_clear_focus: Callback<()>,
 ) -> impl IntoView {
+    let anchor_id = record_anchor_id("patient-record", &record.id);
     let kind_cls = record_kind_badge_class(record.kind);
-    let container_cls = if is_selected {
-        "rounded-xl border border-emerald-400/50 bg-emerald-500/[0.07] p-4 transition"
+    let container_cls = if is_focused {
+        "scroll-mt-32 rounded-xl border border-emerald-300 bg-emerald-500/[0.14] p-4 ring-2 ring-emerald-400/80 shadow-lg shadow-emerald-500/10 transition"
+    } else if is_selected {
+        "scroll-mt-32 rounded-xl border border-emerald-400/50 bg-emerald-500/[0.07] p-4 transition"
     } else if is_cited {
-        "rounded-xl border border-cyan-400/50 bg-cyan-500/[0.06] p-4 transition"
+        "scroll-mt-32 rounded-xl border border-cyan-400/50 bg-cyan-500/[0.06] p-4 transition"
     } else {
-        "rounded-xl border border-white/10 bg-slate-950/60 p-4 transition"
+        "scroll-mt-32 rounded-xl border border-white/10 bg-slate-950/60 p-4 transition"
     };
 
     view! {
-        <article class=container_cls>
+        <article id=anchor_id class=container_cls>
             <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="flex flex-wrap items-center gap-2">
                     <span class="rounded bg-white/10 px-2 py-0.5 font-mono text-xs font-medium text-slate-200">
@@ -1257,11 +1455,39 @@ fn PatientRecordCard(
                             "Cited"
                         </span>
                     })}
+                    {is_focused.then(|| view! {
+                        <span class="rounded-full border border-emerald-300/60 bg-emerald-400/20 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-100">
+                            "Focused from citation"
+                        </span>
+                    })}
                 </div>
                 <span class="font-mono text-xs text-slate-400">
                     {format!("{} · {}", record.recorded_at, record.source_label)}
                 </span>
             </div>
+
+            {is_focused.then(|| view! {
+                <div class="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-300/35 bg-slate-950/70 px-3 py-1.5 text-[11px]">
+                    <span class="text-emerald-100">
+                        "Jumped here from a chart citation."
+                    </span>
+                    <div class="flex items-center gap-2">
+                        <a
+                            href="#patient-ask"
+                            class="rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2.5 py-0.5 font-semibold text-emerald-200 transition hover:bg-emerald-500/25 hover:text-white"
+                        >
+                            "Back to Q&A ↑"
+                        </a>
+                        <button
+                            type="button"
+                            on:click=move |_| on_clear_focus.run(())
+                            class="rounded-full border border-white/15 px-2.5 py-0.5 font-medium text-slate-300 transition hover:border-white/30 hover:text-white"
+                        >
+                            "Clear"
+                        </button>
+                    </div>
+                </div>
+            })}
 
             <h4 class="mt-2.5 text-sm font-semibold text-white">{record.title}</h4>
             <p class="mt-1.5 text-xs leading-relaxed text-slate-300">{record.body}</p>
@@ -1318,6 +1544,7 @@ fn SharePacketPreviewCard(
     delivery: ShareDeliveryStatus,
     can_send: bool,
     on_toggle_record: Callback<String>,
+    on_select_record: Callback<String>,
     on_simulate_send: Callback<()>,
     on_withdraw: Callback<()>,
     on_back_to_records: Callback<()>,
@@ -1405,15 +1632,27 @@ fn SharePacketPreviewCard(
                             {preview
                                 .shared_records
                                 .into_iter()
-                                .map(|rec| {
+                                .enumerate()
+                                .map(|(idx, rec)| {
                                     let rec_id = rec.id.clone();
+                                    let title_and_date = format!("{} · {}", rec.title, rec.recorded_at);
+                                    let body = rec.body.clone();
                                     view! {
                                         <li class="flex items-start justify-between gap-3 rounded-xl border border-white/10 bg-slate-950/60 p-3">
-                                            <div>
-                                                <p class="text-xs font-semibold text-white">
-                                                    {format!("{} · {}", rec.title, rec.recorded_at)}
-                                                </p>
-                                                <p class="mt-1 text-xs text-slate-300">{rec.body}</p>
+                                            <div class="min-w-0">
+                                                <div class="flex flex-wrap items-center gap-2">
+                                                    <CitationBadgeLink
+                                                        record=rec
+                                                        anchor_prefix="patient-record"
+                                                        accent=CitationAccent::Emerald
+                                                        on_select=on_select_record
+                                                        occurrence=idx
+                                                    />
+                                                    <p class="text-xs font-semibold text-white">
+                                                        {title_and_date}
+                                                    </p>
+                                                </div>
+                                                <p class="mt-1 text-xs text-slate-300">{body}</p>
                                             </div>
                                             <button
                                                 type="button"
@@ -1564,5 +1803,70 @@ mod tests {
         assert!(html.contains("Open on dabney.moe"));
         assert!(!html.contains("Hire me"));
         assert!(!html.contains("Commissions"));
+    }
+
+    #[test]
+    fn patient_demo_renders_scoped_citation_links_tooltips_and_record_anchors() {
+        let html = render_with_mode("/clinical/patient", AppShellMode::Website);
+        assert!(html.contains("id=\"patient-record-nk-cgm-01\""));
+        assert!(html.contains("id=\"patient-record-nk-lab-02\""));
+        assert!(html.contains("id=\"patient-record-nk-msg-03\""));
+        assert!(html.contains("href=\"#patient-record-nk-cgm-01\""));
+        assert!(html.contains("role=\"tooltip\""));
+        assert!(html.contains("aria-describedby=\"cite-tip-"));
+        assert!(!html.contains("href=\"#patient-record-cm-"));
+        assert!(!html.contains("href=\"#patient-record-pn-"));
+        assert!(!html.contains("href=\"#patient-record-do-"));
+    }
+
+    #[test]
+    fn focused_patient_record_card_and_share_packet_render_citation_controls() {
+        let panel = synthetic_panel();
+        let nadia = &panel[0];
+        let state = default_patient_demo_state(nadia);
+        let preview = build_doctor_share_preview(nadia, &state);
+        let first_record = nadia.records[0].clone();
+
+        let owner = Owner::new();
+        let html = owner.with(|| {
+            view! {
+                <div>
+                    <PatientRecordCard
+                        record=first_record
+                        is_selected=true
+                        is_cited=true
+                        is_focused=true
+                        on_toggle=Callback::new(|()| {})
+                        on_clear_focus=Callback::new(|()| {})
+                    />
+                    <SharePacketPreviewCard
+                        preview=preview
+                        delivery=ShareDeliveryStatus::Draft
+                        can_send=true
+                        on_toggle_record=Callback::new(|_: String| {})
+                        on_select_record=Callback::new(|_: String| {})
+                        on_simulate_send=Callback::new(|()| {})
+                        on_withdraw=Callback::new(|()| {})
+                        on_back_to_records=Callback::new(|()| {})
+                    />
+                </div>
+            }
+            .to_html()
+        });
+        drop(owner);
+
+        let decoded = html
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#x27;", "'")
+            .replace("&#39;", "'")
+            .replace("&amp;", "&");
+        assert!(decoded.contains("id=\"patient-record-nk-cgm-01\""));
+        assert!(decoded.contains("Focused from citation"));
+        assert!(decoded.contains("href=\"#patient-ask\""));
+        assert!(decoded.contains("Back to Q&A ↑"));
+        assert!(decoded.contains("href=\"#patient-record-nk-cgm-01\""));
+        assert!(decoded.contains("role=\"tooltip\""));
     }
 }
