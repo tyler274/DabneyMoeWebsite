@@ -1,5 +1,5 @@
 /* @ts-self-types="./ancestry-worker.d.ts" */
-import { fetch_bytes, fetch_text, post_progress, serve } from './snippets/ancestry-app-4fb1f89e5de38f63/assets/worker_host.js?v=895e7d77b51a';
+import { fetch_bytes, fetch_text, post_progress, serve } from './snippets/ancestry-app-4fb1f89e5de38f63/assets/worker_host.js?v=102566b7e50d';
 
 
 export class JSOwner {
@@ -455,7 +455,7 @@ async function __wbg_init(module_or_path) {
     }
 
     if (module_or_path === undefined) {
-        module_or_path = new URL('ancestry-worker_bg.wasm?v=895e7d77b51a', import.meta.url);
+        module_or_path = new URL('ancestry-worker_bg.wasm?v=102566b7e50d', import.meta.url);
     }
     const imports = __wbg_get_imports();
 

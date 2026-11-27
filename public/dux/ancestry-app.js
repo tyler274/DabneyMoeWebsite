@@ -1,11 +1,11 @@
 /* @ts-self-types="./ancestry-app.d.ts" */
-import { add_sheet, delete_sheet, delete_weights, download_base64, download_text, inflate_gzip_or_utf8, list_sheets, put_weights, set_sheet_space, sheet_text, weights_meta, weights_text } from './snippets/ancestry-app-4fb1f89e5de38f63/assets/idb.js?v=895e7d77b51a';
-import { post, start_worker } from './snippets/ancestry-app-4fb1f89e5de38f63/assets/worker_client.js?v=895e7d77b51a';
-import { RawInterpreter } from './snippets/dioxus-interpreter-js-20451f6aefec841d/inline0.js?v=895e7d77b51a';
-import { setAttributeInner } from './snippets/dioxus-interpreter-js-20451f6aefec841d/src/js/set_attribute.js?v=895e7d77b51a';
-import { get_select_data } from './snippets/dioxus-web-eae67878b22d6805/inline0.js?v=895e7d77b51a';
-import { WebDioxusChannel } from './snippets/dioxus-web-eae67878b22d6805/src/js/eval.js?v=895e7d77b51a';
-import { ask, cancel_ask, fire } from './snippets/ui-61ce48900b6d97a6/assets/behaviour.js?v=895e7d77b51a';
+import { add_sheet, delete_sheet, delete_weights, download_base64, download_text, inflate_gzip_or_utf8, list_sheets, put_weights, set_sheet_space, sheet_text, weights_meta, weights_text } from './snippets/ancestry-app-4fb1f89e5de38f63/assets/idb.js?v=102566b7e50d';
+import { post, start_worker } from './snippets/ancestry-app-4fb1f89e5de38f63/assets/worker_client.js?v=102566b7e50d';
+import { RawInterpreter } from './snippets/dioxus-interpreter-js-20451f6aefec841d/inline0.js?v=102566b7e50d';
+import { setAttributeInner } from './snippets/dioxus-interpreter-js-20451f6aefec841d/src/js/set_attribute.js?v=102566b7e50d';
+import { get_select_data } from './snippets/dioxus-web-eae67878b22d6805/inline0.js?v=102566b7e50d';
+import { WebDioxusChannel } from './snippets/dioxus-web-eae67878b22d6805/src/js/eval.js?v=102566b7e50d';
+import { ask, cancel_ask, fire } from './snippets/ui-61ce48900b6d97a6/assets/behaviour.js?v=102566b7e50d';
 
 
 export class JSOwner {
@@ -1902,7 +1902,7 @@ async function __wbg_init(module_or_path) {
     }
 
     if (module_or_path === undefined) {
-        module_or_path = new URL('ancestry-app_bg.wasm?v=895e7d77b51a', import.meta.url);
+        module_or_path = new URL('ancestry-app_bg.wasm?v=102566b7e50d', import.meta.url);
     }
     const imports = __wbg_get_imports();
 
