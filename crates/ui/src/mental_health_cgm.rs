@@ -14,7 +14,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use crate::mental_health_lingo::GlucoseReadingBound;
-use crate::mental_health_lingo::{split_delimited_row, LingoReading, SAMPLE_LINGO_CSV};
+use crate::mental_health_lingo::{
+    sample_checkins, sample_lingo_6mo_checkins, split_delimited_row, LingoReading,
+    MentalHealthCheckIn, SAMPLE_LINGO_6MO_CSV, SAMPLE_LINGO_CSV,
+};
 
 const MMOL_TO_MG_DL: f64 = 18.0182;
 const MIN_MG_DL: f64 = 20.0;
@@ -300,6 +303,20 @@ impl GlucoseWindow {
         }
     }
 
+    /// The window a freshly loaded trace opens in: the ATTD 14-day view for a trace longer than
+    /// 15 days, so the charts and AGP stay readable, and the whole trace otherwise.
+    pub fn default_for_trace(readings: &[LingoReading]) -> Self {
+        let span_h = readings
+            .first()
+            .zip(readings.last())
+            .map_or(0.0, |(first, last)| last.hour_offset - first.hour_offset);
+        if span_h > 360.0 {
+            Self::Days14
+        } else {
+            Self::All
+        }
+    }
+
     pub fn max_hours(self) -> Option<f64> {
         match self {
             Self::Hours24 => Some(24.0),
@@ -500,28 +517,99 @@ pub fn slice_readings_window(
     readings: &[LingoReading],
     window: GlucoseWindow,
 ) -> Vec<LingoReading> {
-    let Some(max_h) = window.max_hours() else {
-        return readings.to_vec();
-    };
-    let Some(end_h) = readings.last().map(|r| r.hour_offset) else {
+    let Some(start_h) = window_start_hour(readings, window) else {
         return Vec::new();
     };
-    let cutoff = (end_h - max_h).max(0.0);
-    let sliced: Vec<LingoReading> = readings
+    readings
         .iter()
-        .filter(|r| r.hour_offset >= cutoff - 1e-6)
+        .filter(|r| r.hour_offset >= start_h - 1e-6)
         .cloned()
-        .collect();
-    let Some(base_h) = sliced.first().map(|r| r.hour_offset) else {
-        return Vec::new();
-    };
-    sliced
-        .into_iter()
         .map(|mut r| {
-            r.hour_offset = (r.hour_offset - base_h).max(0.0);
+            r.hour_offset = (r.hour_offset - start_h).max(0.0);
             r
         })
         .collect()
+}
+
+/// Slice check-ins to the same trailing [`GlucoseWindow`] as [`slice_readings_window`] over
+/// `readings`, rebased onto the same `0.0` start, so both share one timeline. Without readings
+/// there is no window to place them in, and every check-in is kept as it is.
+pub fn slice_checkins_window(
+    checkins: &[MentalHealthCheckIn],
+    readings: &[LingoReading],
+    window: GlucoseWindow,
+) -> Vec<MentalHealthCheckIn> {
+    let Some(start_h) = window_start_hour(readings, window) else {
+        return checkins.to_vec();
+    };
+    checkins
+        .iter()
+        .filter(|c| c.hour_offset >= start_h - 1e-6)
+        .cloned()
+        .map(|mut c| {
+            c.hour_offset = (c.hour_offset - start_h).max(0.0);
+            c
+        })
+        .collect()
+}
+
+/// Where `window` starts on the trace's own hour axis: the window's length before the last
+/// reading, or the first reading when the trace is shorter than the window or the window is
+/// [`GlucoseWindow::All`]. A trailing window that opens inside a sensor gap still starts at its
+/// cutoff, so the gap shows as empty time rather than shortening the window. None for an empty
+/// trace.
+fn window_start_hour(readings: &[LingoReading], window: GlucoseWindow) -> Option<f64> {
+    let first_h = readings.first()?.hour_offset;
+    let end_h = readings.last()?.hour_offset;
+    Some(
+        window
+            .max_hours()
+            .map_or(first_h, |max_h| (end_h - max_h).max(first_h)),
+    )
+}
+
+/// The hours a glucose timeline spans from `0.0`: through its last reading or check-in, whichever
+/// is later, and never less than one hour so a lone reading still has room.
+pub fn timeline_hour_span(readings: &[LingoReading], checkins: &[MentalHealthCheckIn]) -> f64 {
+    readings
+        .iter()
+        .map(|r| r.hour_offset)
+        .chain(checkins.iter().map(|c| c.hour_offset))
+        .filter(|h| h.is_finite())
+        .fold(1.0_f64, f64::max)
+}
+
+/// The glucose values (mg/dL) every chart's value axis spans: from 40, or 10 below the lowest
+/// value, to 200, or 10 above the highest, each rounded out to a multiple of 10. `values` carries
+/// the readings and every reference the chart draws (target bounds, the 180 line), so nothing a
+/// chart shows falls outside its axis.
+pub fn glucose_axis_domain(values: impl IntoIterator<Item = f64>) -> (f64, f64) {
+    let (lowest, highest) = values
+        .into_iter()
+        .filter(|v| v.is_finite())
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
+            (lo.min(v), hi.max(v))
+        });
+    let floor = (((lowest - 10.0) / 10.0).floor() * 10.0).clamp(0.0, 40.0);
+    let ceiling = (((highest + 10.0) / 10.0).ceil() * 10.0).max(200.0);
+    (floor, ceiling)
+}
+
+/// Round glucose gridline values inside `domain`: every 50 mg/dL, or every 100 across a span wider
+/// than 300 mg/dL.
+pub fn glucose_axis_ticks(domain: (f64, f64)) -> Vec<f64> {
+    let step = if domain.1 - domain.0 > 300.0 {
+        100.0
+    } else {
+        50.0
+    };
+    let mut tick = (domain.0 / step).ceil() * step;
+    let mut ticks = Vec::new();
+    while tick <= domain.1 {
+        ticks.push(tick);
+        tick += step;
+    }
+    ticks
 }
 
 /// Downsample a large multi-week CGM trace for smooth SVG / WebGL2 rendering while preserving
@@ -3026,11 +3114,27 @@ pub fn sample_csv_for_monitor(monitor: GlucoseMonitor) -> &'static str {
         GlucoseMonitor::AbbottFreeStyleLibre => SAMPLE_LIBREVIEW_MMOL_CSV,
         GlucoseMonitor::MedtronicCareLink => SAMPLE_MEDTRONIC_CARELINK_CSV,
         GlucoseMonitor::FingerstickBgm => SAMPLE_BGM_FINGERSTICK_CSV,
-        GlucoseMonitor::AbbottLingo
-        | GlucoseMonitor::SenseonicsEversense
+        GlucoseMonitor::AbbottLingo => SAMPLE_LINGO_6MO_CSV,
+        GlucoseMonitor::SenseonicsEversense
         | GlucoseMonitor::TandemSource
         | GlucoseMonitor::GlookoTidepool
         | GlucoseMonitor::GenericCsv => SAMPLE_LINGO_CSV,
+    }
+}
+
+/// The synthetic check-ins that belong on the timeline of [`sample_csv_for_monitor`]'s sample.
+pub fn sample_checkins_for_monitor(monitor: GlucoseMonitor) -> Vec<MentalHealthCheckIn> {
+    match monitor {
+        GlucoseMonitor::AbbottLingo => sample_lingo_6mo_checkins(),
+        GlucoseMonitor::DexcomClarity
+        | GlucoseMonitor::DexcomStelo
+        | GlucoseMonitor::AbbottFreeStyleLibre
+        | GlucoseMonitor::MedtronicCareLink
+        | GlucoseMonitor::FingerstickBgm
+        | GlucoseMonitor::SenseonicsEversense
+        | GlucoseMonitor::TandemSource
+        | GlucoseMonitor::GlookoTidepool
+        | GlucoseMonitor::GenericCsv => sample_checkins(),
     }
 }
 
@@ -3142,18 +3246,27 @@ pub fn AgpPercentileChart(bins: Vec<AgpHourBin>) -> impl IntoView {
     let plot_h = height - pad_t - pad_b;
 
     let populated: Vec<AgpHourBin> = bins.into_iter().filter(|b| b.count > 0).collect();
-    let max_g = populated
-        .iter()
-        .map(|b| b.p95)
-        .fold(220.0_f64, f64::max)
-        .max(220.0);
-    let min_g = 45.0_f64;
+    let (min_g, max_g) = glucose_axis_domain(
+        populated
+            .iter()
+            .flat_map(|b| [b.p5, b.p95])
+            .chain([70.0, 180.0]),
+    );
 
     let x_for = |h: u8| pad_l + (f64::from(h) / 23.0) * plot_w;
     let y_for = |g: f64| {
         let clamped = g.clamp(min_g, max_g);
         pad_t + plot_h - ((clamped - min_g) / (max_g - min_g)) * plot_h
     };
+    let grid_ticks: Vec<(f64, f64)> = glucose_axis_ticks((min_g, max_g))
+        .into_iter()
+        .map(|g| (g, y_for(g)))
+        .filter(|&(_, y)| {
+            [70.0, 140.0, 180.0]
+                .iter()
+                .all(|&r| (y - y_for(r)).abs() > 10.0)
+        })
+        .collect();
 
     let build_ribbon =
         |upper: &dyn Fn(&AgpHourBin) -> f64, lower: &dyn Fn(&AgpHourBin) -> f64| -> String {
@@ -3193,6 +3306,11 @@ pub fn AgpPercentileChart(bins: Vec<AgpHourBin>) -> impl IntoView {
                 role="img"
                 aria-label="24-hour Ambulatory Glucose Profile showing 5th-95th and 25th-75th percentile ribbons and median"
             >
+                // Round value gridlines, labelled where they clear the 70/140/180 labels
+                {grid_ticks.into_iter().map(|(g, y)| view! {
+                    <line x1=pad_l y1=y x2=width - pad_r y2=y stroke="rgba(148, 163, 184, 0.12)" />
+                    <text x="6" y=y + 4.0 fill="#94a3b8" font-size="10">{format!("{g:.0}")}</text>
+                }).collect_view()}
                 // 70-180 clinical target band + 70-140 tight sub-band
                 <rect x=pad_l y=y180 width=plot_w height=(y70 - y180).max(1.0) fill="rgba(45, 212, 191, 0.06)" />
                 <rect x=pad_l y=y140 width=plot_w height=(y70 - y140).max(1.0) fill="rgba(52, 211, 153, 0.09)" />
@@ -3746,6 +3864,61 @@ Time of Glucose Reading [T=(local time) +/- (time zone offset)], Measurement(mg/
     }
 
     #[test]
+    fn every_window_slices_the_six_month_sample_and_its_checkins_onto_one_timeline() {
+        let readings = parse_commercial_glucose_input(SAMPLE_LINGO_6MO_CSV, None)
+            .unwrap()
+            .readings;
+        let checkins = sample_lingo_6mo_checkins();
+        let trace_h = readings.last().unwrap().hour_offset - readings[0].hour_offset;
+        assert!(trace_h > 180.0 * 24.0, "sample spans about six months");
+        assert_eq!(
+            GlucoseWindow::default_for_trace(&readings),
+            GlucoseWindow::Days14
+        );
+
+        let mut previous_len = 0;
+        for window in GlucoseWindow::ALL {
+            let sliced = slice_readings_window(&readings, window);
+            let sliced_checkins = slice_checkins_window(&checkins, &readings, window);
+            let label = window.label();
+            assert!(
+                sliced.len() > previous_len,
+                "{label}: wider window adds readings"
+            );
+            previous_len = sliced.len();
+
+            let end_h = sliced.last().unwrap().hour_offset;
+            let window_h = window.max_hours().unwrap_or(trace_h);
+            assert!(sliced[0].hour_offset >= 0.0, "{label}: rebased to zero");
+            assert!(end_h <= window_h + 1e-6, "{label}: ends within window");
+            assert!(
+                (end_h - window_h).abs() < 1e-6,
+                "{label}: last reading sits at the window's end"
+            );
+            assert!(
+                sliced
+                    .windows(2)
+                    .all(|p| p[0].hour_offset <= p[1].hour_offset),
+                "{label}: stays in time order"
+            );
+            assert!(
+                sliced_checkins
+                    .iter()
+                    .all(|c| (0.0..=end_h + 24.0).contains(&c.hour_offset)),
+                "{label}: check-ins share the readings' timeline"
+            );
+            if window.max_hours().is_some_and(|h| h >= 24.0 * 7.0) {
+                assert!(!sliced_checkins.is_empty(), "{label}: has check-ins");
+            }
+        }
+        assert_eq!(previous_len, readings.len());
+        assert_eq!(
+            slice_checkins_window(&checkins, &readings, GlucoseWindow::All).len(),
+            checkins.len()
+        );
+    }
+
+    #[test]
     fn supports_30d_and_90d_windows_and_windowed_saturation_metrics() {
         assert_eq!(
             GlucoseWindow::ALL,
@@ -3963,5 +4136,108 @@ Time of Glucose Reading [T=(local time) +/- (time zone offset)], Measurement(mg/
         assert!(
             accurate.estimated_active_wear_pct > 64.0 && accurate.estimated_active_wear_pct < 69.0
         );
+    }
+
+    fn hourly_trace(hours: usize) -> Vec<LingoReading> {
+        (0..=hours)
+            .map(|h| LingoReading {
+                timestamp: format!("2026-11-{:02}T{:02}:00:00-07:00", 1 + h / 24, h % 24),
+                hour_offset: h as f64,
+                glucose_mg_dl: 100.0,
+                lingo_count: None,
+                tag: None,
+                bound: GlucoseReadingBound::Measured,
+            })
+            .collect()
+    }
+
+    fn checkin_at(hour_offset: f64) -> MentalHealthCheckIn {
+        MentalHealthCheckIn {
+            recorded_at: String::new(),
+            hour_offset,
+            mood: 5,
+            anxiety: 5,
+            energy: 5,
+            sleep_hours: 7.0,
+            phq9: None,
+            gad7: None,
+            note: String::new(),
+        }
+    }
+
+    #[test]
+    fn checkins_share_the_readings_window_and_its_start() {
+        let readings = hourly_trace(14 * 24);
+        let checkins = [1.0, 300.0, 330.0].map(checkin_at);
+
+        let sliced = slice_readings_window(&readings, GlucoseWindow::Hours24);
+        let kept = slice_checkins_window(&checkins, &readings, GlucoseWindow::Hours24);
+        assert_eq!(sliced.first().unwrap().hour_offset, 0.0);
+        assert_eq!(sliced.last().unwrap().hour_offset, 24.0);
+        // 336h trace: the 24h window starts at 312h, so only the 330h check-in falls inside.
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].hour_offset, 18.0);
+        assert_eq!(timeline_hour_span(&sliced, &kept), 24.0);
+
+        let all = slice_checkins_window(&checkins, &readings, GlucoseWindow::All);
+        assert_eq!(all, checkins.to_vec());
+        assert_eq!(
+            slice_checkins_window(&checkins, &[], GlucoseWindow::Hours24).len(),
+            3
+        );
+    }
+
+    #[test]
+    fn a_short_trace_fills_the_timeline_rather_than_a_fixed_day() {
+        let readings = hourly_trace(6);
+        assert_eq!(timeline_hour_span(&readings, &[]), 6.0);
+        assert_eq!(timeline_hour_span(&readings[..1], &[]), 1.0);
+    }
+
+    #[test]
+    fn the_glucose_axis_keeps_lows_off_the_floor_and_references_inside() {
+        // Typical day: the standard 40-200 envelope.
+        assert_eq!(
+            glucose_axis_domain([95.0, 160.0, 70.0, 180.0]),
+            (40.0, 200.0)
+        );
+        // A Dexcom "LOW" 40 and a 25 mg/dL reading sit above the floor, not pinned to it.
+        assert_eq!(glucose_axis_domain([40.0, 120.0]), (30.0, 200.0));
+        assert_eq!(glucose_axis_domain([25.0, 120.0]), (10.0, 200.0));
+        assert_eq!(glucose_axis_domain([20.0, 120.0]), (10.0, 200.0));
+        assert_eq!(glucose_axis_domain([5.0]), (0.0, 200.0));
+        // Highs round out with headroom; the reference set keeps a 250 target visible.
+        assert_eq!(glucose_axis_domain([100.0, 312.0]), (40.0, 330.0));
+        assert_eq!(glucose_axis_domain([100.0, 250.0]), (40.0, 260.0));
+        assert_eq!(glucose_axis_domain([f64::NAN]), (40.0, 200.0));
+    }
+
+    #[test]
+    fn glucose_ticks_take_round_steps_inside_the_axis() {
+        assert_eq!(
+            glucose_axis_ticks((40.0, 200.0)),
+            vec![50.0, 100.0, 150.0, 200.0]
+        );
+        assert_eq!(
+            glucose_axis_ticks((10.0, 500.0)),
+            vec![100.0, 200.0, 300.0, 400.0, 500.0]
+        );
+    }
+
+    #[test]
+    fn agp_axis_spreads_past_a_fixed_ceiling_and_labels_round_steps() {
+        let bin = |hour: u8, p95: f64| AgpHourBin {
+            hour,
+            count: 12,
+            p5: 60.0,
+            p25: 90.0,
+            p50: 110.0,
+            p75: 140.0,
+            p95,
+        };
+        let html =
+            view! { <AgpPercentileChart bins=vec![bin(0, 180.0), bin(12, 310.0)] /> }.to_html();
+        assert!(html.contains(">300</text>"), "{html}");
+        assert!(html.contains(">100</text>"), "{html}");
     }
 }

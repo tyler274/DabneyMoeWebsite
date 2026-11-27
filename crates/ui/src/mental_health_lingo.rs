@@ -549,6 +549,52 @@ timestamp,glucose_mg_dl,lingo_count,tag
 2026-11-22 02:00,82,0,Overnight steady
 2026-11-22 06:00,86,0,Fasting wake";
 
+/// Synthetic six-month Abbott Lingo export in the app's own export format, written by
+/// `scripts/gen-sample-lingo.py`: 5-minute readings newest first, `201` / `54` sensor-cap
+/// sentinels, `Out of range` rows, long ceiling plateaus, reactive lows, a gap at every 14-day
+/// sensor change and one twelve-day break between sensors, so every time window has data.
+pub const SAMPLE_LINGO_6MO_CSV: &str = include_str!("../data/sample-lingo-6mo.csv");
+
+/// The check-ins logged alongside [`SAMPLE_LINGO_6MO_CSV`], written by the same script: one every
+/// one to four days, scored from the glucose around them, with fortnightly PHQ-9 / GAD-7 scores.
+const SAMPLE_LINGO_6MO_CHECKINS_CSV: &str = include_str!("../data/sample-lingo-6mo-checkins.csv");
+
+/// The local time of the first reading in [`SAMPLE_LINGO_6MO_CSV`], where its timeline starts.
+const SAMPLE_LINGO_6MO_START: &str = "2026-05-21 03:53";
+
+/// The check-ins in [`SAMPLE_LINGO_6MO_CHECKINS_CSV`], placed on [`SAMPLE_LINGO_6MO_CSV`]'s
+/// timeline.
+pub fn sample_lingo_6mo_checkins() -> Vec<MentalHealthCheckIn> {
+    const FORMAT: &str = "%Y-%m-%d %H:%M";
+    let start = chrono::NaiveDateTime::parse_from_str(SAMPLE_LINGO_6MO_START, FORMAT)
+        .expect("sample start time parses");
+    let score = |cell: &str| cell.parse::<u8>().expect("sample scores are whole numbers");
+    let optional_score = |cell: &str| (!cell.is_empty()).then(|| score(cell));
+    SAMPLE_LINGO_6MO_CHECKINS_CSV
+        .lines()
+        .skip(1)
+        .map(|line| {
+            let cells: Vec<&str> = line.splitn(8, ',').collect();
+            let [recorded_at, mood, anxiety, energy, sleep, phq9, gad7, note] = cells[..] else {
+                panic!("sample check-in row has eight cells: {line}");
+            };
+            let at = chrono::NaiveDateTime::parse_from_str(recorded_at, FORMAT)
+                .expect("sample check-in times parse");
+            MentalHealthCheckIn {
+                recorded_at: recorded_at.to_string(),
+                hour_offset: (at - start).num_minutes() as f64 / 60.0,
+                mood: score(mood),
+                anxiety: score(anxiety),
+                energy: score(energy),
+                sleep_hours: sleep.parse().expect("sample sleep hours parse"),
+                phq9: optional_score(phq9),
+                gad7: optional_score(gad7),
+                note: note.to_string(),
+            }
+        })
+        .collect()
+}
+
 /// Preloaded synthetic mental health check-ins paired with [`SAMPLE_LINGO_CSV`].
 pub fn sample_checkins() -> Vec<MentalHealthCheckIn> {
     vec![

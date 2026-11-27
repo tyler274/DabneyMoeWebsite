@@ -31,11 +31,13 @@ use crate::mental_health_3d::LingoMood3DChart;
 #[cfg(any(feature = "hydrate", feature = "csr"))]
 use crate::mental_health_cgm::{export_health_bridge_json_compact, monitor_hint_from_filename};
 use crate::mental_health_cgm::{
-    nominal_window_hours_for_trace, parse_commercial_glucose_input, parse_timestamp,
-    sample_csv_for_monitor, select_notable_spike_peaks, slice_readings_window,
-    summarize_commercial_glucose_with_window, AdaTimeInRangeBar, AgpPercentileChart,
-    CommercialGlucoseImport, GlucoseImportDiagnostics, GlucoseMonitor, GlucoseUnit, GlucoseWindow,
-    MeasurementMethod, ValidationLevel, SAMPLE_APPLE_HEALTH_XML, SAMPLE_HEALTH_BRIDGE_JSON,
+    glucose_axis_domain, glucose_axis_ticks, nominal_window_hours_for_trace,
+    parse_commercial_glucose_input, parse_timestamp, sample_checkins_for_monitor,
+    sample_csv_for_monitor, select_notable_spike_peaks, slice_checkins_window,
+    slice_readings_window, summarize_commercial_glucose_with_window, timeline_hour_span,
+    AdaTimeInRangeBar, AgpPercentileChart, CommercialGlucoseImport, GlucoseImportDiagnostics,
+    GlucoseMonitor, GlucoseUnit, GlucoseWindow, MeasurementMethod, ValidationLevel,
+    SAMPLE_APPLE_HEALTH_XML, SAMPLE_HEALTH_BRIDGE_JSON,
 };
 #[cfg(any(feature = "hydrate", feature = "csr"))]
 use crate::mental_health_cgm_alerts::{
@@ -64,7 +66,8 @@ use crate::mental_health_exports::{
 use crate::mental_health_lingo::{
     build_assessment_series, classify_gad7, classify_phq9, correlate_glucose_and_mood,
     csv_data_uri, export_correlations_csv, sample_assessment_history, sample_checkins,
-    AssessmentPoint, LingoReading, MentalHealthCheckIn, SAMPLE_LINGO_CSV,
+    sample_lingo_6mo_checkins, AssessmentPoint, LingoReading, MentalHealthCheckIn,
+    SAMPLE_LINGO_6MO_CSV,
 };
 use crate::mental_health_support::{PersonalSupportCard, SupportAndClinicianBriefSection};
 use crate::patient_demo::ClinicalSuiteSwitcher;
@@ -84,7 +87,6 @@ const ROSE: &str = "#fb7185";
 const VIOLET: &str = "#a78bfa";
 const SLATE_LIGHT: &str = "#94a3b8";
 
-#[cfg(any(feature = "hydrate", feature = "csr"))]
 fn compact_textarea_preview(raw: &str) -> String {
     if raw.len() <= 24_576 {
         return raw.to_string();
@@ -113,23 +115,30 @@ fn extract_local_minute(ts: &str, utc_minutes: f64) -> u8 {
     (utc_minutes.rem_euclid(60.0).round() as u32 % 60) as u8
 }
 
+/// The local wall-clock date and time a timestamp states, ignoring any zone offset it carries.
+fn local_wall_clock(ts: &str) -> Option<chrono::NaiveDateTime> {
+    let parsed = parse_timestamp(ts, None)?;
+    let minute = extract_local_minute(ts, parsed.utc_minutes);
+    parsed
+        .local_date
+        .and_hms_opt(u32::from(parsed.local_hour), u32::from(minute), 0)
+}
+
 /// Format a reading timestamp as `YYYY-MM-DDTHH:MM` for `<input type="datetime-local">`.
 fn default_checkin_datetime_for_readings(readings: &[LingoReading]) -> String {
     readings
         .last()
-        .and_then(|r| {
-            let p = parse_timestamp(&r.timestamp, None)?;
-            let minute = extract_local_minute(&r.timestamp, p.utc_minutes);
-            Some(format!(
-                "{}T{:02}:{:02}",
-                p.local_date, p.local_hour, minute
-            ))
-        })
-        .unwrap_or_else(|| "2026-11-21T18:00".to_string())
+        .and_then(|r| local_wall_clock(&r.timestamp))
+        .map_or_else(
+            || "2026-11-21T18:00".to_string(),
+            |at| at.format("%Y-%m-%dT%H:%M").to_string(),
+        )
 }
 
 /// Resolve a user-entered `YYYY-MM-DDTHH:MM` local date/time into a readable `recorded_at`
-/// label and a timeline `hour_offset` relative to the first loaded glucose reading.
+/// label and a timeline `hour_offset` relative to the first loaded glucose reading. The entered
+/// time carries no zone, so it is read on the export's own wall clock: the offset is the
+/// wall-clock difference from the first reading.
 fn resolve_checkin_datetime_offset(
     datetime_local: &str,
     readings: &[LingoReading],
@@ -146,11 +155,12 @@ fn resolve_checkin_datetime_offset(
         "{} {:02}:{:02}",
         parsed.local_date, parsed.local_hour, local_minute
     );
-    let hour_offset = if let Some(first_parsed) = readings
+    let entered = local_wall_clock(trimmed);
+    let first = readings
         .first()
-        .and_then(|r| parse_timestamp(&r.timestamp, None))
-    {
-        let raw_hours = (parsed.utc_minutes - first_parsed.utc_minutes) / 60.0;
+        .and_then(|r| Some((local_wall_clock(&r.timestamp)?, r.hour_offset)));
+    let hour_offset = if let Some(((first_at, first_h), entered_at)) = first.zip(entered) {
+        let raw_hours = first_h + (entered_at - first_at).num_minutes() as f64 / 60.0;
         raw_hours.clamp(0.0, max_hour_bound.max(raw_hours.max(0.0)))
     } else {
         (f64::from(parsed.local_hour) + f64::from(local_minute) / 60.0).clamp(0.0, max_hour_bound)
@@ -178,8 +188,11 @@ fn parse_optional_scale_score(raw: &str, max_val: u8, name: &str) -> Result<Opti
 #[component]
 pub fn MentalHealthPage() -> impl IntoView {
     let locale = use_locale();
-    let initial_import = parse_commercial_glucose_input(SAMPLE_LINGO_CSV, None).ok();
-    let csv_input = RwSignal::new(SAMPLE_LINGO_CSV.to_string());
+    let initial_import = parse_commercial_glucose_input(SAMPLE_LINGO_6MO_CSV, None).ok();
+    let csv_input = RwSignal::new(compact_textarea_preview(SAMPLE_LINGO_6MO_CSV));
+    // The built-in sample behind a truncated textarea preview, so the page never carries a
+    // megabyte of CSV and Parse & Validate still reads the whole sample.
+    let sample_full_payload = RwSignal::new(Some(SAMPLE_LINGO_6MO_CSV));
     let monitor_hint = RwSignal::new(Option::<GlucoseMonitor>::None);
     let detected_monitor = RwSignal::new(
         initial_import
@@ -202,8 +215,8 @@ pub fn MentalHealthPage() -> impl IntoView {
     let import_diagnostics = RwSignal::new(initial_import.as_ref().map(|i| i.diagnostics.clone()));
     let initial_readings = initial_import.map(|i| i.readings).unwrap_or_default();
     let initial_checkin_dt = default_checkin_datetime_for_readings(&initial_readings);
+    let window = RwSignal::new(GlucoseWindow::default_for_trace(&initial_readings));
     let readings = RwSignal::new(initial_readings);
-    let window = RwSignal::new(GlucoseWindow::All);
     let loaded_file_label = RwSignal::new(Option::<String>::None);
     // Keep full uploaded/synced payload separately from the 20-line preview textarea so
     // "Parse & Validate Export" never truncates >99% of readings on large exports.
@@ -290,10 +303,13 @@ pub fn MentalHealthPage() -> impl IntoView {
         })
     });
 
-    let checkins = RwSignal::new(sample_checkins());
+    let checkins = RwSignal::new(sample_lingo_6mo_checkins());
     let user_added_checkins = RwSignal::new(false);
+    let windowed_checkins = Memo::new(move |_| {
+        readings.with(|r| checkins.with(|c| slice_checkins_window(c, r, window.get())))
+    });
     let correlations = Memo::new(move |_| {
-        windowed_readings.with(|r| checkins.with(|c| correlate_glucose_and_mood(r, c)))
+        windowed_readings.with(|r| windowed_checkins.with(|c| correlate_glucose_and_mood(r, c)))
     });
     let max_checkin_hour = Memo::new(move |_| {
         windowed_readings
@@ -385,13 +401,13 @@ pub fn MentalHealthPage() -> impl IntoView {
 
     let apply_parsed_glucose = move |parsed: CommercialGlucoseImport,
                                      source_label: Option<String>| {
-        let span_h = parsed.diagnostics.span_hours;
         let is_personal_import = source_label.is_some();
         let next_dt = default_checkin_datetime_for_readings(&parsed.readings);
         detected_monitor.set(parsed.monitor);
         source_unit.set(parsed.source_unit);
         measurement_method.set(parsed.method);
         import_diagnostics.set(Some(parsed.diagnostics));
+        window.set(GlucoseWindow::default_for_trace(&parsed.readings));
         readings.set(parsed.readings);
         loaded_file_label.set(source_label);
         checkin_datetime.set(next_dt);
@@ -401,12 +417,6 @@ pub fn MentalHealthPage() -> impl IntoView {
         if is_personal_import && !user_added_checkins.get_untracked() {
             checkins.set(Vec::new());
         }
-        // Default multi-week personal exports to the ATTD 14-day view so charts & AGP stay crisp.
-        window.set(if span_h > 360.0 {
-            GlucoseWindow::Days14
-        } else {
-            GlucoseWindow::All
-        });
         csv_error.set(None);
     };
 
@@ -423,6 +433,8 @@ pub fn MentalHealthPage() -> impl IntoView {
     let apply_csv = move |_| {
         if let Some((full_raw, label)) = uploaded_full_payload.get_untracked() {
             apply_glucose_text(&full_raw, monitor_hint.get(), Some(label));
+        } else if let Some(sample) = sample_full_payload.get_untracked() {
+            apply_glucose_text(sample, monitor_hint.get(), None);
         } else {
             let raw = csv_input.get();
             apply_glucose_text(&raw, monitor_hint.get(), None);
@@ -465,6 +477,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                         if let Some(text) = val.as_string() {
                             let label = format!("{file_name} ({file_kb:.1} KB · on-device)");
                             uploaded_full_payload.set(Some((text.clone(), label.clone())));
+                            sample_full_payload.set(None);
                             csv_input.set(compact_textarea_preview(&text));
                             match parse_commercial_glucose_input(&text, inferred_hint) {
                                 Ok(parsed) => {
@@ -514,27 +527,31 @@ pub fn MentalHealthPage() -> impl IntoView {
         let _ = ev;
     };
 
+    // A sample brings the check-ins that sit on its own timeline, unless the user has logged
+    // their own, so one sample's check-ins never stretch another's axis.
+    let load_sample = move |sample: &'static str, sample_checkins: Vec<MentalHealthCheckIn>| {
+        uploaded_full_payload.set(None);
+        sample_full_payload.set(Some(sample));
+        monitor_hint.set(None);
+        csv_input.set(compact_textarea_preview(sample));
+        if !user_added_checkins.get_untracked() {
+            checkins.set(sample_checkins);
+        }
+        apply_glucose_text(sample, None, None);
+    };
     let load_monitor_preset = move |monitor: GlucoseMonitor| {
-        let sample = sample_csv_for_monitor(monitor);
-        uploaded_full_payload.set(None);
-        monitor_hint.set(None);
-        csv_input.set(sample.to_string());
-        apply_glucose_text(sample, None, None);
+        load_sample(
+            sample_csv_for_monitor(monitor),
+            sample_checkins_for_monitor(monitor),
+        );
     };
-
-    let load_raw_preset = move |sample: &'static str| {
-        uploaded_full_payload.set(None);
-        monitor_hint.set(None);
-        csv_input.set(sample.to_string());
-        apply_glucose_text(sample, None, None);
-    };
+    let load_raw_preset = move |sample: &'static str| load_sample(sample, sample_checkins());
 
     let reset_sample = move |_| {
         confirm_reset_hero.set(false);
         confirm_reset_banner.set(false);
-        load_monitor_preset(GlucoseMonitor::AbbottLingo);
         user_added_checkins.set(false);
-        checkins.set(sample_checkins());
+        load_monitor_preset(GlucoseMonitor::AbbottLingo);
         form_status.set(None);
         form_error.set(None);
         hc_message.set(None);
@@ -701,6 +718,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                                 let restored_label = format!("{label} · restored from local vault");
                                 uploaded_full_payload
                                     .set(Some((cgm_json.clone(), restored_label.clone())));
+                                sample_full_payload.set(None);
                                 csv_input.set(compact_textarea_preview(&cgm_json));
                                 apply_glucose_text(&cgm_json, None, Some(restored_label));
                             }
@@ -997,9 +1015,8 @@ pub fn MentalHealthPage() -> impl IntoView {
                 match res {
                     Ok(empty_status) => {
                         vault_status.set(Some(empty_status));
-                        load_monitor_preset(GlucoseMonitor::AbbottLingo);
                         user_added_checkins.set(false);
-                        checkins.set(sample_checkins());
+                        load_monitor_preset(GlucoseMonitor::AbbottLingo);
                         chat_turns.set(Vec::new());
                         form_status.set(None);
                         hc_message.set(None);
@@ -1283,6 +1300,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                             );
                             uploaded_full_payload
                                 .set(Some((resp.bridge_json.clone(), banner_label.clone())));
+                            sample_full_payload.set(None);
                             csv_input.set(compact_textarea_preview(&resp.bridge_json));
                             apply_glucose_text(&resp.bridge_json, None, Some(banner_label.clone()));
                             persist_vault_update(
@@ -1996,7 +2014,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                     ChartViewMode::WebGl3D => view! {
                         <LingoMood3DChart
                             readings=windowed_readings.into()
-                            checkins=checkins.into()
+                            checkins=windowed_checkins.into()
                             target_range=target_range_signal
                             monitor_name=Signal::derive(move || detected_monitor.get().display_name().to_string())
                         />
@@ -2007,7 +2025,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                         view! {
                             <LingoMoodTimelineChart
                                 readings=windowed_readings.get()
-                                checkins=checkins.get()
+                                checkins=windowed_checkins.get()
                                 target_low_mg_dl=target_low
                                 target_high_mg_dl=target_high
                                 monitor_name=mon_name
@@ -2436,6 +2454,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                         prop:value=move || csv_input.get()
                         on:input=move |ev| {
                             uploaded_full_payload.set(None);
+                            sample_full_payload.set(None);
                             csv_input.set(event_target_value(&ev));
                         }
                         class="w-full rounded-xl border border-white/10 bg-slate-950 p-3 font-mono text-xs text-slate-200"
@@ -2812,35 +2831,34 @@ fn select_svg_floor_cap_markers(
     reps.into_iter().map(|i| readings[i].clone()).collect()
 }
 
-fn timeline_x_axis_labels(readings: &[LingoReading], max_hour: f64) -> (String, String, String) {
-    if max_hour >= 24.0 {
-        let first_date = readings
-            .first()
-            .and_then(|r| parse_timestamp(&r.timestamp, None))
-            .map(|p| p.local_date);
-        let last_date = readings
-            .last()
-            .and_then(|r| parse_timestamp(&r.timestamp, None))
-            .map(|p| p.local_date);
-        if let (Some(d0), Some(d1)) = (first_date, last_date) {
-            let span_days = (d1 - d0).num_days();
-            if span_days >= 2 {
-                let d_mid = d0 + chrono::TimeDelta::days(span_days / 2);
-                return (d0.to_string(), d_mid.to_string(), d1.to_string());
+/// The timeline's x-axis words at its start, middle and end (`0`, `max_hour / 2`, `max_hour`), each
+/// saying the time at that very point: the local date across two days or more, the local date and
+/// clock time across less, or the elapsed time when the first reading's timestamp doesn't parse.
+fn timeline_x_axis_labels(readings: &[LingoReading], max_hour: f64) -> [String; 3] {
+    let start = readings.first().and_then(|r| {
+        let parsed = parse_timestamp(&r.timestamp, None)?;
+        let minute = extract_local_minute(&r.timestamp, parsed.utc_minutes);
+        let local =
+            parsed
+                .local_date
+                .and_hms_opt(u32::from(parsed.local_hour), u32::from(minute), 0)?;
+        Some(local - chrono::TimeDelta::minutes((r.hour_offset * 60.0).round() as i64))
+    });
+    [0.0, 0.5, 1.0].map(|share| {
+        let hour = share * max_hour;
+        match start {
+            Some(start) => {
+                let at = start + chrono::TimeDelta::minutes((hour * 60.0).round() as i64);
+                if max_hour >= 48.0 {
+                    at.date().to_string()
+                } else {
+                    at.format("%m-%d %H:%M").to_string()
+                }
             }
+            None if max_hour >= 72.0 => format!("{:.1}d", hour / 24.0),
+            None => format!("{hour:.0}h"),
         }
-    }
-    let mid = if max_hour >= 72.0 {
-        format!("{:.1}d", (max_hour / 2.0) / 24.0)
-    } else {
-        format!("{:.0}h", max_hour / 2.0)
-    };
-    let end = if max_hour >= 72.0 {
-        format!("{:.1}d", max_hour / 24.0)
-    } else {
-        format!("{:.0}h", max_hour)
-    };
-    ("0h".to_string(), mid, end)
+    })
 }
 
 #[component]
@@ -2880,20 +2898,12 @@ fn LingoMoodTimelineChart(
     let plot_w = width - pad_l - pad_r;
     let plot_h = height - pad_t - pad_b;
 
-    let max_hour = readings
-        .iter()
-        .map(|r| r.hour_offset)
-        .chain(checkins.iter().map(|c| c.hour_offset))
-        .fold(24.0_f64, f64::max)
-        .max(1.0);
-    // Lower floor to 45 mg/dL so floor-capped 54 mg/dL (<55) readings sit visibly above the bottom edge.
-    let min_g = 45.0_f64;
-    let max_g = readings
-        .iter()
-        .map(|r| r.glucose_mg_dl)
-        .fold(190.0_f64, f64::max)
-        .max(190.0)
-        .max(target_high + 10.0);
+    let max_hour = timeline_hour_span(&readings, &checkins);
+    let (min_g, max_g) = glucose_axis_domain(readings.iter().map(|r| r.glucose_mg_dl).chain([
+        target_low,
+        target_high,
+        180.0,
+    ]));
 
     let x_for = |h: f64| pad_l + (h / max_hour) * plot_w;
     let y_for_g = |g: f64| {
@@ -2911,12 +2921,19 @@ fn LingoMoodTimelineChart(
     let y_180 = y_for_g(180.0);
     let show_180_ref = (target_high - 180.0).abs() > 0.5;
     let show_180_label = show_180_ref && (y_180 - band_top).abs() > 10.0;
-    let top_ref_y = if show_180_ref {
-        y_180.min(band_top)
-    } else {
-        band_top
-    };
-    let show_max_g_label = (top_ref_y - pad_t).abs() > 14.0;
+    let labelled: Vec<f64> = [
+        Some(band_top),
+        Some(band_bottom),
+        show_180_label.then_some(y_180),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let grid_ticks: Vec<(f64, f64)> = glucose_axis_ticks((min_g, max_g))
+        .into_iter()
+        .map(|g| (g, y_for_g(g)))
+        .filter(|&(_, y)| labelled.iter().all(|&l| (y - l).abs() > 10.0))
+        .collect();
 
     let segments = downsample_segments_for_chart(&readings, 360, DEFAULT_CHART_GAP_HOURS);
     let spike_peaks: Vec<LingoReading> = select_notable_spike_peaks(&readings, 36)
@@ -2924,7 +2941,7 @@ fn LingoMoodTimelineChart(
         .filter(|r| r.bound.is_ceiling_capped() || r.glucose_mg_dl > target_high)
         .collect();
     let floor_caps = select_svg_floor_cap_markers(&readings, 24);
-    let (x_left, x_mid, x_right) = timeline_x_axis_labels(&readings, max_hour);
+    let [x_left, x_mid, x_right] = timeline_x_axis_labels(&readings, max_hour);
 
     // Sample up to 36 evenly spaced points across the timeline for smooth hover/tap inspection.
     let inspect_points: Vec<LingoReading> = if readings.len() <= 36 {
@@ -2975,6 +2992,11 @@ fn LingoMoodTimelineChart(
                 role="img"
                 aria-label=chart_aria_label
             >
+                // Round value gridlines, labelled where they clear the target and 180 labels
+                {grid_ticks.into_iter().map(|(g, y)| view! {
+                    <line x1=pad_l y1=y x2=width - pad_r y2=y stroke="rgba(148, 163, 184, 0.12)" />
+                    <text x="8" y=y + 4.0 fill=SLATE_LIGHT font-size="10">{format!("{g:.0}")}</text>
+                }).collect_view()}
                 // Configurable target-range shaded metabolic zone
                 <rect
                     x=pad_l
@@ -2996,9 +3018,6 @@ fn LingoMoodTimelineChart(
                 })}
                 <text x="8" y=band_top + 4.0 fill=SLATE_LIGHT font-size="10">{format!("{target_high:.0}")}</text>
                 <text x="8" y=band_bottom + 4.0 fill=SLATE_LIGHT font-size="10">{format!("{target_low:.0}")}</text>
-                {show_max_g_label.then(|| view! {
-                    <text x="8" y=pad_t + 6.0 fill=SLATE_LIGHT font-size="10">{format!("{:.0}", max_g)}</text>
-                })}
 
                 // Gap-aware glucose segments (never bridged across >2h sensor gaps)
                 {segment_polylines.into_iter().map(|pts| view! {
@@ -3434,6 +3453,7 @@ fn HealthConnectSyncCard(
 mod tests {
     use super::*;
     use crate::health_bridge::{HealthBridgePermissionUi, HealthBridgeReadUi};
+    use crate::mental_health_lingo::SAMPLE_LINGO_CSV;
     use leptos::prelude::RenderHtml;
 
     #[test]
@@ -3581,6 +3601,22 @@ mod tests {
         assert!(offset >= 0.0);
         assert!(resolve_checkin_datetime_offset("", &import.readings, 48.0).is_err());
 
+        // The form's local time is the wall clock of the export's own zone, so a check-in at the
+        // last reading's local time lands on that reading.
+        let lingo = parse_commercial_glucose_input(SAMPLE_LINGO_6MO_CSV, None).unwrap();
+        let last = lingo.readings.last().unwrap();
+        let (_, offset) = resolve_checkin_datetime_offset(
+            &default_checkin_datetime_for_readings(&lingo.readings),
+            &lingo.readings,
+            48.0,
+        )
+        .unwrap();
+        assert!(
+            (offset - last.hour_offset).abs() < 1e-6,
+            "{offset} vs {}",
+            last.hour_offset
+        );
+
         assert_eq!(parse_optional_scale_score("", 27, "PHQ-9").unwrap(), None);
         assert_eq!(
             parse_optional_scale_score("14", 27, "PHQ-9").unwrap(),
@@ -3642,6 +3678,42 @@ mod tests {
         assert!(html.contains("2026-07-03"));
         assert!(html.contains("#f97316"), "ceiling-capped spike marker");
         assert!(html.contains("#f43f5e"), "floor-capped dip marker");
+    }
+
+    #[test]
+    fn timeline_x_labels_say_the_time_at_their_place() {
+        let reading = |timestamp: &str, hour_offset: f64| LingoReading {
+            timestamp: timestamp.to_string(),
+            hour_offset,
+            glucose_mg_dl: 100.0,
+            lingo_count: None,
+            tag: None,
+            bound: crate::mental_health_lingo::GlucoseReadingBound::Measured,
+        };
+        // A 6h trace: start, 3h in, and the end, each with its clock time.
+        let short = [
+            reading("2026-07-01T22:00-07:00", 0.0),
+            reading("2026-07-02T04:00-07:00", 6.0),
+        ];
+        assert_eq!(
+            timeline_x_axis_labels(&short, 6.0),
+            ["07-01 22:00", "07-02 01:00", "07-02 04:00"].map(String::from)
+        );
+        // Four days: the middle label is the date halfway along the axis.
+        let long = [
+            reading("2026-07-01T00:00-07:00", 0.0),
+            reading("2026-07-05T00:00-07:00", 96.0),
+        ];
+        assert_eq!(
+            timeline_x_axis_labels(&long, 96.0),
+            ["2026-07-01", "2026-07-03", "2026-07-05"].map(String::from)
+        );
+        // Unparseable timestamps fall back to elapsed time.
+        let bare = [reading("t0", 0.0), reading("t1", 6.0)];
+        assert_eq!(
+            timeline_x_axis_labels(&bare, 6.0),
+            ["0h", "3h", "6h"].map(String::from)
+        );
     }
 
     #[test]
