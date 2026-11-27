@@ -687,7 +687,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                 type="button"
                                 role="tab"
                                 aria-controls="patient-panel-you"
-                                aria-selected=move || active_tab.get() == PatientTab::You
+                                aria-selected=move || (active_tab.get() == PatientTab::You).to_string()
                                 on:click=move |_| active_tab.set(PatientTab::You)
                                 class=move || {
                                     if active_tab.get() == PatientTab::You {
@@ -704,7 +704,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                 type="button"
                                 role="tab"
                                 aria-controls="patient-panel-shared"
-                                aria-selected=move || active_tab.get() == PatientTab::Shared
+                                aria-selected=move || (active_tab.get() == PatientTab::Shared).to_string()
                                 on:click=move |_| active_tab.set(PatientTab::Shared)
                                 class=move || {
                                     if active_tab.get() == PatientTab::Shared {
