@@ -15,7 +15,8 @@ use serde_json::Value;
 
 pub use crate::mental_health_lingo::GlucoseReadingBound;
 use crate::mental_health_lingo::{
-    split_delimited_row, LingoReading, MentalHealthCheckIn, SAMPLE_LINGO_CSV,
+    sample_checkins, sample_lingo_14d_checkins, split_delimited_row, LingoReading,
+    MentalHealthCheckIn, SAMPLE_LINGO_14D_CSV, SAMPLE_LINGO_CSV,
 };
 
 const MMOL_TO_MG_DL: f64 = 18.0182;
@@ -538,17 +539,19 @@ pub fn slice_checkins_window(
         .collect()
 }
 
-/// Where `window` starts on the trace's own hour axis: the first reading inside the trailing
-/// window, or the first reading for [`GlucoseWindow::All`]. None for an empty trace.
+/// Where `window` starts on the trace's own hour axis: the window's length before the last
+/// reading, or the first reading when the trace is shorter than the window or the window is
+/// [`GlucoseWindow::All`]. A trailing window that opens inside a sensor gap still starts at its
+/// cutoff, so the gap shows as empty time rather than shortening the window. None for an empty
+/// trace.
 fn window_start_hour(readings: &[LingoReading], window: GlucoseWindow) -> Option<f64> {
+    let first_h = readings.first()?.hour_offset;
     let end_h = readings.last()?.hour_offset;
-    let cutoff = window
-        .max_hours()
-        .map_or(f64::NEG_INFINITY, |max_h| (end_h - max_h).max(0.0));
-    readings
-        .iter()
-        .map(|r| r.hour_offset)
-        .find(|&h| h >= cutoff - 1e-6)
+    Some(
+        window
+            .max_hours()
+            .map_or(first_h, |max_h| (end_h - max_h).max(first_h)),
+    )
 }
 
 /// The hours a glucose timeline spans from `0.0`: through its last reading or check-in, whichever
@@ -3097,11 +3100,27 @@ pub fn sample_csv_for_monitor(monitor: GlucoseMonitor) -> &'static str {
         GlucoseMonitor::AbbottFreeStyleLibre => SAMPLE_LIBREVIEW_MMOL_CSV,
         GlucoseMonitor::MedtronicCareLink => SAMPLE_MEDTRONIC_CARELINK_CSV,
         GlucoseMonitor::FingerstickBgm => SAMPLE_BGM_FINGERSTICK_CSV,
-        GlucoseMonitor::AbbottLingo
-        | GlucoseMonitor::SenseonicsEversense
+        GlucoseMonitor::AbbottLingo => SAMPLE_LINGO_14D_CSV,
+        GlucoseMonitor::SenseonicsEversense
         | GlucoseMonitor::TandemSource
         | GlucoseMonitor::GlookoTidepool
         | GlucoseMonitor::GenericCsv => SAMPLE_LINGO_CSV,
+    }
+}
+
+/// The synthetic check-ins that belong on the timeline of [`sample_csv_for_monitor`]'s sample.
+pub fn sample_checkins_for_monitor(monitor: GlucoseMonitor) -> Vec<MentalHealthCheckIn> {
+    match monitor {
+        GlucoseMonitor::AbbottLingo => sample_lingo_14d_checkins(),
+        GlucoseMonitor::DexcomClarity
+        | GlucoseMonitor::DexcomStelo
+        | GlucoseMonitor::AbbottFreeStyleLibre
+        | GlucoseMonitor::MedtronicCareLink
+        | GlucoseMonitor::FingerstickBgm
+        | GlucoseMonitor::SenseonicsEversense
+        | GlucoseMonitor::TandemSource
+        | GlucoseMonitor::GlookoTidepool
+        | GlucoseMonitor::GenericCsv => sample_checkins(),
     }
 }
 

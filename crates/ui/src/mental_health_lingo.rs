@@ -549,6 +549,98 @@ timestamp,glucose_mg_dl,lingo_count,tag
 2026-11-22 02:00,82,0,Overnight steady
 2026-11-22 06:00,86,0,Fasting wake";
 
+/// Synthetic 14-day Abbott Lingo export in the app's own export format, written by
+/// `scripts/gen-sample-lingo.py`: 5-minute readings newest first, `201` / `54` sensor-cap
+/// sentinels, `Out of range` rows, long ceiling plateaus, reactive lows and an overnight gap.
+pub const SAMPLE_LINGO_14D_CSV: &str = include_str!("../data/sample-lingo-14d.csv");
+
+/// The local time of the first reading in [`SAMPLE_LINGO_14D_CSV`], where its timeline starts.
+const SAMPLE_LINGO_14D_START: &str = "2026-11-06 03:53";
+
+/// Synthetic check-ins placed at moments in [`SAMPLE_LINGO_14D_CSV`]: ceiling plateaus, lows at
+/// the sensor floor, and recoveries.
+pub fn sample_lingo_14d_checkins() -> Vec<MentalHealthCheckIn> {
+    let checkin = |recorded_at: &str,
+                   [mood, anxiety, energy]: [u8; 3],
+                   sleep_hours: f32,
+                   scales: Option<(u8, u8)>,
+                   note: &str| {
+        let format = "%Y-%m-%d %H:%M";
+        let start = chrono::NaiveDateTime::parse_from_str(SAMPLE_LINGO_14D_START, format);
+        let at = chrono::NaiveDateTime::parse_from_str(recorded_at, format);
+        let minutes = at.and_then(|at| Ok((at - start?).num_minutes()));
+        MentalHealthCheckIn {
+            recorded_at: recorded_at.to_string(),
+            hour_offset: minutes.expect("sample check-in times parse") as f64 / 60.0,
+            mood,
+            anxiety,
+            energy,
+            sleep_hours,
+            phq9: scales.map(|(phq9, _)| phq9),
+            gad7: scales.map(|(_, gad7)| gad7),
+            note: note.to_string(),
+        }
+    };
+    vec![
+        checkin(
+            "2026-11-07 08:15",
+            [6, 5, 4],
+            6.5,
+            Some((9, 8)),
+            "Woke foggy; glucose sat at the sensor ceiling most of the night.",
+        ),
+        checkin(
+            "2026-11-09 17:20",
+            [4, 8, 3],
+            7.0,
+            None,
+            "Shaky and irritable as a big lunch spike crashed to the sensor floor.",
+        ),
+        checkin(
+            "2026-11-12 10:30",
+            [5, 6, 4],
+            6.0,
+            None,
+            "Sluggish through a long morning above 200 mg/dL.",
+        ),
+        checkin(
+            "2026-11-14 22:30",
+            [7, 3, 6],
+            7.5,
+            None,
+            "Calmer once the evening plateau came down after a walk.",
+        ),
+        checkin(
+            "2026-11-17 16:40",
+            [3, 8, 3],
+            6.0,
+            None,
+            "Racing thoughts during a reactive low two hours after lunch.",
+        ),
+        checkin(
+            "2026-11-18 22:00",
+            [4, 7, 4],
+            6.5,
+            None,
+            "Dip to the floor after dinner; anxious and couldn't settle.",
+        ),
+        checkin(
+            "2026-11-19 07:15",
+            [6, 4, 6],
+            7.5,
+            Some((7, 6)),
+            "Slept better; steady just under 200 overnight.",
+        ),
+        checkin(
+            "2026-11-19 15:30",
+            [7, 3, 7],
+            7.5,
+            None,
+            "Settled after a protein snack brought the afternoon spike down.",
+        ),
+    ]
+}
+
 /// Preloaded synthetic mental health check-ins paired with [`SAMPLE_LINGO_CSV`].
 pub fn sample_checkins() -> Vec<MentalHealthCheckIn> {
     vec![

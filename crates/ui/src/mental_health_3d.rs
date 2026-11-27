@@ -39,26 +39,15 @@ pub struct Chart3DScene {
 }
 
 /// Format a compact human-readable timeline span label (`"24h"`, `"14d"`, `"112.7d"`, etc.)
-/// for the 3D chart caption based on the actual trace span.
+/// for the 3D chart caption: the [`timeline_hour_span`] the chart draws.
 pub fn format_trace_span_label(
     readings: &[LingoReading],
     checkins: &[MentalHealthCheckIn],
 ) -> String {
-    let span_hours = if readings.len() >= 2 {
-        let first = readings.first().map(|r| r.hour_offset).unwrap_or(0.0);
-        let last = readings.last().map(|r| r.hour_offset).unwrap_or(0.0);
-        (last - first).max(0.0)
-    } else {
-        readings
-            .iter()
-            .map(|r| r.hour_offset)
-            .chain(checkins.iter().map(|c| c.hour_offset))
-            .fold(0.0_f64, f64::max)
-    };
-
-    if span_hours <= 0.0 {
+    if readings.is_empty() && checkins.is_empty() {
         return "24h".to_string();
     }
+    let span_hours = timeline_hour_span(readings, checkins);
     if span_hours >= 48.0 {
         let days = span_hours / 24.0;
         if (days - days.round()).abs() < 0.05 {

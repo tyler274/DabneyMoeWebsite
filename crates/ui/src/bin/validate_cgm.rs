@@ -28,7 +28,7 @@ use ui::mental_health_cgm_analytics::{
     analyze_glucose_trace, AdvancedGlucoseAnalytics, EpisodeKind, GlycemicEpisode,
 };
 use ui::mental_health_episodes::summarize_episode_cadence;
-use ui::mental_health_lingo::SAMPLE_LINGO_CSV;
+use ui::mental_health_lingo::SAMPLE_LINGO_14D_CSV;
 use ui::mental_health_support::render_clinician_brief_markdown_with_analytics;
 
 fn print_usage() {
@@ -546,7 +546,7 @@ fn main() -> ExitCode {
     while i < args.len() {
         match args[i].as_str() {
             "--sample-lingo" => {
-                built_in_sample = Some(("synthetic-lingo.csv", SAMPLE_LINGO_CSV));
+                built_in_sample = Some(("sample-lingo-14d.csv", SAMPLE_LINGO_14D_CSV));
                 i += 1;
             }
             "--sample-health-connect" => {
@@ -989,7 +989,7 @@ mod tests {
 
     #[test]
     fn formats_windowed_saturation_caveat_only_when_capped() {
-        let import = parse_commercial_glucose_input(SAMPLE_LINGO_CSV, None).unwrap();
+        let import = parse_commercial_glucose_input(SAMPLE_LINGO_14D_CSV, None).unwrap();
         let summary = summarize_commercial_glucose_with_window(
             &import.readings,
             import.monitor,
