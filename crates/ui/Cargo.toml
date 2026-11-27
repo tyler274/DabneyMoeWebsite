@@ -11,6 +11,7 @@ required-features = ["ssr"]
 
 [dependencies]
 clinical-workspace = { path = "../clinical-workspace" }
+recovery-index = { workspace = true }
 leptos = { workspace = true }
 leptos_meta = { workspace = true }
 leptos_router = { workspace = true }
@@ -22,6 +23,9 @@ tokio = { workspace = true, optional = true }
 # JS interop for the Tauri native-opener click handler (WASM builds only).
 js-sys = { version = "0.3", optional = true }
 web-sys = { version = "0.3", optional = true, features = [
+  "Cache",
+  "CacheStorage",
+  "Coordinates",
   "Document",
   "Element",
   "ErrorEvent",
@@ -30,23 +34,32 @@ web-sys = { version = "0.3", optional = true, features = [
   "FileList",
   "FileReader",
   "FocusOptions",
+  "Geolocation",
   "Headers",
   "HtmlCanvasElement",
   "HtmlElement",
   "HtmlInputElement",
   "KeyboardEvent",
+  "Location",
   "MouseEvent",
+  "Navigator",
+  "PointerEvent",
+  "Position",
+  "PositionError",
   "PromiseRejectionEvent",
   "ProgressEvent",
   "Request",
+  "RequestCache",
   "RequestInit",
   "RequestMode",
   "Response",
   "Storage",
+  "Url",
   "WebGl2RenderingContext",
   "Window",
 ] }
 wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 glow = "0.18"
@@ -55,9 +68,9 @@ glam = "0.30"
 [features]
 default = []
 # Client-side rendering (used by the Tauri/Trunk build).
-csr = ["leptos/csr", "js-sys", "web-sys", "wasm-bindgen"]
+csr = ["leptos/csr", "js-sys", "web-sys", "wasm-bindgen", "wasm-bindgen-futures"]
 # Browser hydration of server-rendered HTML (used by the web build).
-hydrate = ["leptos/hydrate", "js-sys", "web-sys", "wasm-bindgen"]
+hydrate = ["leptos/hydrate", "js-sys", "web-sys", "wasm-bindgen", "wasm-bindgen-futures"]
 # Server-side rendering (used by the Axum server).
 ssr = [
   "dep:tokio",

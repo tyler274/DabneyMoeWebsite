@@ -22,12 +22,15 @@ When bumping a release, increment `bundle.android.versionCode` and `version` in 
 
 Official F-Droid compiles `moe.dabney.demo` from source using `docs/fdroid/moe.dabney.demo.yml` and signs it with F-Droid's release key:
 
-1. Ensure the release commit is on `main` and tagged `v1.0.0` on Codeberg (`https://codeberg.org/tyler274/dabney-moe-website`) and mirrored to GitLab (`https://gitlab.com/tyler274/dabney-moe-website`).
+> **3-month maturity requirement:** Official F-Droid requires new apps to have at least 3 months of public maintenance history before inclusion into main `fdroiddata`. Keep `RUSTUP_HOME` and `CARGO_HOME` in `$HOME` (outside `$PWD`) so F-Droid's source scanner passes with zero errors, and run `fdroid rewritemeta moe.dabney.demo` inside your `fdroiddata` fork to match `ruamel.yaml` blank-line and 80-column wrapping rules.
+
+1. Ensure the release commit is on `main` and tagged on Codeberg (`https://codeberg.org/tyler274/dabney-moe-website`) and mirrored to GitLab (`https://gitlab.com/tyler274/dabney-moe-website`).
 2. Fork [`https://gitlab.com/fdroid/fdroiddata`](https://gitlab.com/fdroid/fdroiddata) on GitLab.
-3. Copy `docs/fdroid/moe.dabney.demo.yml` into `metadata/moe.dabney.demo.yml` inside your `fdroiddata` fork.
+3. Copy `docs/fdroid/moe.dabney.demo.yml` into `metadata/moe.dabney.demo.yml` inside your `fdroiddata` fork and normalize formatting with `fdroid rewritemeta moe.dabney.demo`.
 4. Validate locally with `fdroidserver` if installed:
    ```bash
    fdroid readmeta
+   fdroid rewritemeta moe.dabney.demo
    fdroid lint moe.dabney.demo
    fdroid build -v -l moe.dabney.demo
    ```
@@ -50,3 +53,23 @@ IzzyOnDroid tracks signed universal release APKs attached to Codeberg/GitLab Rel
    ```
 2. Publish Codeberg Release `v1.0.0` at `https://codeberg.org/tyler274/dabney-moe-website/releases` attaching `dabney-demo-release.apk` (and `dabney-demo-release.apk.sha256`).
 3. Open an **App Inclusion Request** at `https://codeberg.org/IzzyOnDroid/repodata/issues/new/choose` pointing to `https://codeberg.org/tyler274/dabney-moe-website` (MIT License, Fastlane metadata enabled, zero trackers/blobs).
+
+## Track 3: Self-Hosted Official F-Droid Repository (Live Today)
+
+Users can install and receive cryptographically signed updates immediately via F-Droid, Droid-ify, Neo Store, or Obtainium using the dedicated signed F-Droid repository hosted on Codeberg (`https://codeberg.org/tyler274/fdroid`, `pages` branch):
+
+- **Web Install Hub & QR Code**: [`https://dabney.moe/android`](https://dabney.moe/android)
+- **Repository HTTPS URL**: `https://codeberg.org/tyler274/fdroid/raw/branch/pages/repo`
+- **Repository Signing Fingerprint (SHA-256)**: `BBA10E130E00DC452ED1B1C33D8D6074A098A5874F5DE3AE1390171550EDA5B7`
+- **One-Tap Deep Link**: `fdroidrepos://codeberg.org/tyler274/fdroid/raw/branch/pages/repo?fingerprint=BBA10E130E00DC452ED1B1C33D8D6074A098A5874F5DE3AE1390171550EDA5B7`
+- **Obtainium Profile**: `https://dabney.moe/obtainium-dabney-demo.json`
+
+To publish a new signed APK release to the self-hosted F-Droid repository (keeping all `.apk` binaries strictly out of `DabneyMoeWebsite` Git history):
+
+```bash
+# 1. Build signed universal APK (arm64-v8a + x86_64) into target/android-release/dabney-demo-release.apk
+# 2. Rebuild signed v1/v2 F-Droid index + regenerate public/fdroid-repo-qr.svg and push to codeberg.org/tyler274/fdroid (pages branch):
+scripts/fdroid-repo-publish.sh --push
+```
+
+The repository signing keystore lives outside Git at `~/.config/dabney-android/fdroid-repo-keystore.jks` (alias `dabney-fdroid-repo`). Never commit keystores or password files.

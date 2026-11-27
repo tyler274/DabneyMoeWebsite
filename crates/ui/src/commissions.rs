@@ -6,6 +6,7 @@ use crate::commissions_data::{
     GalleryItem, LapidaryItem, ARTWORK_INTRO, ARTWORK_ITEMS, EILI_YOUTUBE, LAPIDARY_INTRO,
     LAPIDARY_ITEMS, SONGS, SONGS_INTRO,
 };
+use crate::i18n::Msg;
 use crate::sections::{Footer, NavBar, NavDropdown, NavMenuLink, OpenNavMenu};
 
 /// Commission pages, shared by the desktop dropdown and the mobile menu.
@@ -13,14 +14,20 @@ pub const COMMISSIONS_LINKS: &[NavMenuLink] = &[
     NavMenuLink {
         href: "/commissions/lapidary",
         label: "Lapidary",
+        msg: None,
+        accent: false,
     },
     NavMenuLink {
         href: "/commissions/artwork",
         label: "Artwork",
+        msg: None,
+        accent: false,
     },
     NavMenuLink {
         href: "/commissions/songs",
         label: "Songs",
+        msg: None,
+        accent: false,
     },
 ];
 
@@ -29,6 +36,7 @@ pub fn CommissionsMenu(open: RwSignal<OpenNavMenu>) -> impl IntoView {
     view! {
         <NavDropdown
             label="Commissions"
+            label_msg=Msg::NavCommissions
             menu=OpenNavMenu::Commissions
             open=open
             links=COMMISSIONS_LINKS

@@ -4,24 +4,21 @@
 //! clickable cited clinical values, verbatim record citations, and working-note
 //! checkpoints across `/clinical/physician` and `/clinical/patient`.
 
+use std::collections::HashMap;
+
 use clinical_workspace::{
-    tool_catalog, AgentAudience, AgentStep, AgentThread, AgentTurn, CitedValue, HarnessOutcome,
-    ToolExecutionStatus,
+    tool_catalog, AgentAudience, AgentStep, AgentThread, AgentTurn, ChartRecord, CitedValue,
+    HarnessOutcome, ToolExecutionStatus,
 };
 use leptos::prelude::*;
 
-fn scroll_to_record(record_id: &str) {
-    #[cfg(any(feature = "csr", feature = "hydrate"))]
-    {
-        if let Some(el) = web_sys::window()
-            .and_then(|w| w.document())
-            .and_then(|d| d.get_element_by_id(&format!("record-{record_id}")))
-        {
-            el.scroll_into_view();
-        }
-    }
-    #[cfg(not(any(feature = "csr", feature = "hydrate")))]
-    let _ = record_id;
+use crate::chart_citations::{
+    record_anchor_id, scroll_to_record_anchor, CitationAccent, CitationCardLink, CitationLinkedText,
+};
+use crate::i18n::{t, use_locale, Locale, Msg};
+
+fn scroll_to_record(anchor_prefix: &str, record_id: &str) {
+    scroll_to_record_anchor(&record_anchor_id(anchor_prefix, record_id));
 }
 
 fn outcome_badge_class(outcome: &HarnessOutcome) -> &'static str {
@@ -101,7 +98,11 @@ pub fn AgenticTurnCard(
     turn: AgentTurn,
     #[prop(default = None)] active_record: Option<RwSignal<Option<String>>>,
     #[prop(default = true)] expand_trace_by_default: bool,
+    #[prop(default = None)] records: Option<Vec<ChartRecord>>,
+    #[prop(default = "record")] anchor_prefix: &'static str,
+    #[prop(default = None)] on_select_record: Option<Callback<String>>,
 ) -> impl IntoView {
+    let locale = use_locale();
     let container_cls = if turn.grounded {
         "rounded-xl border border-white/10 bg-slate-950/75 p-4 space-y-3"
     } else {
@@ -113,6 +114,14 @@ pub fn AgenticTurnCard(
     let max_steps = turn.budget.max_steps;
     let citation_count = turn.citations.len();
     let is_physician = turn.audience == AgentAudience::Physician;
+    let accent = if is_physician {
+        CitationAccent::Cyan
+    } else {
+        CitationAccent::Emerald
+    };
+    let records_for_answer = records.clone();
+    let records_for_citations = records.clone();
+    let records_for_basis = records;
 
     view! {
         <article data-agent-turn=turn.turn_index.to_string() class=container_cls>
@@ -194,8 +203,10 @@ pub fn AgenticTurnCard(
                             .map(|val| view! {
                                 <CitedValueChip
                                     val=val
-                                    link_to_record=is_physician || active_record.is_some()
+                                    link_to_record=is_physician || active_record.is_some() || on_select_record.is_some()
+                                    anchor_prefix=anchor_prefix
                                     active_record=active_record
+                                    on_select_record=on_select_record
                                 />
                             })
                             .collect_view()}
@@ -204,14 +215,70 @@ pub fn AgenticTurnCard(
             })}
 
             // Main grounded answer text
-            <p class="whitespace-pre-line text-sm leading-relaxed text-slate-200">
-                {turn.answer}
-            </p>
+            {match (records_for_answer, on_select_record) {
+                (Some(recs), Some(on_select)) => view! {
+                    <CitationLinkedText
+                        text=turn.answer
+                        records=recs
+                        anchor_prefix=anchor_prefix
+                        accent=accent
+                        on_select=on_select
+                        class="whitespace-pre-line text-sm leading-relaxed text-slate-200"
+                    />
+                }
+                .into_any(),
+                _ => view! {
+                    <p class="whitespace-pre-line text-sm leading-relaxed text-slate-200">
+                        {turn.answer}
+                    </p>
+                }
+                .into_any(),
+            }}
 
             // Verbatim source record citations
             {(!turn.citations.is_empty()).then(|| {
                 let citations = turn.citations.clone();
-                if is_physician {
+                if let (Some(recs), Some(on_select)) = (records_for_citations, on_select_record) {
+                    let record_map: HashMap<String, ChartRecord> = recs
+                        .into_iter()
+                        .map(|rec| (rec.id.clone(), rec))
+                        .collect();
+                    view! {
+                        <div class="space-y-2.5 border-t border-white/10 pt-2.5">
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                                <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                                    {move || t(locale.get(), Msg::CitationCitedRecordsHeading)}
+                                </p>
+                                {move || {
+                                    let loc = locale.get();
+                                    (loc != Locale::En).then(|| view! {
+                                        <span class="text-[11px] text-cyan-200/85">
+                                            {t(loc, Msg::CitationSourceLanguageNote)}
+                                        </span>
+                                    })
+                                }}
+                            </div>
+                            <div class="grid gap-2.5 sm:grid-cols-2">
+                                {citations
+                                    .into_iter()
+                                    .map(|cite| {
+                                        let matching_record = record_map.get(&cite.record_id).cloned();
+                                        view! {
+                                            <CitationCardLink
+                                                citation=cite
+                                                record=matching_record
+                                                anchor_prefix=anchor_prefix
+                                                accent=accent
+                                                on_select=on_select
+                                            />
+                                        }
+                                    })
+                                    .collect_view()}
+                            </div>
+                        </div>
+                    }
+                    .into_any()
+                } else if is_physician {
                     view! {
                         <div class="flex flex-wrap items-center gap-2 pt-1">
                             <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
@@ -221,12 +288,12 @@ pub fn AgenticTurnCard(
                                 .into_iter()
                                 .map(|cit| {
                                     let target_id = cit.record_id.clone();
-                                    let href = format!("#record-{target_id}");
+                                    let href = format!("#{}", record_anchor_id(anchor_prefix, &target_id));
                                     let on_pick = move |_| {
                                         if let Some(sig) = active_record {
                                             sig.set(Some(target_id.clone()));
                                         }
-                                        scroll_to_record(&target_id);
+                                        scroll_to_record(anchor_prefix, &target_id);
                                     };
                                     view! {
                                         <a
@@ -290,7 +357,24 @@ pub fn AgenticTurnCard(
                 }
             })}
 
-            <p class="text-[11px] text-slate-400">{turn.basis}</p>
+            {match (records_for_basis, on_select_record) {
+                (Some(recs), Some(on_select)) => view! {
+                    <div class="border-t border-white/5 pt-2 font-mono text-[11px] text-slate-400">
+                        <CitationLinkedText
+                            text=turn.basis
+                            records=recs
+                            anchor_prefix=anchor_prefix
+                            accent=accent
+                            on_select=on_select
+                        />
+                    </div>
+                }
+                .into_any(),
+                _ => view! {
+                    <p class="text-[11px] text-slate-400">{turn.basis}</p>
+                }
+                .into_any(),
+            }}
         </article>
     }
 }
@@ -325,17 +409,23 @@ fn AgentStepRow(step: AgentStep) -> impl IntoView {
 fn CitedValueChip(
     val: CitedValue,
     link_to_record: bool,
+    #[prop(default = "record")] anchor_prefix: &'static str,
     #[prop(default = None)] active_record: Option<RwSignal<Option<String>>>,
+    #[prop(default = None)] on_select_record: Option<Callback<String>>,
 ) -> impl IntoView {
     let target_id = val.record_id.clone();
     let label_text = format!("{}: {}", val.label, val.value);
     if link_to_record {
-        let href = format!("#record-{target_id}");
+        let href = format!("#{}", record_anchor_id(anchor_prefix, &target_id));
         let on_pick = move |_| {
             if let Some(sig) = active_record {
                 sig.set(Some(target_id.clone()));
             }
-            scroll_to_record(&target_id);
+            if let Some(cb) = on_select_record {
+                cb.run(target_id.clone());
+            } else {
+                scroll_to_record(anchor_prefix, &target_id);
+            }
         };
         view! {
             <a
@@ -367,6 +457,9 @@ fn CitedValueChip(
 pub fn AgenticThreadView(
     thread: AgentThread,
     #[prop(optional)] active_record: Option<RwSignal<Option<String>>>,
+    #[prop(default = None)] records: Option<Vec<ChartRecord>>,
+    #[prop(default = "record")] anchor_prefix: &'static str,
+    #[prop(default = None)] on_select_record: Option<Callback<String>>,
 ) -> impl IntoView {
     let total_turns = thread.turns.len();
     view! {
@@ -377,11 +470,15 @@ pub fn AgenticThreadView(
                 .rev()
                 .enumerate()
                 .map(|(rev_idx, turn)| {
+                    let recs = records.clone();
                     view! {
                         <AgenticTurnCard
                             turn=turn
                             active_record=active_record
                             expand_trace_by_default=rev_idx == 0 && total_turns <= 3
+                            records=recs
+                            anchor_prefix=anchor_prefix
+                            on_select_record=on_select_record
                         />
                     }
                 })

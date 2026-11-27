@@ -35,13 +35,13 @@ variable "container_port" {
 variable "cpu" {
   type        = string
   description = "CPU limit per instance."
-  default     = "4"
+  default     = "1"
 }
 
 variable "memory" {
   type        = string
   description = "Memory limit per instance."
-  default     = "4Gi"
+  default     = "512Mi"
 }
 
 variable "min_instances" {
@@ -53,7 +53,7 @@ variable "min_instances" {
 variable "max_instances" {
   type        = number
   description = "Maximum number of instances."
-  default     = 4
+  default     = 1
 }
 
 variable "env" {
@@ -113,4 +113,25 @@ variable "dns_root" {
   type        = string
   description = "Apex DNS name for the managed zone, with trailing dot (e.g. dabney.moe.)."
   default     = ""
+}
+
+# --- Optional Anubis ingress sidecar ----------------------------------------
+
+variable "anubis" {
+  type = object({
+    image                 = string
+    cpu                   = optional(string, "250m")
+    memory                = optional(string, "256Mi")
+    app_port              = optional(number, 3039)
+    difficulty            = optional(number, 4)
+    redirect_domains      = optional(string, "")
+    webmaster_email       = optional(string, "")
+    custom_real_ip_header = optional(string, "")
+    signing_key_secret_id = string
+    signing_key_version   = optional(string, "latest")
+    policy_secret_id      = string
+    policy_secret_version = optional(string, "latest")
+  })
+  description = "Optional Anubis ingress sidecar. When set, Anubis listens on container_port, challenges bots with PoW, and proxies verified traffic to the web container on 127.0.0.1:<app_port>."
+  default     = null
 }

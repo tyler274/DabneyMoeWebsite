@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/clinical-workspace", "crates/ui", "crates/web", "crates/tauri-ui", "crates/icon-gen", "crates/forge", "crates/forge-linear-sync", "src-tauri"]
+members = ["crates/clinical-workspace", "crates/recovery-index", "crates/ui", "crates/web", "crates/tauri-ui", "crates/icon-gen", "crates/forge", "crates/forge-linear-sync", "src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -36,6 +36,7 @@ console_error_panic_hook = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 clinical-workspace = { path = "crates/clinical-workspace" }
+recovery-index = { path = "crates/recovery-index" }
 
 # cargo-leptos drives the full-stack web build (SSR server + WASM hydration).
 [[workspace.metadata.leptos]]

@@ -21,12 +21,22 @@ use leptos_router::components::A;
 use leptos_router::hooks::use_location;
 
 use crate::agent_chat::{AgentToolCatalogBar, AgenticThreadView};
+use crate::chart_citations::{
+    record_anchor_id, scroll_to_record_anchor, CitationAccent, CitationBadgeLink,
+};
+#[cfg(any(feature = "csr", feature = "hydrate"))]
+use crate::dashboard_layout::{load_layout_prefs, STORAGE_KEY_PATIENT_LAYOUT};
+use crate::dashboard_layout::{
+    LayoutDensity, PatientLayoutCustomizer, PatientLayoutPrefs, PatientLayoutPreset,
+    PatientSectionOrder, PatientStartTab,
+};
 use crate::health_bridge::LocalLlmStatusUi;
 #[cfg(any(feature = "csr", feature = "hydrate"))]
 use crate::health_bridge::{
     generate_local_llm, load_personal_vault, prepare_local_llm, probe_local_llm,
     probe_personal_vault, save_personal_vault, PersonalVaultSaveUi,
 };
+use crate::i18n::{t, use_locale, Locale, Msg};
 use crate::local_ai_chat::LocalLlmStatusBanner;
 use crate::patient_ehr::{AutomatedRoiPanel, PatientEhrPortalsPanel, PortablePassportSection};
 #[cfg(any(feature = "csr", feature = "hydrate"))]
@@ -52,12 +62,21 @@ const fn record_kind_badge_class(kind: RecordKind) -> &'static str {
     }
 }
 
-/// Compact clinical demo suite switcher shared across `/clinical`,
+/// Sticky clinical suite switcher shared across `/clinical`,
 /// `/clinical/patient`, `/clinical/physician`, and `/mental-health`.
 #[component]
 pub fn ClinicalSuiteSwitcher() -> impl IntoView {
     let location = use_location();
     let app_mode = use_context::<AppShellMode>().unwrap_or(AppShellMode::Website);
+    let locale = use_locale();
+
+    let is_recovery_tab = move || {
+        let search = location.search.get();
+        search
+            .trim_start_matches('?')
+            .split('&')
+            .any(|pair| pair == "tab=recovery")
+    };
 
     let is_active = move |target: &'static str| {
         let path = location.pathname.get();
@@ -65,6 +84,10 @@ pub fn ClinicalSuiteSwitcher() -> impl IntoView {
         let normalized = if trimmed.is_empty() { "/" } else { trimmed };
         if target == "/clinical/patient" && app_mode == AppShellMode::ClinicalDemoApp {
             normalized == "/" || normalized == "/clinical/patient"
+        } else if target == "/mental-health?tab=recovery" {
+            normalized == "/mental-health" && is_recovery_tab()
+        } else if target == "/mental-health" {
+            normalized == "/mental-health" && !is_recovery_tab()
         } else {
             normalized == target
         }
@@ -72,9 +95,9 @@ pub fn ClinicalSuiteSwitcher() -> impl IntoView {
 
     let tab_class = move |target: &'static str| {
         if is_active(target) {
-            "inline-flex min-h-[38px] items-center rounded-full border border-emerald-400/50 bg-emerald-500/15 px-3.5 py-1.5 text-xs font-semibold text-emerald-200 transition"
+            "inline-flex min-h-[38px] shrink-0 items-center rounded-full border border-emerald-400/50 bg-emerald-500/15 px-3.5 py-1.5 text-xs font-semibold text-emerald-200 transition"
         } else {
-            "inline-flex min-h-[38px] items-center rounded-full border border-white/10 bg-slate-950/60 px-3.5 py-1.5 text-xs font-medium text-slate-300 transition hover:border-white/25 hover:text-white"
+            "inline-flex min-h-[38px] shrink-0 items-center rounded-full border border-white/10 bg-slate-950/60 px-3.5 py-1.5 text-xs font-medium text-slate-300 transition hover:border-white/25 hover:text-white"
         }
     };
 
@@ -86,20 +109,43 @@ pub fn ClinicalSuiteSwitcher() -> impl IntoView {
 
     view! {
         <nav
-            aria-label="Clinical demo suite"
-            class="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.02] p-2"
+            aria-label=move || t(locale.get(), Msg::SuiteAriaLabel)
+            class="print-hide print:hidden sticky top-[61px] z-30 flex items-center gap-2 overflow-x-auto rounded-2xl border border-white/10 bg-slate-950/85 p-2 shadow-lg shadow-slate-950/40 backdrop-blur"
         >
-            <A href=patient_href attr:class=move || tab_class("/clinical/patient")>
-                "Patient Demo"
+            <A
+                href=patient_href
+                attr:class=move || tab_class("/clinical/patient")
+                attr:aria-current=move || is_active("/clinical/patient").then_some("page")
+            >
+                {move || t(locale.get(), Msg::SuitePatient)}
             </A>
-            <A href="/clinical/physician" attr:class=move || tab_class("/clinical/physician")>
-                "Physician Demo"
+            <A
+                href="/clinical/physician"
+                attr:class=move || tab_class("/clinical/physician")
+                attr:aria-current=move || is_active("/clinical/physician").then_some("page")
+            >
+                {move || t(locale.get(), Msg::SuitePhysician)}
             </A>
-            <A href="/mental-health" attr:class=move || tab_class("/mental-health")>
-                "Mental Health & CGM"
+            <A
+                href="/mental-health"
+                attr:class=move || tab_class("/mental-health")
+                attr:aria-current=move || is_active("/mental-health").then_some("page")
+            >
+                {move || t(locale.get(), Msg::SuiteMentalHealth)}
             </A>
-            <A href="/clinical" attr:class=move || tab_class("/clinical")>
-                "Suite Overview"
+            <A
+                href="/mental-health?tab=recovery"
+                attr:class=move || tab_class("/mental-health?tab=recovery")
+                attr:aria-current=move || is_active("/mental-health?tab=recovery").then_some("page")
+            >
+                {move || t(locale.get(), Msg::SuiteRecoveryFinder)}
+            </A>
+            <A
+                href="/clinical"
+                attr:class=move || tab_class("/clinical")
+                attr:aria-current=move || is_active("/clinical").then_some("page")
+            >
+                {move || t(locale.get(), Msg::SuiteOverview)}
             </A>
         </nav>
     }
@@ -110,6 +156,7 @@ pub fn ClinicalSuiteSwitcher() -> impl IntoView {
 #[component]
 pub fn PatientDemoPage() -> impl IntoView {
     let app_mode = use_context::<AppShellMode>().unwrap_or(AppShellMode::Website);
+    let locale = use_locale();
     let baseline_panel = synthetic_panel();
     let patient_order = StoredValue::new(
         baseline_panel
@@ -181,6 +228,10 @@ pub fn PatientDemoPage() -> impl IntoView {
     let selected_id = RwSignal::new(initial_id);
     let active_tab = RwSignal::new(PatientTab::You);
     let charts = RwSignal::new(initial_charts_map);
+    let focused_record_id = RwSignal::new(Option::<String>::None);
+    let layout_prefs = RwSignal::new(PatientLayoutPrefs::default());
+    let layout_open = RwSignal::new(false);
+    let layout_notice = RwSignal::new(Option::<String>::None);
     let demo_states = RwSignal::new(initial_states);
     let allergies_map = RwSignal::new(initial_allergies);
     let linked_portals = RwSignal::new(HashMap::<String, Vec<LinkedPortalConnection>>::new());
@@ -191,7 +242,6 @@ pub fn PatientDemoPage() -> impl IntoView {
     let question_input = RwSignal::new(initial_question);
     let threads = RwSignal::new(initial_threads);
     let step_budget = RwSignal::new(RunBudget::default().max_steps);
-    let active_record = RwSignal::new(Option::<String>::None);
     let new_private_note = RwSignal::new(String::new());
     let new_visit_question = RwSignal::new(String::new());
     let next_note_seq = RwSignal::new(2usize);
@@ -202,12 +252,21 @@ pub fn PatientDemoPage() -> impl IntoView {
     let llm_preparing = RwSignal::new(false);
     let llm_prepare_notice = RwSignal::new(Option::<String>::None);
     let llm_thinking = RwSignal::new(false);
+    let llm_error = RwSignal::new(Option::<String>::None);
     let llm_req_seq = RwSignal::new(0usize);
     let vault_enabled = RwSignal::new(false);
 
     Effect::new(move |_| {
         #[cfg(any(feature = "csr", feature = "hydrate"))]
         {
+            if let Some(saved) = load_layout_prefs::<PatientLayoutPrefs>(STORAGE_KEY_PATIENT_LAYOUT)
+            {
+                active_tab.set(match saved.start_tab {
+                    PatientStartTab::You => PatientTab::You,
+                    PatientStartTab::Shared => PatientTab::Shared,
+                });
+                layout_prefs.set(saved);
+            }
             probe_local_llm(move |status| {
                 llm_status.set(Some(status));
             });
@@ -263,7 +322,8 @@ pub fn PatientDemoPage() -> impl IntoView {
     let select_profile = move |patient_id: String| {
         llm_req_seq.update(|n| *n += 1);
         llm_thinking.set(false);
-        active_record.set(None);
+        llm_error.set(None);
+        focused_record_id.set(None);
         ehr_sync_banner.set(None);
         selected_id.set(patient_id.clone());
         let default_q = default_patient_questions(&patient_id)
@@ -310,7 +370,7 @@ pub fn PatientDemoPage() -> impl IntoView {
     let clear_active_thread = move |_| {
         llm_req_seq.update(|n| *n += 1);
         llm_thinking.set(false);
-        active_record.set(None);
+        focused_record_id.set(None);
         let active_id = selected_id.get_untracked();
         threads.update(|map| {
             if let Some(thread) = map.get_mut(&active_id) {
@@ -324,7 +384,7 @@ pub fn PatientDemoPage() -> impl IntoView {
         if trimmed.is_empty() {
             return;
         }
-        active_record.set(None);
+        focused_record_id.set(None);
         let active_id = selected_id.get();
         let max_steps = step_budget.get_untracked();
         let (turn_index, prior_notes) = threads.with_untracked(|map| {
@@ -360,6 +420,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                 .or_insert_with(|| AgentThread::new(&active_id, AgentAudience::Patient))
                 .record_turn(turn.clone());
         });
+        llm_error.set(None);
 
         let req_id = llm_req_seq.get_untracked() + 1;
         llm_req_seq.set(req_id);
@@ -380,25 +441,33 @@ pub fn PatientDemoPage() -> impl IntoView {
                     return;
                 }
                 llm_thinking.set(false);
-                if let Ok(gen) = res {
-                    let mut enhanced = turn.clone();
-                    enhanced.answer = gen.text;
-                    enhanced.engine_label = format!(
-                        "Agentic Harness + {} ({} ms)",
-                        gen.model_name, gen.latency_ms
-                    );
-                    enhanced.basis = format!(
-                        "{} (on-device · {} ms) grounded strictly in {} harness tool step(s) and {} verbatim citation(s).",
-                        gen.model_name,
-                        gen.latency_ms,
-                        enhanced.steps.len(),
-                        enhanced.citations.len(),
-                    );
-                    threads.update(|map| {
-                        if let Some(thread) = map.get_mut(&target_pid) {
-                            thread.replace_turn(enhanced);
-                        }
-                    });
+                match res {
+                    Ok(gen) => {
+                        let mut enhanced = turn.clone();
+                        enhanced.answer = gen.text;
+                        enhanced.engine_label = format!(
+                            "Agentic Harness + {} ({} ms)",
+                            gen.model_name, gen.latency_ms
+                        );
+                        enhanced.basis = format!(
+                            "{} (on-device · {} ms) grounded strictly in {} harness tool step(s) and {} verbatim citation(s).",
+                            gen.model_name,
+                            gen.latency_ms,
+                            enhanced.steps.len(),
+                            enhanced.citations.len(),
+                        );
+                        threads.update(|map| {
+                            if let Some(thread) = map.get_mut(&target_pid) {
+                                thread.replace_turn(enhanced);
+                            }
+                        });
+                    }
+                    Err(_) => {
+                        llm_error.set(Some(
+                            "On-device AI explanation was unavailable for this turn; showing record-cited summary."
+                                .to_string(),
+                        ));
+                    }
                 }
             });
         }
@@ -438,6 +507,7 @@ pub fn PatientDemoPage() -> impl IntoView {
 
     let reset_active_demo = move |_| {
         let active_id = selected_id.get();
+        focused_record_id.set(None);
         let baseline =
             baseline_charts.with_value(|list| list.iter().find(|p| p.id == active_id).cloned());
         if let Some(fresh_chart) = baseline {
@@ -528,9 +598,37 @@ pub fn PatientDemoPage() -> impl IntoView {
         )));
     });
 
+    let jump_to_record = Callback::new(move |record_id: String| {
+        active_tab.set(PatientTab::You);
+        focused_record_id.set(Some(record_id.clone()));
+        scroll_to_record_anchor(&record_anchor_id("patient-record", &record_id));
+    });
+
     let on_submit_question = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
         ask_patient_question(question_input.get());
+    };
+
+    let persist_private_notes = move |patient_id: &str| {
+        #[cfg(any(feature = "csr", feature = "hydrate"))]
+        if vault_enabled.get_untracked() {
+            let notes_snapshot = demo_states
+                .get_untracked()
+                .get(patient_id)
+                .map(|st| st.personal_notes.clone())
+                .unwrap_or_default();
+            if let Ok(encoded) = serde_json::to_string(&notes_snapshot) {
+                save_personal_vault(
+                    &PersonalVaultSaveUi {
+                        notes_json: Some(encoded),
+                        ..Default::default()
+                    },
+                    |_| {},
+                );
+            }
+        }
+        #[cfg(not(any(feature = "csr", feature = "hydrate")))]
+        let _ = patient_id;
     };
 
     let on_add_private_note = move |ev: leptos::ev::SubmitEvent| {
@@ -555,23 +653,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                 });
             }
         });
-        #[cfg(any(feature = "csr", feature = "hydrate"))]
-        if vault_enabled.get_untracked() {
-            let notes_snapshot = demo_states
-                .get_untracked()
-                .get(&active_id)
-                .map(|st| st.personal_notes.clone())
-                .unwrap_or_default();
-            if let Ok(encoded) = serde_json::to_string(&notes_snapshot) {
-                save_personal_vault(
-                    &PersonalVaultSaveUi {
-                        notes_json: Some(encoded),
-                        ..Default::default()
-                    },
-                    |_| {},
-                );
-            }
-        }
+        persist_private_notes(&active_id);
         new_private_note.set(String::new());
     };
 
@@ -605,32 +687,39 @@ pub fn PatientDemoPage() -> impl IntoView {
     };
 
     view! {
-        <Title text="Patient Demo (Zero PHI) — Dabney.moe Clinical Workspace | dabney.moe" />
+        <Title text="Curie Mobile — Patient Experience Demo (Zero PHI) | dabney.moe" />
         <Meta
             name="description"
-            content="Interactive zero-PHI patient health companion demo in pure Rust and WebAssembly: explore fictional records, medications, record-cited questions, and explicit For My Doctor sharing controls with zero data leaving your device."
+            content="Interactive zero-PHI Curie Mobile patient health companion demo: explore fictional records, medications, record-cited questions, and explicit For My Doctor sharing controls with zero data leaving your device."
         />
         <Link rel="canonical" href="https://dabney.moe/clinical/patient" />
 
         <NavBar />
 
-        <div class="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-10 space-y-6">
+        <div class=move || {
+            let prefs = layout_prefs.get();
+            format!(
+                "mx-auto {} px-4 py-6 sm:px-6 sm:py-10 {}",
+                prefs.density.container_width_class(),
+                prefs.density.stack_gap_class()
+            )
+        }>
             // Top Header
             <header class="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-5">
                 <div class="flex items-center gap-3.5">
                     <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/40 bg-[#01081b] p-1 shadow-sm">
                         <img
                             src="/dabney-elephant.svg"
-                            alt="Dabney.moe elephant emblem"
+                            alt="Curie Mobile emblem"
                             class="h-full w-full object-contain"
                         />
                     </div>
                     <div>
                         <p class="text-[11px] font-semibold uppercase tracking-widest text-emerald-300">
-                            "Dabney.moe · Patient Companion Demo"
+                            {move || t(locale.get(), Msg::PatientEyebrow)}
                         </p>
                         <h1 class="text-2xl font-bold tracking-tight text-white sm:text-3xl">
-                            "Patient Experience Demo"
+                            {move || t(locale.get(), Msg::PatientTitle)}
                         </h1>
                     </div>
                 </div>
@@ -645,6 +734,14 @@ pub fn PatientDemoPage() -> impl IntoView {
                         "Open on dabney.moe ↗"
                     </a>
                 })}
+                {(app_mode == AppShellMode::Website).then(|| view! {
+                    <A
+                        href="/android"
+                        attr:class="inline-flex min-h-[40px] items-center rounded-full border border-emerald-400/35 bg-emerald-500/15 px-4 py-2 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
+                    >
+                        {move || t(locale.get(), Msg::ToolAndroidApp)}
+                    </A>
+                })}
             </header>
 
             // Prominent Zero-PHI Synthetic Demo Disclaimer
@@ -656,16 +753,16 @@ pub fn PatientDemoPage() -> impl IntoView {
                 <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div class="space-y-1">
                         <p class="text-xs font-semibold uppercase tracking-widest text-emerald-300">
-                            "100% Synthetic Demo · Zero PHI · Do Not Enter Real Health Information"
+                            {move || t(locale.get(), Msg::SyntheticDemoNotice)}
                         </p>
                         <p class="text-xs leading-relaxed text-emerald-50/90 sm:text-sm">
                             "Every name, lab value, medication, and message here is fictional sample data running "
-                            "locally in Rust/WebAssembly. Nothing is uploaded, stored on servers, or shared with "
+                            "locally on your device. Nothing is uploaded, stored on servers, or shared with "
                             "third parties. Educational software demonstration only—not medical advice or a diagnostic tool."
                         </p>
                     </div>
                     <span class="shrink-0 self-start rounded-full border border-emerald-400/40 bg-slate-950/70 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-emerald-300 sm:self-center">
-                        "On-Device Only"
+                        {move || t(locale.get(), Msg::OnDeviceOnlyBadge)}
                     </span>
                 </div>
             </section>
@@ -677,15 +774,46 @@ pub fn PatientDemoPage() -> impl IntoView {
             <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
                 <div class="flex flex-wrap items-center justify-between gap-2">
                     <h2 class="text-xs font-semibold uppercase tracking-widest text-slate-300">
-                        "Choose a Fictional Sample Profile"
+                        {move || t(locale.get(), Msg::PatientChooseProfile)}
                     </h2>
-                    <button
-                        type="button"
-                        on:click=reset_active_demo
-                        class="rounded-full border border-white/15 px-3 py-1 text-[11px] font-medium text-slate-300 transition hover:border-white/30 hover:text-white"
-                    >
-                        "Reset sample state"
-                    </button>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            aria-expanded=move || layout_open.get().to_string()
+                            on:click=move |_| layout_open.update(|v| *v = !*v)
+                            class=move || {
+                                if layout_open.get() {
+                                    "min-h-[34px] rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 text-[11px] font-semibold text-emerald-100 transition"
+                                } else {
+                                    "min-h-[34px] rounded-full border border-white/15 bg-slate-950/60 px-3 py-1 text-[11px] font-medium text-slate-200 transition hover:border-emerald-400/40 hover:text-white"
+                                }
+                            }
+                        >
+                            {move || {
+                                let loc = locale.get();
+                                let preset_label = match layout_prefs.get().preset {
+                                    Some(PatientLayoutPreset::CalmCompanion) => {
+                                        t(loc, Msg::LayoutPresetCalmCompanion)
+                                    }
+                                    Some(PatientLayoutPreset::RecordsFirstCompact) => {
+                                        t(loc, Msg::LayoutPresetRecordsFirstCompact)
+                                    }
+                                    Some(PatientLayoutPreset::VisitPrepFocus) => {
+                                        t(loc, Msg::LayoutPresetVisitPrepFocus)
+                                    }
+                                    None => t(loc, Msg::LayoutCustomLabel),
+                                };
+                                format!("{}: {} ▾", t(loc, Msg::LayoutButtonPrefix), preset_label)
+                            }}
+                        </button>
+                        <button
+                            type="button"
+                            on:click=reset_active_demo
+                            class="min-h-[34px] rounded-full border border-white/15 px-3 py-1 text-[11px] font-medium text-slate-300 transition hover:border-white/30 hover:text-white"
+                        >
+                            {move || t(locale.get(), Msg::PatientResetSample)}
+                        </button>
+                    </div>
                 </div>
                 <div class="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
                     {patient_order.with_value(|ids| {
@@ -709,9 +837,9 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         on:click=move |_| select_profile(pid_click.clone())
                                         class=move || {
                                             if selected_id.get() == pid_class {
-                                                "min-h-[44px] w-full rounded-xl border border-emerald-400/60 bg-emerald-500/15 p-3 text-left transition"
+                                                "min-h-[44px] w-full rounded-xl border border-emerald-400/60 bg-emerald-500/15 p-3 text-start transition"
                                             } else {
-                                                "min-h-[44px] w-full rounded-xl border border-white/10 bg-slate-950/60 p-3 text-left transition hover:border-white/25 hover:bg-white/[0.04]"
+                                                "min-h-[44px] w-full rounded-xl border border-white/10 bg-slate-950/60 p-3 text-start transition hover:border-white/25 hover:bg-white/[0.04]"
                                             }
                                         }
                                     >
@@ -727,6 +855,18 @@ pub fn PatientDemoPage() -> impl IntoView {
                     })}
                 </div>
             </section>
+
+            <PatientLayoutCustomizer
+                prefs=layout_prefs
+                open=layout_open
+                saved_notice=layout_notice
+                on_apply_start_tab=Callback::new(move |tab: PatientStartTab| {
+                    active_tab.set(match tab {
+                        PatientStartTab::You => PatientTab::You,
+                        PatientStartTab::Shared => PatientTab::Shared,
+                    });
+                })
+            />
 
             // Patient Tab Bar ("Your Health", "Doctor Portals", "For My Doctor & Portable File", "Release of Info")
             // Kept outside chart/ROI data closures so mutating linked portals or ROI
@@ -751,8 +891,10 @@ pub fn PatientDemoPage() -> impl IntoView {
                     class="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-slate-900/70 p-1.5 lg:grid-cols-4"
                 >
                     <button
+                        id="patient-tab-you"
                         type="button"
                         role="tab"
+                        aria-controls="patient-panel-you"
                         aria-selected=move || active_tab.get() == PatientTab::You
                         on:click=move |_| active_tab.set(PatientTab::You)
                         class=move || {
@@ -763,11 +905,13 @@ pub fn PatientDemoPage() -> impl IntoView {
                             }
                         }
                     >
-                        "Your Health (You)"
+                        {move || t(locale.get(), Msg::PatientTabYou)}
                     </button>
                     <button
+                        id="patient-tab-portals"
                         type="button"
                         role="tab"
+                        aria-controls="patient-panel-portals"
                         aria-selected=move || active_tab.get() == PatientTab::Portals
                         on:click=move |_| active_tab.set(PatientTab::Portals)
                         class=move || {
@@ -793,8 +937,10 @@ pub fn PatientDemoPage() -> impl IntoView {
                         }}
                     </button>
                     <button
+                        id="patient-tab-shared"
                         type="button"
                         role="tab"
+                        aria-controls="patient-panel-shared"
                         aria-selected=move || active_tab.get() == PatientTab::Shared
                         on:click=move |_| active_tab.set(PatientTab::Shared)
                         class=move || {
@@ -820,12 +966,14 @@ pub fn PatientDemoPage() -> impl IntoView {
                                     })
                                     .unwrap_or((0, 0))
                             });
-                            format!("For My Doctor ({selected_count}/{total_records})")
+                            format!("{} ({selected_count}/{total_records})", t(locale.get(), Msg::PatientTabDoctor))
                         }}
                     </button>
                     <button
+                        id="patient-tab-roi"
                         type="button"
                         role="tab"
+                        aria-controls="patient-panel-roi"
                         aria-selected=move || active_tab.get() == PatientTab::Roi
                         on:click=move |_| active_tab.set(PatientTab::Roi)
                         class=move || {
@@ -871,16 +1019,18 @@ pub fn PatientDemoPage() -> impl IntoView {
                                 .into_any();
                             };
                             view! {
-                                <PatientEhrPortalsPanel
-                                    patient=patient
-                                    linked_portals=linked_portals
-                                    charts=charts
-                                    allergies_map=allergies_map
-                                    demo_states=demo_states
-                                    on_records_updated=Callback::new(move |msg| {
-                                        ehr_sync_banner.set(Some(msg));
-                                    })
-                                />
+                                <div id="patient-panel-portals" role="tabpanel" aria-labelledby="patient-tab-portals">
+                                    <PatientEhrPortalsPanel
+                                        patient=patient
+                                        linked_portals=linked_portals
+                                        charts=charts
+                                        allergies_map=allergies_map
+                                        demo_states=demo_states
+                                        on_records_updated=Callback::new(move |msg| {
+                                            ehr_sync_banner.set(Some(msg));
+                                        })
+                                    />
+                                </div>
                             }
                             .into_any()
                         }
@@ -894,10 +1044,12 @@ pub fn PatientDemoPage() -> impl IntoView {
                                 .into_any();
                             };
                             view! {
-                                <AutomatedRoiPanel
-                                    patient=patient
-                                    roi_map=roi_map
-                                />
+                                <div id="patient-panel-roi" role="tabpanel" aria-labelledby="patient-tab-roi">
+                                    <AutomatedRoiPanel
+                                        patient=patient
+                                        roi_map=roi_map
+                                    />
+                                </div>
                             }
                             .into_any()
                         }
@@ -938,11 +1090,59 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         .count();
                                     let total_records = patient.records.len();
                                     let presets = default_patient_questions(&patient.id);
+                                    let records_for_answer = patient.records.clone();
+                                    let records_for_list = patient.records.clone();
 
                                     view! {
-                                <div class="space-y-6">
+                                <div
+                                    id="patient-panel-you"
+                                    role="tabpanel"
+                                    aria-labelledby="patient-tab-you"
+                                    class=move || {
+                                        let gap = match layout_prefs.get().density {
+                                            LayoutDensity::Compact => "gap-4",
+                                            LayoutDensity::Balanced => "gap-6",
+                                            LayoutDensity::Spacious => "gap-8",
+                                        };
+                                        format!("flex flex-col {gap}")
+                                    }
+                                >
+                                    // Quick jump pills inside Your Health
+                                    <nav
+                                        aria-label="Jump to section"
+                                        class="order-1 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-xs"
+                                    >
+                                        <div class="flex flex-wrap items-center gap-1.5">
+                                            <span class="pe-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                                                {move || t(locale.get(), Msg::PhysicianJumpTo)}
+                                            </span>
+                                            <a href="#patient-summary" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-emerald-400/40 hover:text-white">
+                                                {move || t(locale.get(), Msg::PatientJumpSummary)}
+                                            </a>
+                                            {move || layout_prefs.get().show_ask_section.then(|| view! {
+                                                <a href="#patient-ask" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-cyan-400/40 hover:text-white">
+                                                    {move || t(locale.get(), Msg::PatientJumpAsk)}
+                                                </a>
+                                            })}
+                                            <a href="#patient-records" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-emerald-400/40 hover:text-white">
+                                                {move || format!("{} ({total_records})", t(locale.get(), Msg::PatientJumpRecords))}
+                                            </a>
+                                            {move || layout_prefs.get().show_private_notes.then(|| view! {
+                                                <a href="#patient-notes" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-white/30 hover:text-white">
+                                                    {move || t(locale.get(), Msg::PatientJumpNotes)}
+                                                </a>
+                                            })}
+                                        </div>
+                                        <A
+                                            href="/mental-health?tab=recovery"
+                                            attr:class="inline-flex items-center gap-1 text-xs font-medium text-emerald-300 underline-offset-2 hover:underline"
+                                        >
+                                            <span>{move || t(locale.get(), Msg::PatientFindRecoveryLink)}</span>
+                                            <span class="inline-block rtl:rotate-180" aria-hidden="true">"→"</span>
+                                        </A>
+                                    </nav>
                                     // Summary & Next Visit Card
-                                    <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4">
+                                    <section id="patient-summary" class="order-2 scroll-mt-32 rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4">
                                         <div class="flex flex-wrap items-start justify-between gap-3">
                                             <div>
                                                 <div class="flex flex-wrap items-center gap-2">
@@ -958,7 +1158,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                                 </p>
                                             </div>
                                             {patient.visit.clone().map(|slot| view! {
-                                                <div class="rounded-xl border border-cyan-400/25 bg-cyan-500/10 px-3.5 py-2 text-left sm:text-right">
+                                                <div class="rounded-xl border border-cyan-400/25 bg-cyan-500/10 px-3.5 py-2 text-start sm:text-end">
                                                     <p class="font-mono text-xs font-semibold text-cyan-300">
                                                         {format!("Next Demo Visit · {} ({})", slot.starts_at, slot.modality)}
                                                     </p>
@@ -987,9 +1187,10 @@ pub fn PatientDemoPage() -> impl IntoView {
                                                 <button
                                                     type="button"
                                                     on:click=move |_| active_tab.set(PatientTab::Shared)
-                                                    class="inline-flex min-h-[38px] items-center rounded-full border border-emerald-400/40 bg-emerald-500/15 px-3.5 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
+                                                    class="inline-flex min-h-[38px] items-center gap-1 rounded-full border border-emerald-400/40 bg-emerald-500/15 px-3.5 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
                                                 >
-                                                    "Save / Share Portable File →"
+                                                    <span>{move || t(locale.get(), Msg::PatientReviewForDoctor)}</span>
+                                                    <span class="inline-block rtl:rotate-180" aria-hidden="true">"→"</span>
                                                 </button>
                                                 <button
                                                     type="button"
@@ -1015,10 +1216,10 @@ pub fn PatientDemoPage() -> impl IntoView {
                                     </section>
 
                                     // Medications & Conditions
-                                    <div class="grid gap-4 md:grid-cols-2">
+                                    <div class="order-3 grid gap-4 md:grid-cols-2">
                                         <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
                                             <h3 class="text-xs font-semibold uppercase tracking-widest text-emerald-300">
-                                                "Sample Medications"
+                                                {move || t(locale.get(), Msg::PatientMedicationsHeading)}
                                             </h3>
                                             <ul class="mt-3 space-y-2.5">
                                                 {patient
@@ -1045,7 +1246,7 @@ pub fn PatientDemoPage() -> impl IntoView {
 
                                         <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
                                             <h3 class="text-xs font-semibold uppercase tracking-widest text-cyan-300">
-                                                "Active Focus Areas"
+                                                {move || t(locale.get(), Msg::PatientFocusAreasHeading)}
                                             </h3>
                                             <ul class="mt-3 space-y-2.5">
                                                 {patient
@@ -1074,14 +1275,25 @@ pub fn PatientDemoPage() -> impl IntoView {
                                     </div>
 
                                     // Ask About Your Synthetic Records (Bounded Agentic Chat Harness)
-                                    <section class="rounded-2xl border border-cyan-400/25 bg-slate-900/50 p-5 space-y-4">
+                                    <section
+                                        id="patient-ask"
+                                        class=move || {
+                                            let prefs = layout_prefs.get();
+                                            let vis = if prefs.show_ask_section { "" } else { "hidden " };
+                                            let ord = match prefs.order {
+                                                PatientSectionOrder::AskFirst => "order-4",
+                                                PatientSectionOrder::RecordsFirst => "order-5",
+                                            };
+                                            format!("{vis}{ord} scroll-mt-32 rounded-2xl border border-cyan-400/25 bg-slate-900/50 p-5 space-y-4")
+                                        }
+                                    >
                                         <div class="flex flex-wrap items-start justify-between gap-3">
                                             <div>
                                                 <p class="text-xs font-semibold uppercase tracking-widest text-cyan-300">
                                                     "Bounded Agentic Chat Harness (Patient Mode)"
                                                 </p>
                                                 <h3 class="mt-1 text-lg font-semibold text-white">
-                                                    "Ask About These Synthetic Records"
+                                                    {move || t(locale.get(), Msg::PatientAskHeading)}
                                                 </h3>
                                                 <p class="mt-1 text-xs text-slate-300">
                                                     "Multi-step tool-calling explanation scoped strictly to this sample profile on-device. "
@@ -1136,7 +1348,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                             <input
                                                 type="text"
                                                 aria-label="Ask a question about these synthetic sample records"
-                                                placeholder="Ask about labs, glucose trends, medications, or recap (no real PHI)..."
+                                                placeholder=move || t(locale.get(), Msg::PatientAskPlaceholder)
                                                 prop:value=move || question_input.get()
                                                 on:input=move |ev| question_input.set(event_target_value(&ev))
                                                 class="min-h-[44px] flex-1 rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder:text-slate-400 focus:border-emerald-400/60 focus:outline-none focus:ring-1 focus:ring-emerald-400/50"
@@ -1146,7 +1358,14 @@ pub fn PatientDemoPage() -> impl IntoView {
                                                 disabled=move || llm_thinking.get()
                                                 class="min-h-[44px] rounded-full bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50"
                                             >
-                                                {move || if llm_thinking.get() { "Synthesizing…" } else { "Run harness" }}
+                                                {move || {
+                                                    let loc = locale.get();
+                                                    if llm_thinking.get() {
+                                                        t(loc, Msg::PhysicianSynthesizing)
+                                                    } else {
+                                                        t(loc, Msg::PatientExplainButton)
+                                                    }
+                                                }}
                                             </button>
                                         </form>
 
@@ -1162,12 +1381,13 @@ pub fn PatientDemoPage() -> impl IntoView {
                                                     view! {
                                                         <button
                                                             type="button"
+                                                            disabled=move || llm_thinking.get()
                                                             on:click=move |_| {
                                                                 let q = preset.to_string();
                                                                 question_input.set(q.clone());
                                                                 ask_patient_question(q);
                                                             }
-                                                            class="min-h-[36px] rounded-full border border-white/15 bg-slate-950/70 px-3 py-1.5 text-xs text-slate-200 transition hover:border-emerald-400/45 hover:text-white"
+                                                            class="min-h-[36px] rounded-full border border-white/15 bg-slate-950/70 px-3 py-1.5 text-xs text-slate-200 transition hover:border-emerald-400/45 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                                                         >
                                                             {preset}
                                                         </button>
@@ -1176,22 +1396,54 @@ pub fn PatientDemoPage() -> impl IntoView {
                                                 .collect_view()}
                                         </div>
 
+                                        {move || llm_thinking.get().then(|| view! {
+                                            <div
+                                                role="status"
+                                                aria-live="polite"
+                                                class="flex items-center gap-2 rounded-xl border border-emerald-400/25 bg-emerald-500/10 px-3.5 py-2.5 text-xs text-emerald-100"
+                                            >
+                                                <span
+                                                    aria-hidden="true"
+                                                    class="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-emerald-300/30 border-t-emerald-300"
+                                                />
+                                                <span>"Synthesizing record-cited explanation on-device…"</span>
+                                            </div>
+                                        })}
+
+                                        {move || llm_error.get().map(|msg| view! {
+                                            <p role="status" aria-live="polite" class="text-xs text-amber-200">
+                                                {msg}
+                                            </p>
+                                        })}
+
                                         <div aria-live="polite" aria-label="Patient record answer">
                                             {active_thread.map(|thread| view! {
                                                 <AgenticThreadView
                                                     thread=thread
-                                                    active_record=active_record
+                                                    active_record=focused_record_id
+                                                    records=Some(records_for_answer)
+                                                    anchor_prefix="patient-record"
+                                                    on_select_record=Some(jump_to_record)
                                                 />
                                             })}
                                         </div>
                                     </section>
 
                                     // Records Timeline with Explicit "Include for My Doctor" Toggle
-                                    <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4">
+                                    <section
+                                        id="patient-records"
+                                        class=move || {
+                                            let ord = match layout_prefs.get().order {
+                                                PatientSectionOrder::AskFirst => "order-5",
+                                                PatientSectionOrder::RecordsFirst => "order-4",
+                                            };
+                                            format!("{ord} scroll-mt-32 rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4")
+                                        }
+                                    >
                                         <div class="flex flex-wrap items-center justify-between gap-2">
                                             <div>
                                                 <h3 class="text-lg font-semibold text-white">
-                                                    "Your Synthetic Health Records"
+                                                    {move || t(locale.get(), Msg::PatientRecordsHeading)}
                                                 </h3>
                                                 <p class="text-xs text-slate-300">
                                                     "Toggle any record to include or exclude it from your For My Doctor summary packet."
@@ -1202,42 +1454,71 @@ pub fn PatientDemoPage() -> impl IntoView {
                                             </span>
                                         </div>
 
+                                        {move || {
+                                            let loc = locale.get();
+                                            (loc != Locale::En).then(|| view! {
+                                                <p
+                                                    role="note"
+                                                    class="rounded-xl border border-cyan-400/25 bg-cyan-500/10 px-3.5 py-2 text-xs text-cyan-100"
+                                                >
+                                                    {t(loc, Msg::CitationSourceLanguageNote)}
+                                                </p>
+                                            })
+                                        }}
+
                                         <div class="space-y-3">
-                                            {patient
-                                                .records
-                                                .clone()
-                                                .into_iter()
-                                                .map(|rec| {
-                                                    let is_selected = selected_set.contains(&rec.id);
-                                                    let is_cited = cited_ids.contains(&rec.id);
-                                                    let rec_id_toggle = rec.id.clone();
-                                                    view! {
-                                                        <PatientRecordCard
-                                                            record=rec
-                                                            is_selected=is_selected
-                                                            is_cited=is_cited
-                                                            active_record=active_record
-                                                            on_toggle=Callback::new(move |_| toggle_record_selection(rec_id_toggle.clone()))
-                                                        />
-                                                    }
-                                                })
-                                                .collect_view()}
+                                            {move || {
+                                                let focused_id = focused_record_id.get();
+                                                records_for_list
+                                                    .iter()
+                                                    .cloned()
+                                                    .map(|rec| {
+                                                        let is_selected = selected_set.contains(&rec.id);
+                                                        let is_cited = cited_ids.contains(&rec.id);
+                                                        let is_focused = focused_id.as_deref() == Some(rec.id.as_str());
+                                                        let rec_id_toggle = rec.id.clone();
+                                                        view! {
+                                                            <PatientRecordCard
+                                                                record=rec
+                                                                is_selected=is_selected
+                                                                is_cited=is_cited
+                                                                is_focused=is_focused
+                                                                on_toggle=Callback::new(move |_| toggle_record_selection(rec_id_toggle.clone()))
+                                                                on_clear_focus=Callback::new(move |_| focused_record_id.set(None))
+                                                            />
+                                                        }
+                                                    })
+                                                    .collect_view()
+                                            }}
                                         </div>
                                     </section>
 
                                     // Device-Only Private Notes (Always Excluded From Doctor Packet)
-                                    <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4">
+                                    <section
+                                        id="patient-notes"
+                                        class=move || {
+                                            if layout_prefs.get().show_private_notes {
+                                                "order-6 scroll-mt-32 rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4"
+                                            } else {
+                                                "hidden"
+                                            }
+                                        }
+                                    >
                                         <div class="flex flex-wrap items-center justify-between gap-2">
                                             <div>
                                                 <h3 class="text-base font-semibold text-white">
-                                                    "Private Notes (Never Shared)"
+                                                    {move || t(locale.get(), Msg::PatientPrivateNotesHeading)}
                                                 </h3>
                                                 <p class="text-xs text-slate-300">
-                                                    "Private notes stay strictly on this screen in demo memory and are automatically excluded from doctor packets."
+                                                    {move || if vault_enabled.get() {
+                                                        "Private notes are stored encrypted on this device only and are automatically excluded from doctor packets."
+                                                    } else {
+                                                        "Private notes stay strictly on this screen in browser demo memory and are automatically excluded from doctor packets."
+                                                    }}
                                                 </p>
                                             </div>
                                             <span class="rounded-full border border-slate-600/50 bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-slate-300">
-                                                "Always excluded"
+                                                {move || t(locale.get(), Msg::PatientAlwaysExcluded)}
                                             </span>
                                         </div>
 
@@ -1266,8 +1547,9 @@ pub fn PatientDemoPage() -> impl IntoView {
                                                                             st.personal_notes.retain(|n| n.id != note_id);
                                                                         }
                                                                     });
+                                                                    persist_private_notes(&active_pid);
                                                                 }
-                                                                class="shrink-0 rounded-lg border border-white/15 px-2.5 py-1 text-[11px] text-slate-300 transition hover:border-rose-400/40 hover:text-rose-200"
+                                                                class="min-h-[36px] shrink-0 rounded-lg border border-white/15 px-3 py-1 text-[11px] text-slate-300 transition hover:border-rose-400/40 hover:text-rose-200"
                                                             >
                                                                 "Remove"
                                                             </button>
@@ -1339,8 +1621,25 @@ pub fn PatientDemoPage() -> impl IntoView {
                                     let sent_records_count = preview.shared_records.len();
                                     let sent_questions_count = preview.visit_questions.len();
 
+                                    let connection_mode_help = match &state.connection {
+                                        DemoConnectionState::Connected { .. } => {
+                                            "Connected: Your clinic link is active, and you choose when to prepare and send each visit packet — nothing is sent automatically."
+                                        }
+                                        DemoConnectionState::Paused { .. } => {
+                                            "Pause sharing: Keeps your clinic link saved, but temporarily locks sending new packets until you switch back to Connected."
+                                        }
+                                        DemoConnectionState::Standalone => {
+                                            "Standalone (no clinic): Completely unlinked from any clinic — use Curie Mobile solely for your own personal tracking."
+                                        }
+                                    };
+
                                     view! {
-                                <div class="space-y-6">
+                                <div
+                                    id="patient-panel-shared"
+                                    role="tabpanel"
+                                    aria-labelledby="patient-tab-shared"
+                                    class="space-y-6"
+                                >
                                     // Portable Shareable Health Passport File (persist & share with ANY doctor or person)
                                     <PortablePassportSection
                                         patient=patient.clone()
@@ -1351,7 +1650,6 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         emergency_note=emergency_note
                                         on_restore_passport=restore_from_passport
                                     />
-
                                     // Practice Connection Control
                                     <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4">
                                         <div class="flex flex-wrap items-start justify-between gap-3">
@@ -1377,6 +1675,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         <div class="flex flex-wrap gap-2">
                                             <button
                                                 type="button"
+                                                aria-pressed=matches!(state.connection, DemoConnectionState::Connected { .. })
                                                 on:click=move |_| set_connection_mode(default_conn.clone())
                                                 class=if matches!(state.connection, DemoConnectionState::Connected { .. }) {
                                                     "min-h-[40px] rounded-full bg-emerald-500 px-4 py-2 text-xs font-semibold text-slate-950"
@@ -1388,6 +1687,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                             </button>
                                             <button
                                                 type="button"
+                                                aria-pressed=matches!(state.connection, DemoConnectionState::Paused { .. })
                                                 on:click=move |_| set_connection_mode(paused_conn.clone())
                                                 class=if matches!(state.connection, DemoConnectionState::Paused { .. }) {
                                                     "min-h-[40px] rounded-full bg-amber-400 px-4 py-2 text-xs font-semibold text-slate-950"
@@ -1399,6 +1699,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                             </button>
                                             <button
                                                 type="button"
+                                                aria-pressed=matches!(state.connection, DemoConnectionState::Standalone)
                                                 on:click=move |_| set_connection_mode(DemoConnectionState::Standalone)
                                                 class=if matches!(state.connection, DemoConnectionState::Standalone) {
                                                     "min-h-[40px] rounded-full bg-cyan-400 px-4 py-2 text-xs font-semibold text-slate-950"
@@ -1409,6 +1710,13 @@ pub fn PatientDemoPage() -> impl IntoView {
                                                 "Standalone (no clinic)"
                                             </button>
                                         </div>
+                                        <p
+                                            role="status"
+                                            aria-live="polite"
+                                            class="rounded-xl border border-white/10 bg-slate-950/60 px-3.5 py-2.5 text-xs text-slate-200"
+                                        >
+                                            {connection_mode_help}
+                                        </p>
                                     </section>
 
                                     // Visit Note & Questions Editor
@@ -1500,6 +1808,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         delivery=delivery
                                         can_send=can_send
                                         on_toggle_record=Callback::new(toggle_record_selection)
+                                        on_select_record=jump_to_record
                                         on_simulate_send=Callback::new(move |_| {
                                             let pid = active_pid_send.clone();
                                             demo_states.update(|map| {
@@ -1546,23 +1855,21 @@ fn PatientRecordCard(
     record: ChartRecord,
     is_selected: bool,
     is_cited: bool,
-    active_record: RwSignal<Option<String>>,
+    is_focused: bool,
     on_toggle: Callback<()>,
+    on_clear_focus: Callback<()>,
 ) -> impl IntoView {
+    let locale = use_locale();
+    let anchor_id = record_anchor_id("patient-record", &record.id);
     let kind_cls = record_kind_badge_class(record.kind);
-    let anchor_id = format!("record-{}", record.id);
-    let active_key = record.id.clone();
-    let container_cls = move || {
-        let is_active = active_record.with(|active| active.as_deref() == Some(active_key.as_str()));
-        if is_active {
-            "scroll-mt-24 rounded-xl border border-cyan-300 bg-cyan-500/[0.14] p-4 ring-2 ring-cyan-300/60 transition"
-        } else if is_selected {
-            "scroll-mt-24 rounded-xl border border-emerald-400/50 bg-emerald-500/[0.07] p-4 transition"
-        } else if is_cited {
-            "scroll-mt-24 rounded-xl border border-cyan-400/50 bg-cyan-500/[0.06] p-4 transition"
-        } else {
-            "scroll-mt-24 rounded-xl border border-white/10 bg-slate-950/60 p-4 transition"
-        }
+    let container_cls = if is_focused {
+        "scroll-mt-32 rounded-xl border border-emerald-300 bg-emerald-500/[0.14] p-4 ring-2 ring-emerald-400/80 shadow-lg shadow-emerald-500/10 transition"
+    } else if is_selected {
+        "scroll-mt-32 rounded-xl border border-emerald-400/50 bg-emerald-500/[0.07] p-4 transition"
+    } else if is_cited {
+        "scroll-mt-32 rounded-xl border border-cyan-400/50 bg-cyan-500/[0.06] p-4 transition"
+    } else {
+        "scroll-mt-32 rounded-xl border border-white/10 bg-slate-950/60 p-4 transition"
     };
 
     view! {
@@ -1585,11 +1892,39 @@ fn PatientRecordCard(
                             "Cited"
                         </span>
                     })}
+                    {is_focused.then(|| view! {
+                        <span class="rounded-full border border-emerald-300/60 bg-emerald-400/20 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-100">
+                            {move || t(locale.get(), Msg::CitationFocusedBadge)}
+                        </span>
+                    })}
                 </div>
                 <span class="font-mono text-xs text-slate-400">
                     {format!("{} · {}", record.recorded_at, record.source_label)}
                 </span>
             </div>
+
+            {is_focused.then(|| view! {
+                <div class="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-300/35 bg-slate-950/70 px-3 py-1.5 text-[11px]">
+                    <span class="text-emerald-100">
+                        "Jumped here from a chart citation."
+                    </span>
+                    <div class="flex items-center gap-2">
+                        <a
+                            href="#patient-ask"
+                            class="rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2.5 py-0.5 font-semibold text-emerald-200 transition hover:bg-emerald-500/25 hover:text-white"
+                        >
+                            {move || t(locale.get(), Msg::PhysicianBackToQa)}
+                        </a>
+                        <button
+                            type="button"
+                            on:click=move |_| on_clear_focus.run(())
+                            class="rounded-full border border-white/15 px-2.5 py-0.5 font-medium text-slate-300 transition hover:border-white/30 hover:text-white"
+                        >
+                            {move || t(locale.get(), Msg::PhysicianClearFocus)}
+                        </button>
+                    </div>
+                </div>
+            })}
 
             <h4 class="mt-2.5 text-sm font-semibold text-white">{record.title}</h4>
             <p class="mt-1.5 text-xs leading-relaxed text-slate-300">{record.body}</p>
@@ -1629,10 +1964,13 @@ fn PatientRecordCard(
                         "min-h-[38px] rounded-full border border-white/20 bg-white/5 px-3.5 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-emerald-400/50 hover:bg-emerald-500/15"
                     }
                 >
-                    {if is_selected {
-                        "Included for doctor ✓"
-                    } else {
-                        "+ Include for my doctor"
+                    {move || {
+                        let loc = locale.get();
+                        if is_selected {
+                            format!("{} ✓", t(loc, Msg::PatientIncludedForDoctor))
+                        } else {
+                            format!("+ {}", t(loc, Msg::PatientIncludeForDoctor))
+                        }
                     }}
                 </button>
             </div>
@@ -1646,6 +1984,7 @@ fn SharePacketPreviewCard(
     delivery: ShareDeliveryStatus,
     can_send: bool,
     on_toggle_record: Callback<String>,
+    on_select_record: Callback<String>,
     on_simulate_send: Callback<()>,
     on_withdraw: Callback<()>,
     on_back_to_records: Callback<()>,
@@ -1733,15 +2072,27 @@ fn SharePacketPreviewCard(
                             {preview
                                 .shared_records
                                 .into_iter()
-                                .map(|rec| {
+                                .enumerate()
+                                .map(|(idx, rec)| {
                                     let rec_id = rec.id.clone();
+                                    let title_and_date = format!("{} · {}", rec.title, rec.recorded_at);
+                                    let body = rec.body.clone();
                                     view! {
                                         <li class="flex items-start justify-between gap-3 rounded-xl border border-white/10 bg-slate-950/60 p-3">
-                                            <div>
-                                                <p class="text-xs font-semibold text-white">
-                                                    {format!("{} · {}", rec.title, rec.recorded_at)}
-                                                </p>
-                                                <p class="mt-1 text-xs text-slate-300">{rec.body}</p>
+                                            <div class="min-w-0">
+                                                <div class="flex flex-wrap items-center gap-2">
+                                                    <CitationBadgeLink
+                                                        record=rec
+                                                        anchor_prefix="patient-record"
+                                                        accent=CitationAccent::Emerald
+                                                        on_select=on_select_record
+                                                        occurrence=idx
+                                                    />
+                                                    <p class="text-xs font-semibold text-white">
+                                                        {title_and_date}
+                                                    </p>
+                                                </div>
+                                                <p class="mt-1 text-xs text-slate-300">{body}</p>
                                             </div>
                                             <button
                                                 type="button"
@@ -1863,9 +2214,12 @@ mod tests {
     #[test]
     fn patient_demo_page_renders_zero_phi_notice_and_synthetic_profiles() {
         let html = render_with_mode("/clinical/patient", AppShellMode::Website);
+        assert!(html.contains("Curie Mobile"));
         assert!(html.contains("Patient Experience Demo"));
         assert!(html.contains("100% Synthetic Demo"));
         assert!(html.contains("Zero PHI"));
+        assert!(html.contains("aria-controls=\"patient-panel-you\""));
+        assert!(html.contains("role=\"tabpanel\""));
         assert!(html.contains("/dabney-elephant.svg"));
         assert!(html.contains("Nadia Kulkarni"));
         assert!(html.contains("Carlos Mendez"));
@@ -1880,7 +2234,7 @@ mod tests {
         assert!(html.contains("Bounded Agentic Chat Harness (Patient Mode)"));
         assert!(html.contains("chart_search"));
         assert!(html.contains("working_note_save"));
-        assert!(html.contains(r#"id="record-nk-cgm-01""#));
+        assert!(html.contains(r#"id="patient-record-nk-cgm-01""#));
         let legacy_brand = ["co", "da"].concat();
         assert!(
             !html.to_ascii_lowercase().contains(&legacy_brand),
@@ -1895,5 +2249,70 @@ mod tests {
         assert!(html.contains("Open on dabney.moe"));
         assert!(!html.contains("Hire me"));
         assert!(!html.contains("Commissions"));
+    }
+
+    #[test]
+    fn patient_demo_renders_scoped_citation_links_tooltips_and_record_anchors() {
+        let html = render_with_mode("/clinical/patient", AppShellMode::Website);
+        assert!(html.contains("id=\"patient-record-nk-cgm-01\""));
+        assert!(html.contains("id=\"patient-record-nk-lab-02\""));
+        assert!(html.contains("id=\"patient-record-nk-msg-03\""));
+        assert!(html.contains("href=\"#patient-record-nk-cgm-01\""));
+        assert!(html.contains("role=\"tooltip\""));
+        assert!(html.contains("aria-describedby=\"cite-tip-"));
+        assert!(!html.contains("href=\"#patient-record-cm-"));
+        assert!(!html.contains("href=\"#patient-record-pn-"));
+        assert!(!html.contains("href=\"#patient-record-do-"));
+    }
+
+    #[test]
+    fn focused_patient_record_card_and_share_packet_render_citation_controls() {
+        let panel = synthetic_panel();
+        let nadia = &panel[0];
+        let state = default_patient_demo_state(nadia);
+        let preview = build_doctor_share_preview(nadia, &state);
+        let first_record = nadia.records[0].clone();
+
+        let owner = Owner::new();
+        let html = owner.with(|| {
+            view! {
+                <div>
+                    <PatientRecordCard
+                        record=first_record
+                        is_selected=true
+                        is_cited=true
+                        is_focused=true
+                        on_toggle=Callback::new(|()| {})
+                        on_clear_focus=Callback::new(|()| {})
+                    />
+                    <SharePacketPreviewCard
+                        preview=preview
+                        delivery=ShareDeliveryStatus::Draft
+                        can_send=true
+                        on_toggle_record=Callback::new(|_: String| {})
+                        on_select_record=Callback::new(|_: String| {})
+                        on_simulate_send=Callback::new(|()| {})
+                        on_withdraw=Callback::new(|()| {})
+                        on_back_to_records=Callback::new(|()| {})
+                    />
+                </div>
+            }
+            .to_html()
+        });
+        drop(owner);
+
+        let decoded = html
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#x27;", "'")
+            .replace("&#39;", "'")
+            .replace("&amp;", "&");
+        assert!(decoded.contains("id=\"patient-record-nk-cgm-01\""));
+        assert!(decoded.contains("Focused from citation"));
+        assert!(decoded.contains("href=\"#patient-ask\""));
+        assert!(decoded.contains("Back to Q&A ↑"));
+        assert!(decoded.contains("href=\"#patient-record-nk-cgm-01\""));
+        assert!(decoded.contains("role=\"tooltip\""));
     }
 }

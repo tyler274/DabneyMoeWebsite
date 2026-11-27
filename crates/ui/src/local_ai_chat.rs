@@ -9,6 +9,8 @@ use crate::health_bridge::{
 
 const CGM_CHAT_PRESETS: &[&str] = &[
     "Summarize my glucose stability, TIR, and biggest spikes",
+    "How do my last 14 days compare to the prior 14 days?",
+    "How are my overnight glucose and low episodes?",
     "What time of day do my glucose spikes peak in my 24h AGP?",
     "How do my mood and anxiety check-ins line up with glucose swings?",
     "Draft 3 focused questions to ask my doctor at my next visit",
@@ -29,11 +31,12 @@ pub fn PersonalVaultBar(
     let checkins = status.checkin_count;
     let chats = status.chat_turn_count;
     let has_data = status.total_bytes > 0 || status.has_cgm_snapshot || checkins > 0 || chats > 0;
+    let confirm_wipe = RwSignal::new(false);
 
     view! {
         <div
             data-personal-vault-bar="true"
-            class="mb-6 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-4 text-xs text-slate-200"
+            class="print-hide print:hidden mb-6 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-4 text-xs text-slate-200"
         >
             <div class="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -42,23 +45,64 @@ pub fn PersonalVaultBar(
                     </p>
                     <p class="mt-0.5 text-[11px] text-slate-300">
                         {format!(
-                            "{cipher} · {cgm_count} CGM readings · {checkins} check-ins · {chats} chat turns · {kb:.1} KB (cloud backup disabled)"
+                            "Stored encrypted on this device only · {cgm_count} glucose readings · {checkins} check-ins · {chats} chat turns · {kb:.1} KB (cloud backup disabled)"
                         )}
                     </p>
+                    <details class="mt-1 text-[10px] text-slate-400">
+                        <summary class="cursor-pointer hover:text-slate-300">
+                            "Technical encryption details"
+                        </summary>
+                        <p class="mt-0.5 font-mono text-[10px] text-slate-300">{cipher}</p>
+                    </details>
                 </div>
                 {has_data.then(|| view! {
-                    <button
-                        type="button"
-                        disabled=move || busy.get()
-                        on:click=move |_| on_wipe.run(())
-                        class="rounded-full border border-rose-400/40 bg-rose-500/15 px-3 py-1 text-[11px] font-semibold text-rose-200 transition hover:bg-rose-500/25 disabled:opacity-50"
-                    >
-                        {move || if busy.get() { "Wiping…" } else { "Cryptographic Wipe" }}
-                    </button>
+                    <div class="flex flex-wrap items-center gap-2">
+                        {move || if confirm_wipe.get() {
+                            view! {
+                                <div class="flex flex-wrap items-center gap-1.5 rounded-xl border border-rose-400/40 bg-rose-950/60 px-2.5 py-1.5">
+                                    <span class="text-[11px] font-medium text-rose-100">
+                                        "Permanently erase all saved local data?"
+                                    </span>
+                                    <button
+                                        type="button"
+                                        disabled=move || busy.get()
+                                        on:click=move |_| {
+                                            confirm_wipe.set(false);
+                                            on_wipe.run(());
+                                        }
+                                        class="min-h-[36px] rounded-full bg-rose-500 px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-rose-400 disabled:opacity-50"
+                                    >
+                                        {move || if busy.get() { "Wiping…" } else { "Confirm wipe" }}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        disabled=move || busy.get()
+                                        on:click=move |_| confirm_wipe.set(false)
+                                        class="min-h-[36px] rounded-full border border-white/20 px-3 py-1 text-[11px] font-medium text-slate-200 transition hover:bg-white/10 disabled:opacity-50"
+                                    >
+                                        "Cancel"
+                                    </button>
+                                </div>
+                            }
+                            .into_any()
+                        } else {
+                            view! {
+                                <button
+                                    type="button"
+                                    disabled=move || busy.get()
+                                    on:click=move |_| confirm_wipe.set(true)
+                                    class="min-h-[36px] rounded-full border border-rose-400/40 bg-rose-500/15 px-3.5 py-1.5 text-[11px] font-semibold text-rose-200 transition hover:bg-rose-500/25 disabled:opacity-50"
+                                >
+                                    {move || if busy.get() { "Wiping…" } else { "Erase local data" }}
+                                </button>
+                            }
+                            .into_any()
+                        }}
+                    </div>
                 })}
             </div>
             {move || notice.get().map(|msg| view! {
-                <p class="mt-2 text-[11px] text-cyan-200">{msg}</p>
+                <p role="status" aria-live="polite" class="mt-2 text-[11px] text-cyan-200">{msg}</p>
             })}
         </div>
     }
@@ -89,7 +133,7 @@ pub fn LocalLlmStatusBanner(
             "border-cyan-400/40 bg-cyan-500/15 text-cyan-200",
         ),
         LocalLlmAvailability::Unavailable => (
-            "Grounded Rust Fallback (AICore Unavailable)",
+            "On-Device Summary Mode (Local Rules)",
             "border-slate-500/40 bg-slate-800/80 text-slate-300",
         ),
     };
@@ -128,14 +172,22 @@ pub fn LocalLlmStatusBanner(
                             type="button"
                             disabled=move || preparing.get()
                             on:click=move |_| on_prepare.run(())
-                            class="rounded-full bg-amber-400 px-3 py-1 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:opacity-50"
+                            class="inline-flex min-h-[36px] items-center gap-2 rounded-full bg-amber-400 px-3.5 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:opacity-50"
                         >
-                            {move || if preparing.get() { "Downloading via AICore…" } else { "Download Gemini Nano (AICore)" }}
+                            {move || preparing.get().then(|| view! {
+                                <span
+                                    aria-hidden="true"
+                                    class="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-950/30 border-t-slate-950"
+                                />
+                            })}
+                            <span>
+                                {move || if preparing.get() { "Downloading on-device model…" } else { "Download On-Device Model" }}
+                            </span>
                         </button>
                     })}
             </div>
             {move || prepare_notice.get().map(|msg| view! {
-                <p class="text-[11px] text-cyan-200">{msg}</p>
+                <p role="status" aria-live="polite" class="text-[11px] text-cyan-200">{msg}</p>
             })}
         </div>
     }
@@ -158,6 +210,8 @@ pub fn PersonalCgmAiChatSection(
     on_send_question: Callback<String>,
     on_clear_chat: Callback<()>,
 ) -> impl IntoView {
+    let confirm_clear = RwSignal::new(false);
+
     let on_submit = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
         let q = chat_input.get().trim().to_string();
@@ -170,29 +224,59 @@ pub fn PersonalCgmAiChatSection(
     view! {
         <section
             data-personal-cgm-chat="true"
-            class="mb-8 rounded-2xl border border-cyan-400/25 bg-slate-900/50 p-6 space-y-4"
+            class="print-hide print:hidden mb-8 rounded-2xl border border-cyan-400/25 bg-slate-900/50 p-6 space-y-4"
         >
             <div class="flex flex-wrap items-start justify-between gap-3">
                 <div>
                     <p class="text-xs font-semibold uppercase tracking-widest text-cyan-300">
-                        "On-Device Metabolic & Mood Chat · Zero Cloud Egress"
+                        "On-Device Metabolic & Mood Assistant · Private"
                     </p>
                     <h2 class="mt-1 text-lg font-semibold text-white">
                         "Ask About Your Glucose & Mood Trends"
                     </h2>
                     <p class="mt-1 text-xs text-slate-400">
-                        "Grounded strictly in your loaded CGM metrics, 24h AGP, and logged check-ins. "
-                        "Uses Android AICore / Gemini Nano on supported devices and falls back to local Rust synthesis elsewhere."
+                        "Answers are grounded strictly in your loaded glucose trends, 24-hour patterns, and logged check-ins — everything stays privately on your device."
                     </p>
                 </div>
                 {move || (!chat_turns.get().is_empty()).then(|| view! {
-                    <button
-                        type="button"
-                        on:click=move |_| on_clear_chat.run(())
-                        class="rounded-full border border-white/15 px-3 py-1 text-xs text-slate-300 transition hover:bg-white/5"
-                    >
-                        "Clear thread"
-                    </button>
+                    <div>
+                        {move || if confirm_clear.get() {
+                            view! {
+                                <div class="flex flex-wrap items-center gap-1.5 rounded-xl border border-rose-400/35 bg-rose-950/50 px-2.5 py-1.5">
+                                    <span class="text-[11px] text-rose-100">"Clear conversation?"</span>
+                                    <button
+                                        type="button"
+                                        on:click=move |_| {
+                                            confirm_clear.set(false);
+                                            on_clear_chat.run(());
+                                        }
+                                        class="min-h-[34px] rounded-full bg-rose-500 px-3 py-1 text-xs font-semibold text-white transition hover:bg-rose-400"
+                                    >
+                                        "Confirm wipe"
+                                    </button>
+                                    <button
+                                        type="button"
+                                        on:click=move |_| confirm_clear.set(false)
+                                        class="min-h-[34px] rounded-full border border-white/20 px-3 py-1 text-xs text-slate-200 transition hover:bg-white/10"
+                                    >
+                                        "Cancel"
+                                    </button>
+                                </div>
+                            }
+                            .into_any()
+                        } else {
+                            view! {
+                                <button
+                                    type="button"
+                                    on:click=move |_| confirm_clear.set(true)
+                                    class="min-h-[36px] rounded-full border border-white/15 px-3 py-1 text-xs text-slate-300 transition hover:bg-white/5"
+                                >
+                                    "Clear thread"
+                                </button>
+                            }
+                            .into_any()
+                        }}
+                    </div>
                 })}
             </div>
 
@@ -247,10 +331,22 @@ pub fn PersonalCgmAiChatSection(
             </form>
 
             {move || chat_error.get().map(|err| view! {
-                <p class="text-xs text-rose-300">{err}</p>
+                <p role="alert" class="text-xs text-rose-300">{err}</p>
             })}
 
             <div aria-live="polite" class="space-y-3">
+                {move || chat_busy.get().then(|| view! {
+                    <div
+                        role="status"
+                        class="flex items-center gap-2.5 rounded-xl border border-cyan-400/25 bg-cyan-500/10 px-4 py-3 text-xs text-cyan-100"
+                    >
+                        <span
+                            aria-hidden="true"
+                            class="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-cyan-300/30 border-t-cyan-300"
+                        />
+                        <span>"Reviewing your loaded glucose trends and check-ins on-device…"</span>
+                    </div>
+                })}
                 {move || {
                     let turns = chat_turns.get();
                     turns
@@ -371,8 +467,9 @@ mod tests {
         }
         .to_html();
         assert!(vault_html.contains("AES-256-GCM (Android Keystore)"));
-        assert!(vault_html.contains("144 CGM readings"));
-        assert!(vault_html.contains("Cryptographic Wipe"));
+        assert!(vault_html.contains("144 glucose readings"));
+        assert!(vault_html.contains("Erase local data"));
+        assert!(vault_html.contains("Stored encrypted on this device only"));
 
         let llm_ready = LocalLlmStatusUi {
             enabled: true,
@@ -417,7 +514,7 @@ mod tests {
             />
         }
         .to_html();
-        assert!(fb_html.contains("Grounded Rust Fallback"));
+        assert!(fb_html.contains("On-Device Summary Mode (Local Rules)"));
 
         let chat_turns = RwSignal::new(vec![LocalChatTurn {
             id: "cgm-chat-1".to_string(),
@@ -451,5 +548,24 @@ mod tests {
         .to_html();
         assert!(chat_html.contains("Agent trace · 1 local tool step"));
         assert!(chat_html.contains("cgm_window_metrics"));
+
+        let empty_chat_html = view! {
+            <PersonalCgmAiChatSection
+                llm_status=RwSignal::new(None)
+                use_local_llm=use_llm
+                llm_preparing=prep
+                llm_prepare_notice=prep_notice
+                chat_input=RwSignal::new(String::new())
+                chat_turns=RwSignal::new(Vec::new())
+                chat_busy=RwSignal::new(false)
+                chat_error=RwSignal::new(None)
+                on_prepare_llm=on_prep
+                on_send_question=Callback::new(|_| {})
+                on_clear_chat=Callback::new(|()| {})
+            />
+        }
+        .to_html();
+        assert!(empty_chat_html.contains("How do my last 14 days compare to the prior 14 days?"));
+        assert!(empty_chat_html.contains("How are my overnight glucose and low episodes?"));
     }
 }

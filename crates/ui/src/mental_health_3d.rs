@@ -4,10 +4,26 @@
 //! Geometry generation is target-independent and unit-tested on native CI; the
 //! `WebGl2RenderingContext` renderer compiles exclusively for `wasm32` (`hydrate` / `csr`).
 
+use std::sync::Arc;
+
 use leptos::prelude::*;
 
-use crate::mental_health_cgm::{downsample_readings_for_chart, select_notable_spike_peaks};
+use crate::mental_health_cgm::select_notable_spike_peaks;
+use crate::mental_health_cgm_analytics::{downsample_segments_for_chart, DEFAULT_CHART_GAP_HOURS};
 use crate::mental_health_lingo::{LingoReading, MentalHealthCheckIn};
+
+const COLOR_STEADY: [f32; 4] = [0.13, 0.83, 0.93, 1.0];
+const COLOR_STEADY_CURTAIN: [f32; 4] = [0.13, 0.83, 0.93, 0.18];
+const COLOR_SPIKE: [f32; 4] = [0.98, 0.75, 0.14, 1.0];
+const COLOR_SPIKE_CURTAIN: [f32; 4] = [0.98, 0.75, 0.14, 0.24];
+const COLOR_HYPO: [f32; 4] = [0.98, 0.44, 0.52, 1.0];
+const COLOR_HYPO_CURTAIN: [f32; 4] = [0.98, 0.44, 0.52, 0.22];
+/// Distinct vibrant orange-red for ceiling-capped (`>200` / `≥201`) sensor saturation.
+pub const COLOR_CEILING_CAP: [f32; 4] = [0.98, 0.45, 0.20, 1.0];
+const COLOR_CEILING_CAP_CURTAIN: [f32; 4] = [0.98, 0.45, 0.20, 0.28];
+/// Distinct crimson for floor-capped (`<55` / `≤54`) sensor saturation.
+pub const COLOR_FLOOR_CAP: [f32; 4] = [0.96, 0.25, 0.37, 1.0];
+const COLOR_FLOOR_CAP_CURTAIN: [f32; 4] = [0.96, 0.25, 0.37, 0.28];
 
 /// Interleaved `[x, y, z, r, g, b, a]` geometry buffers ready for WebGL2 upload.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -18,6 +34,41 @@ pub struct Chart3DScene {
     pub translucent_triangles: Vec<f32>,
     /// Line segment vertices (7 floats per vertex: pos xyz + rgba).
     pub lines: Vec<f32>,
+}
+
+/// Format a compact human-readable timeline span label (`"24h"`, `"14d"`, `"112.7d"`, etc.)
+/// for the 3D chart caption based on the actual trace span.
+pub fn format_trace_span_label(
+    readings: &[LingoReading],
+    checkins: &[MentalHealthCheckIn],
+) -> String {
+    let span_hours = if readings.len() >= 2 {
+        let first = readings.first().map(|r| r.hour_offset).unwrap_or(0.0);
+        let last = readings.last().map(|r| r.hour_offset).unwrap_or(0.0);
+        (last - first).max(0.0)
+    } else {
+        readings
+            .iter()
+            .map(|r| r.hour_offset)
+            .chain(checkins.iter().map(|c| c.hour_offset))
+            .fold(0.0_f64, f64::max)
+    };
+
+    if span_hours <= 0.0 {
+        return "24h".to_string();
+    }
+    if span_hours >= 48.0 {
+        let days = span_hours / 24.0;
+        if (days - days.round()).abs() < 0.05 {
+            format!("{:.0}d", days.round())
+        } else {
+            format!("{days:.1}d")
+        }
+    } else if (span_hours - span_hours.round()).abs() < 0.05 {
+        format!("{:.0}h", span_hours.round().max(1.0))
+    } else {
+        format!("{span_hours:.1}h")
+    }
 }
 
 fn push_vertex(buf: &mut Vec<f32>, pos: [f32; 3], color: [f32; 4]) {
@@ -71,11 +122,127 @@ fn push_octahedron(buf: &mut Vec<f32>, center: [f32; 3], radius: f32, color: [f3
     }
 }
 
-/// Build the 3D triangle & line scene for Abbott Lingo glucose + mood/anxiety check-ins.
+fn sanitize_target_range(target_low_mg_dl: f64, target_high_mg_dl: f64) -> (f64, f64) {
+    let mut low = if target_low_mg_dl.is_finite() {
+        target_low_mg_dl
+    } else {
+        70.0
+    };
+    let mut high = if target_high_mg_dl.is_finite() {
+        target_high_mg_dl
+    } else {
+        140.0
+    };
+    if low > high {
+        std::mem::swap(&mut low, &mut high);
+    }
+    low = low.clamp(45.0, 340.0);
+    high = high.clamp(55.0, 350.0);
+    if high - low < 10.0 {
+        high = (low + 10.0).min(350.0);
+        low = low.min(high - 10.0);
+    }
+    (low, high)
+}
+
+fn pair_ribbon_colors(
+    a: &LingoReading,
+    b: &LingoReading,
+    target_low_mg_dl: f64,
+    target_high_mg_dl: f64,
+) -> ([f32; 4], [f32; 4], [f32; 4]) {
+    if a.bound.is_floor_capped() || b.bound.is_floor_capped() {
+        (COLOR_FLOOR_CAP, COLOR_FLOOR_CAP_CURTAIN, COLOR_FLOOR_CAP)
+    } else if a.bound.is_ceiling_capped() || b.bound.is_ceiling_capped() {
+        (
+            COLOR_CEILING_CAP,
+            COLOR_CEILING_CAP_CURTAIN,
+            COLOR_CEILING_CAP,
+        )
+    } else if a.glucose_mg_dl < target_low_mg_dl || b.glucose_mg_dl < target_low_mg_dl {
+        (COLOR_HYPO, COLOR_HYPO_CURTAIN, COLOR_HYPO)
+    } else if a.glucose_mg_dl > target_high_mg_dl || b.glucose_mg_dl > target_high_mg_dl {
+        (COLOR_SPIKE, COLOR_SPIKE_CURTAIN, [1.0, 0.92, 0.65, 1.0])
+    } else {
+        (COLOR_STEADY, COLOR_STEADY_CURTAIN, [0.82, 0.98, 1.0, 1.0])
+    }
+}
+
+fn point_color(r: &LingoReading, target_low_mg_dl: f64, target_high_mg_dl: f64) -> [f32; 4] {
+    if r.bound.is_floor_capped() {
+        COLOR_FLOOR_CAP
+    } else if r.bound.is_ceiling_capped() {
+        COLOR_CEILING_CAP
+    } else if r.glucose_mg_dl < target_low_mg_dl {
+        COLOR_HYPO
+    } else if r.glucose_mg_dl > target_high_mg_dl {
+        COLOR_SPIKE
+    } else {
+        COLOR_STEADY
+    }
+}
+
+/// Select one representative point per contiguous floor-capped run (up to `max_markers`).
+fn select_notable_floor_caps(readings: &[LingoReading], max_markers: usize) -> Vec<LingoReading> {
+    if readings.is_empty() || max_markers == 0 {
+        return Vec::new();
+    }
+    const GAP_BREAK_HOURS: f64 = 1.5;
+    let mut reps: Vec<usize> = Vec::new();
+    let mut active_start: Option<usize> = None;
+    let mut prev_idx: usize = 0;
+
+    for (idx, r) in readings.iter().enumerate() {
+        if r.bound.is_floor_capped() {
+            match active_start {
+                None => {
+                    active_start = Some(idx);
+                    prev_idx = idx;
+                }
+                Some(start) => {
+                    if (r.hour_offset - readings[prev_idx].hour_offset).abs() > GAP_BREAK_HOURS {
+                        reps.push(start + (prev_idx - start) / 2);
+                        active_start = Some(idx);
+                    }
+                    prev_idx = idx;
+                }
+            }
+        } else if let Some(start) = active_start.take() {
+            reps.push(start + (prev_idx - start) / 2);
+        }
+    }
+    if let Some(start) = active_start {
+        reps.push(start + (prev_idx - start) / 2);
+    }
+
+    if reps.len() > max_markers {
+        let step = reps.len() as f64 / max_markers as f64;
+        reps = (0..max_markers)
+            .map(|i| reps[((i as f64 * step).floor() as usize).min(reps.len() - 1)])
+            .collect();
+    }
+
+    reps.into_iter().map(|i| readings[i].clone()).collect()
+}
+
+/// Build the 3D triangle & line scene for Abbott Lingo glucose + mood/anxiety check-ins
+/// using the default tight metabolic target band (`70–140 mg/dL`).
 pub fn build_lingo_3d_scene(
     readings: &[LingoReading],
     checkins: &[MentalHealthCheckIn],
 ) -> Chart3DScene {
+    build_lingo_3d_scene_with_range(readings, checkins, 70.0, 140.0)
+}
+
+/// Build the 3D triangle & line scene for glucose + mood/anxiety check-ins with a custom
+/// translucent emerald target range (`[target_low_mg_dl, target_high_mg_dl]`).
+pub fn build_lingo_3d_scene_with_range(
+    readings: &[LingoReading],
+    checkins: &[MentalHealthCheckIn],
+    target_low_mg_dl: f64,
+    target_high_mg_dl: f64,
+) -> Chart3DScene {
+    let (target_low, target_high) = sanitize_target_range(target_low_mg_dl, target_high_mg_dl);
     let mut scene = Chart3DScene::default();
     let max_hour = readings
         .iter()
@@ -83,12 +250,14 @@ pub fn build_lingo_3d_scene(
         .chain(checkins.iter().map(|c| c.hour_offset))
         .fold(24.0_f64, f64::max)
         .max(1.0);
-    let min_g = 55.0_f64;
+    // Lower floor to 45 mg/dL so Lingo floor-capped 54 mg/dL (<55) readings sit visibly above the grid.
+    let min_g = 45.0_f64;
     let max_g = readings
         .iter()
         .map(|r| r.glucose_mg_dl)
         .fold(180.0_f64, f64::max)
-        .max(180.0);
+        .max(180.0)
+        .max(target_high);
 
     let x_for = |h: f64| -1.55 + ((h / max_hour) as f32) * 3.10;
     let y_for_g = |g: f64| (((g.clamp(min_g, max_g) - min_g) / (max_g - min_g)) as f32) * 1.55;
@@ -107,89 +276,114 @@ pub fn build_lingo_3d_scene(
         push_vertex(&mut scene.lines, [1.55, 0.0, z], grid_col);
     }
 
-    // 2. Translucent emerald Abbott Lingo 70–140 mg/dL target planes + wireframe rails
-    let y70 = y_for_g(70.0);
-    let y140 = y_for_g(140.0);
+    // 2. Translucent emerald target zone + wireframe rails + subtle 180 mg/dL clinical rail
+    let y_low = y_for_g(target_low);
+    let y_high = y_for_g(target_high);
+    let y180 = y_for_g(180.0);
     let rail_col = [0.20, 0.83, 0.60, 0.55];
-    for y in [y70, y140] {
+    for y in [y_low, y_high] {
         push_vertex(&mut scene.lines, [-1.55, y, -0.14], rail_col);
         push_vertex(&mut scene.lines, [1.55, y, -0.14], rail_col);
         push_vertex(&mut scene.lines, [-1.55, y, 0.14], rail_col);
         push_vertex(&mut scene.lines, [1.55, y, 0.14], rail_col);
     }
+    if (target_high - 180.0).abs() > 1.0 {
+        let hyper_rail_col = [0.98, 0.75, 0.14, 0.35];
+        push_vertex(&mut scene.lines, [-1.55, y180, -0.14], hyper_rail_col);
+        push_vertex(&mut scene.lines, [1.55, y180, -0.14], hyper_rail_col);
+    }
     push_quad(
         &mut scene.translucent_triangles,
-        [-1.55, y70, -0.14],
-        [1.55, y70, -0.14],
-        [1.55, y140, -0.14],
-        [-1.55, y140, -0.14],
+        [-1.55, y_low, -0.14],
+        [1.55, y_low, -0.14],
+        [1.55, y_high, -0.14],
+        [-1.55, y_high, -0.14],
         [0.20, 0.83, 0.60, 0.14],
     );
 
-    // 3. 3D Glucose ribbon + translucent curtain + spike diamonds (bounded for multi-week traces)
-    let plot_readings = downsample_readings_for_chart(readings, 320);
-    let spike_peaks = select_notable_spike_peaks(readings, 36);
+    // 3. Gap-aware 3D Glucose ribbons + curtains (each contiguous segment rendered independently
+    //    so multi-hour / multi-day sensor-off gaps NEVER draw phantom bridges or curtains).
+    let segments = downsample_segments_for_chart(readings, 320, DEFAULT_CHART_GAP_HOURS);
+    let spike_peaks: Vec<LingoReading> = select_notable_spike_peaks(readings, 36)
+        .into_iter()
+        .filter(|r| r.bound.is_ceiling_capped() || r.glucose_mg_dl > target_high)
+        .collect();
+    let floor_caps = select_notable_floor_caps(readings, 24);
     let z_front = 0.08_f32;
     let z_back = -0.08_f32;
-    for pair in plot_readings.windows(2) {
-        let a = &pair[0];
-        let b = &pair[1];
-        let x0 = x_for(a.hour_offset);
-        let y0 = y_for_g(a.glucose_mg_dl);
-        let x1 = x_for(b.hour_offset);
-        let y1 = y_for_g(b.glucose_mg_dl);
 
-        let is_spike = a.glucose_mg_dl > 140.0 || b.glucose_mg_dl > 140.0;
-        let top_col = if is_spike {
-            [0.98, 0.75, 0.14, 1.0] // amber spike
-        } else {
-            [0.13, 0.83, 0.93, 1.0] // cyan steady
-        };
-        let curtain_col = if is_spike {
-            [0.98, 0.75, 0.14, 0.24]
-        } else {
-            [0.13, 0.83, 0.93, 0.18]
-        };
+    for segment in &segments {
+        if segment.len() == 1 {
+            let r = &segment[0];
+            let x = x_for(r.hour_offset);
+            let y = y_for_g(r.glucose_mg_dl);
+            push_octahedron(
+                &mut scene.opaque_triangles,
+                [x, y, 0.0],
+                0.04,
+                point_color(r, target_low, target_high),
+            );
+            continue;
+        }
+        for pair in segment.windows(2) {
+            let a = &pair[0];
+            let b = &pair[1];
+            let x0 = x_for(a.hour_offset);
+            let y0 = y_for_g(a.glucose_mg_dl);
+            let x1 = x_for(b.hour_offset);
+            let y1 = y_for_g(b.glucose_mg_dl);
 
-        // Top 3D ribbon face (opaque)
-        push_quad(
-            &mut scene.opaque_triangles,
-            [x0, y0, z_back],
-            [x1, y1, z_back],
-            [x1, y1, z_front],
-            [x0, y0, z_front],
-            top_col,
-        );
-        // Translucent vertical area curtain
-        push_quad(
-            &mut scene.translucent_triangles,
-            [x0, 0.0, 0.0],
-            [x1, 0.0, 0.0],
-            [x1, y1, 0.0],
-            [x0, y0, 0.0],
-            curtain_col,
-        );
-        // Bright ridge line
-        push_vertex(
-            &mut scene.lines,
-            [x0, y0 + 0.008, 0.0],
-            [0.82, 0.98, 1.0, 1.0],
-        );
-        push_vertex(
-            &mut scene.lines,
-            [x1, y1 + 0.008, 0.0],
-            [0.82, 0.98, 1.0, 1.0],
-        );
+            let (top_col, curtain_col, ridge_col) =
+                pair_ribbon_colors(a, b, target_low, target_high);
+
+            // Top 3D ribbon face (opaque)
+            push_quad(
+                &mut scene.opaque_triangles,
+                [x0, y0, z_back],
+                [x1, y1, z_back],
+                [x1, y1, z_front],
+                [x0, y0, z_front],
+                top_col,
+            );
+            // Translucent vertical area curtain
+            push_quad(
+                &mut scene.translucent_triangles,
+                [x0, 0.0, 0.0],
+                [x1, 0.0, 0.0],
+                [x1, y1, 0.0],
+                [x0, y0, 0.0],
+                curtain_col,
+            );
+            // Bright ridge line
+            push_vertex(&mut scene.lines, [x0, y0 + 0.008, 0.0], ridge_col);
+            push_vertex(&mut scene.lines, [x1, y1 + 0.008, 0.0], ridge_col);
+        }
     }
 
     for r in &spike_peaks {
         let x = x_for(r.hour_offset);
         let y = y_for_g(r.glucose_mg_dl);
+        let marker_col = if r.bound.is_ceiling_capped() {
+            COLOR_CEILING_CAP
+        } else {
+            COLOR_SPIKE
+        };
         push_octahedron(
             &mut scene.opaque_triangles,
             [x, y + 0.05, 0.0],
             0.055,
-            [0.98, 0.75, 0.14, 1.0],
+            marker_col,
+        );
+    }
+
+    for r in &floor_caps {
+        let x = x_for(r.hour_offset);
+        let y = y_for_g(r.glucose_mg_dl);
+        push_octahedron(
+            &mut scene.opaque_triangles,
+            [x, y + 0.045, 0.0],
+            0.055,
+            COLOR_FLOOR_CAP,
         );
     }
 
@@ -241,49 +435,113 @@ pub fn build_lingo_3d_scene(
     scene
 }
 
-/// Interactive 3D WebGL2 (`glow` + `glam`) Abbott Lingo CGM & Mood/Anxiety viewport.
+/// Interactive 3D glucose & mood/anxiety trajectory viewport with Pointer Events & keyboard orbit.
 #[component]
 pub fn LingoMood3DChart(
     readings: Signal<Vec<LingoReading>>,
     checkins: Signal<Vec<MentalHealthCheckIn>>,
+    #[prop(optional)] target_range: Option<Signal<(f64, f64)>>,
+    #[prop(optional)] monitor_name: Option<Signal<String>>,
 ) -> impl IntoView {
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
     let yaw = RwSignal::new(-0.42_f32);
     let pitch = RwSignal::new(0.36_f32);
     let distance = RwSignal::new(3.85_f32);
     let dragging = RwSignal::new(false);
+    let active_pointer_id = RwSignal::new(Option::<i32>::None);
     let last_xy = RwSignal::new((0_i32, 0_i32));
     let gl_error = RwSignal::new(Option::<String>::None);
 
-    #[cfg(all(target_arch = "wasm32", any(feature = "hydrate", feature = "csr")))]
-    Effect::new(move |_| {
-        let r = readings.get();
-        let c = checkins.get();
-        let y = yaw.get();
-        let p = pitch.get();
-        let dist = distance.get();
-        if let Some(canvas) = canvas_ref.get() {
-            let scene = build_lingo_3d_scene(&r, &c);
-            match render_webgl2_scene(&canvas, &scene, y, p, dist) {
-                Ok(()) => gl_error.set(None),
-                Err(err) => gl_error.set(Some(err)),
-            }
-        }
+    let active_range = Memo::new(move |_| {
+        target_range
+            .map(|sig| sig.get())
+            .map(|(lo, hi)| sanitize_target_range(lo, hi))
+            .unwrap_or((70.0, 140.0))
     });
 
-    #[cfg(not(all(target_arch = "wasm32", any(feature = "hydrate", feature = "csr"))))]
-    let _ = (&readings, &checkins, &gl_error);
+    // Memoize geometry construction strictly on data & target-range changes so camera orbit/zoom
+    // NEVER clones readings or rebuilds the 3D scene on `mousemove`.
+    let scene_memo = Memo::new(move |_| {
+        let (target_low, target_high) = active_range.get();
+        readings.with(|r| {
+            checkins.with(|c| {
+                Arc::new(build_lingo_3d_scene_with_range(
+                    r,
+                    c,
+                    target_low,
+                    target_high,
+                ))
+            })
+        })
+    });
+    let span_label =
+        Memo::new(move |_| readings.with(|r| checkins.with(|c| format_trace_span_label(r, c))));
 
-    let on_mousedown = move |ev: leptos::ev::MouseEvent| {
+    #[cfg(all(target_arch = "wasm32", any(feature = "hydrate", feature = "csr")))]
+    {
+        let renderer_cache = StoredValue::new_local(std::cell::RefCell::new(
+            Option::<CachedWebGl2Renderer>::None,
+        ));
+        Effect::new(move |_| {
+            let scene = scene_memo.get();
+            let y = yaw.get();
+            let p = pitch.get();
+            let dist = distance.get();
+            if let Some(canvas) = canvas_ref.get() {
+                renderer_cache.with_value(|cell| {
+                    let mut slot = cell.borrow_mut();
+                    let init_res = if slot.is_none() {
+                        match CachedWebGl2Renderer::new(&canvas) {
+                            Ok(r) => {
+                                *slot = Some(r);
+                                Ok(())
+                            }
+                            Err(e) => Err(e),
+                        }
+                    } else {
+                        Ok(())
+                    };
+                    match init_res {
+                        Ok(()) => {
+                            if let Some(renderer) = slot.as_mut() {
+                                renderer.upload_if_needed(&scene);
+                                renderer.draw(&canvas, y, p, dist);
+                            }
+                            gl_error.set(None);
+                        }
+                        Err(err) => gl_error.set(Some(err)),
+                    }
+                });
+            }
+        });
+    }
+
+    #[cfg(not(all(target_arch = "wasm32", any(feature = "hydrate", feature = "csr"))))]
+    let _ = (&scene_memo, &gl_error);
+
+    let on_pointerdown = move |ev: leptos::ev::PointerEvent| {
+        let pointer_id = ev.pointer_id();
         dragging.set(true);
+        active_pointer_id.set(Some(pointer_id));
         last_xy.set((ev.client_x(), ev.client_y()));
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        if let Some(canvas) = canvas_ref.get_untracked() {
+            let _ = canvas.set_pointer_capture(pointer_id);
+        }
     };
-    let on_mouseup = move |_: leptos::ev::MouseEvent| {
-        dragging.set(false);
+    let on_pointerup = move |ev: leptos::ev::PointerEvent| {
+        if active_pointer_id.get_untracked() == Some(ev.pointer_id()) {
+            dragging.set(false);
+            active_pointer_id.set(None);
+            #[cfg(any(feature = "hydrate", feature = "csr"))]
+            if let Some(canvas) = canvas_ref.get_untracked() {
+                let _ = canvas.release_pointer_capture(ev.pointer_id());
+            }
+        }
     };
-    let on_mousemove = move |ev: leptos::ev::MouseEvent| {
-        if dragging.get() {
-            let (lx, ly) = last_xy.get();
+    let on_pointermove = move |ev: leptos::ev::PointerEvent| {
+        if dragging.get_untracked() && active_pointer_id.get_untracked() == Some(ev.pointer_id()) {
+            let (lx, ly) = last_xy.get_untracked();
             let dx = (ev.client_x() - lx) as f32;
             let dy = (ev.client_y() - ly) as f32;
             last_xy.set((ev.client_x(), ev.client_y()));
@@ -298,6 +556,49 @@ pub fn LingoMood3DChart(
     };
     let zoom_in = move |_| distance.update(|d| *d = (*d - 0.4).max(2.0));
     let zoom_out = move |_| distance.update(|d| *d = (*d + 0.4).min(6.5));
+    let on_keydown = move |ev: leptos::ev::KeyboardEvent| match ev.key().as_str() {
+        "ArrowLeft" => {
+            ev.prevent_default();
+            yaw.update(|v| *v += 0.14);
+        }
+        "ArrowRight" => {
+            ev.prevent_default();
+            yaw.update(|v| *v -= 0.14);
+        }
+        "ArrowUp" => {
+            ev.prevent_default();
+            pitch.update(|v| *v = (*v + 0.10).clamp(0.08, 1.35));
+        }
+        "ArrowDown" => {
+            ev.prevent_default();
+            pitch.update(|v| *v = (*v - 0.10).clamp(0.08, 1.35));
+        }
+        "+" | "=" => {
+            ev.prevent_default();
+            distance.update(|d| *d = (*d - 0.4).max(2.0));
+        }
+        "-" | "_" => {
+            ev.prevent_default();
+            distance.update(|d| *d = (*d + 0.4).min(6.5));
+        }
+        "r" | "R" | "0" => {
+            ev.prevent_default();
+            yaw.set(-0.42);
+            pitch.set(0.36);
+            distance.set(3.85);
+        }
+        _ => {}
+    };
+
+    let canvas_aria_label = move || {
+        let device = monitor_name
+            .map(|sig| sig.get())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "Continuous glucose".to_string());
+        format!(
+            "Interactive 3D {device} and mental state trajectory. Drag with mouse or touch, or focus and use arrow keys to rotate, plus and minus to zoom, R to reset."
+        )
+    };
 
     view! {
         <div class="space-y-3">
@@ -306,228 +607,351 @@ pub fn LingoMood3DChart(
                     node_ref=canvas_ref
                     width="900"
                     height="360"
-                    class="block h-[300px] w-full cursor-grab active:cursor-grabbing"
-                    aria-label="Interactive 3D WebGL2 Abbott Lingo glucose and mental state trajectory"
-                    on:mousedown=on_mousedown
-                    on:mouseup=on_mouseup
-                    on:mouseleave=on_mouseup
-                    on:mousemove=on_mousemove
+                    tabindex="0"
+                    role="application"
+                    style="touch-action: none;"
+                    class="block h-[300px] w-full touch-none cursor-grab active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                    aria-label=canvas_aria_label
+                    on:pointerdown=on_pointerdown
+                    on:pointerup=on_pointerup
+                    on:pointercancel=on_pointerup
+                    on:pointermove=on_pointermove
+                    on:keydown=on_keydown
                 />
                 <div class="pointer-events-none absolute top-3 left-3 rounded-lg bg-slate-950/75 px-2.5 py-1 text-[11px] text-slate-300 backdrop-blur">
-                    "Pure-Rust WebGL2 (glow + glam) · Drag to orbit"
+                    "3D View · Drag or use arrow keys to rotate"
                 </div>
                 <div class="absolute right-3 bottom-3 flex gap-1.5">
                     <button
                         type="button"
+                        aria-label="Zoom in 3D chart"
+                        title="Zoom in (+)"
                         on:click=zoom_in
-                        class="rounded-md border border-white/15 bg-slate-900/90 px-2.5 py-1 text-xs text-slate-200 transition hover:bg-slate-800"
+                        class="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg border border-white/15 bg-slate-900/90 px-2.5 py-1 text-sm font-semibold text-slate-200 transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
                     >
                         "+"
                     </button>
                     <button
                         type="button"
+                        aria-label="Zoom out 3D chart"
+                        title="Zoom out (−)"
                         on:click=zoom_out
-                        class="rounded-md border border-white/15 bg-slate-900/90 px-2.5 py-1 text-xs text-slate-200 transition hover:bg-slate-800"
+                        class="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg border border-white/15 bg-slate-900/90 px-2.5 py-1 text-sm font-semibold text-slate-200 transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
                     >
                         "−"
                     </button>
                     <button
                         type="button"
+                        aria-label="Reset 3D camera view"
+                        title="Reset 3D camera view (R)"
                         on:click=reset_view
-                        class="rounded-md border border-white/15 bg-slate-900/90 px-2.5 py-1 text-xs text-slate-200 transition hover:bg-slate-800"
+                        class="inline-flex min-h-[40px] items-center justify-center rounded-lg border border-white/15 bg-slate-900/90 px-3 py-1 text-xs font-medium text-slate-200 transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
                     >
                         "Reset 3D"
                     </button>
                 </div>
             </div>
             {move || gl_error.get().map(|err| view! {
-                <p class="text-xs text-amber-300">{format!("WebGL2 unavailable ({err}); switch to 2D SVG above.")}</p>
+                <p role="status" aria-live="polite" title=err class="text-xs text-amber-300">
+                    "3D chart view is unavailable on this browser; switch to 2D View above to inspect your timeline."
+                </p>
             })}
             <p class="text-xs text-slate-400">
-                "X-axis: 24h timeline · Y-axis: Lingo glucose (mg/dL) with emerald 70–140 target plane & amber spikes · Z-axis depth: Mood lane (front, emerald) & Anxiety lane (back, rose)."
+                {move || {
+                    let (target_low, target_high) = active_range.get();
+                    format!(
+                        "X-axis: {} timeline (gaps >2h broken cleanly) · Y-axis: glucose (mg/dL) with emerald {:.0}–{:.0} target plane, amber excursions, orange-red ceiling cap & crimson floor cap · Z-axis depth: Mood lane (front, emerald) & Anxiety lane (back, rose).",
+                        span_label.get(),
+                        target_low,
+                        target_high,
+                    )
+                }}
             </p>
         </div>
     }
 }
 
 #[cfg(all(target_arch = "wasm32", any(feature = "hydrate", feature = "csr")))]
-fn render_webgl2_scene(
-    canvas: &web_sys::HtmlCanvasElement,
-    scene: &Chart3DScene,
-    yaw: f32,
-    pitch: f32,
-    distance: f32,
-) -> Result<(), String> {
-    use glam::{Mat4, Vec3};
-    use glow::HasContext;
-    use wasm_bindgen::JsCast;
+struct CachedWebGl2Renderer {
+    gl: glow::Context,
+    program: glow::Program,
+    mvp_loc: Option<glow::UniformLocation>,
+    opaque_vao: glow::VertexArray,
+    opaque_vbo: glow::Buffer,
+    opaque_verts: i32,
+    lines_vao: glow::VertexArray,
+    lines_vbo: glow::Buffer,
+    lines_verts: i32,
+    translucent_vao: glow::VertexArray,
+    translucent_vbo: glow::Buffer,
+    translucent_verts: i32,
+    uploaded_scene_ptr: usize,
+}
 
-    let raw_ctx = canvas
-        .get_context("webgl2")
-        .map_err(|_| "getContext(webgl2) threw".to_string())?
-        .ok_or_else(|| "browser returned no webgl2 context".to_string())?;
-    let webgl2: web_sys::WebGl2RenderingContext = raw_ctx
-        .dyn_into()
-        .map_err(|_| "context is not WebGl2RenderingContext".to_string())?;
+#[cfg(all(target_arch = "wasm32", any(feature = "hydrate", feature = "csr")))]
+impl CachedWebGl2Renderer {
+    fn new(canvas: &web_sys::HtmlCanvasElement) -> Result<Self, String> {
+        use glow::HasContext;
+        use wasm_bindgen::JsCast;
 
-    let gl = glow::Context::from_webgl2_context(webgl2);
+        let raw_ctx = canvas
+            .get_context("webgl2")
+            .map_err(|_| "getContext(webgl2) threw".to_string())?
+            .ok_or_else(|| "browser returned no webgl2 context".to_string())?;
+        let webgl2: web_sys::WebGl2RenderingContext = raw_ctx
+            .dyn_into()
+            .map_err(|_| "context is not WebGl2RenderingContext".to_string())?;
 
-    const VERT_SRC: &str = r#"#version 300 es
-        precision highp float;
-        layout(location = 0) in vec3 a_pos;
-        layout(location = 1) in vec4 a_color;
-        uniform mat4 u_mvp;
-        out vec4 v_color;
-        void main() {
-            v_color = a_color;
-            gl_Position = u_mvp * vec4(a_pos, 1.0);
-        }
-    "#;
-    const FRAG_SRC: &str = r#"#version 300 es
-        precision highp float;
-        in vec4 v_color;
-        out vec4 frag_color;
-        void main() {
-            frag_color = v_color;
-        }
-    "#;
+        let gl = glow::Context::from_webgl2_context(webgl2);
 
-    let width = canvas.width().max(1) as i32;
-    let height = canvas.height().max(1) as i32;
-    let aspect = width as f32 / height as f32;
+        const VERT_SRC: &str = r#"#version 300 es
+            precision highp float;
+            layout(location = 0) in vec3 a_pos;
+            layout(location = 1) in vec4 a_color;
+            uniform mat4 u_mvp;
+            out vec4 v_color;
+            void main() {
+                v_color = a_color;
+                gl_Position = u_mvp * vec4(a_pos, 1.0);
+            }
+        "#;
+        const FRAG_SRC: &str = r#"#version 300 es
+            precision highp float;
+            in vec4 v_color;
+            out vec4 frag_color;
+            void main() {
+                frag_color = v_color;
+            }
+        "#;
 
-    let eye = Vec3::new(
-        distance * pitch.cos() * yaw.sin(),
-        0.55 + distance * pitch.sin(),
-        distance * pitch.cos() * yaw.cos(),
-    );
-    let target = Vec3::new(0.0, 0.55, 0.0);
-    let view = Mat4::look_at_rh(eye, target, Vec3::Y);
-    let proj = Mat4::perspective_rh(42.0_f32.to_radians(), aspect, 0.1, 40.0);
-    let mvp = (proj * view).to_cols_array();
+        // SAFETY: All WebGL2 objects are created on a valid context bound to `canvas`
+        // and cleaned up either on error or in `Drop`.
+        unsafe {
+            let program = gl
+                .create_program()
+                .map_err(|e| format!("create_program: {e}"))?;
+            let vs = gl
+                .create_shader(glow::VERTEX_SHADER)
+                .map_err(|e| format!("create_shader vs: {e}"))?;
+            gl.shader_source(vs, VERT_SRC);
+            gl.compile_shader(vs);
+            if !gl.get_shader_compile_status(vs) {
+                let log = gl.get_shader_info_log(vs);
+                gl.delete_shader(vs);
+                gl.delete_program(program);
+                return Err(format!("vertex shader error: {log}"));
+            }
 
-    // SAFETY: All WebGL2 calls operate on a valid context bound to the canvas
-    // and clean up shaders, program, VBO, and VAO before returning.
-    unsafe {
-        let program = gl
-            .create_program()
-            .map_err(|e| format!("create_program: {e}"))?;
-        let vs = gl
-            .create_shader(glow::VERTEX_SHADER)
-            .map_err(|e| format!("create_shader vs: {e}"))?;
-        gl.shader_source(vs, VERT_SRC);
-        gl.compile_shader(vs);
-        if !gl.get_shader_compile_status(vs) {
-            let log = gl.get_shader_info_log(vs);
-            gl.delete_shader(vs);
-            gl.delete_program(program);
-            return Err(format!("vertex shader error: {log}"));
-        }
+            let fs = gl
+                .create_shader(glow::FRAGMENT_SHADER)
+                .map_err(|e| format!("create_shader fs: {e}"))?;
+            gl.shader_source(fs, FRAG_SRC);
+            gl.compile_shader(fs);
+            if !gl.get_shader_compile_status(fs) {
+                let log = gl.get_shader_info_log(fs);
+                gl.delete_shader(vs);
+                gl.delete_shader(fs);
+                gl.delete_program(program);
+                return Err(format!("fragment shader error: {log}"));
+            }
 
-        let fs = gl
-            .create_shader(glow::FRAGMENT_SHADER)
-            .map_err(|e| format!("create_shader fs: {e}"))?;
-        gl.shader_source(fs, FRAG_SRC);
-        gl.compile_shader(fs);
-        if !gl.get_shader_compile_status(fs) {
-            let log = gl.get_shader_info_log(fs);
+            gl.attach_shader(program, vs);
+            gl.attach_shader(program, fs);
+            gl.link_program(program);
             gl.delete_shader(vs);
             gl.delete_shader(fs);
-            gl.delete_program(program);
-            return Err(format!("fragment shader error: {log}"));
-        }
-
-        gl.attach_shader(program, vs);
-        gl.attach_shader(program, fs);
-        gl.link_program(program);
-        gl.delete_shader(vs);
-        gl.delete_shader(fs);
-        if !gl.get_program_link_status(program) {
-            let log = gl.get_program_info_log(program);
-            gl.delete_program(program);
-            return Err(format!("program link error: {log}"));
-        }
-
-        gl.viewport(0, 0, width, height);
-        gl.clear_color(0.008, 0.024, 0.090, 1.0);
-        gl.enable(glow::DEPTH_TEST);
-        gl.enable(glow::BLEND);
-        gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
-        gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
-
-        gl.use_program(Some(program));
-        if let Some(loc) = gl.get_uniform_location(program, "u_mvp") {
-            gl.uniform_matrix_4_f32_slice(Some(&loc), false, &mvp);
-        }
-
-        let vao = match gl.create_vertex_array() {
-            Ok(vao) => vao,
-            Err(e) => {
+            if !gl.get_program_link_status(program) {
+                let log = gl.get_program_info_log(program);
                 gl.delete_program(program);
-                return Err(format!("create_vao: {e}"));
+                return Err(format!("program link error: {log}"));
             }
-        };
-        let vbo = match gl.create_buffer() {
-            Ok(vbo) => vbo,
-            Err(e) => {
-                gl.delete_vertex_array(vao);
-                gl.delete_program(program);
-                return Err(format!("create_vbo: {e}"));
-            }
-        };
-        gl.bind_vertex_array(Some(vao));
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
 
-        let stride = (7 * std::mem::size_of::<f32>()) as i32;
-        gl.enable_vertex_attrib_array(0);
-        gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, stride, 0);
-        gl.enable_vertex_attrib_array(1);
-        gl.vertex_attrib_pointer_f32(
-            1,
-            4,
-            glow::FLOAT,
-            false,
-            stride,
-            (3 * std::mem::size_of::<f32>()) as i32,
-        );
+            let mvp_loc = gl.get_uniform_location(program, "u_mvp");
+            let init_pair =
+                |gl: &glow::Context| -> Result<(glow::VertexArray, glow::Buffer), String> {
+                    let vao = gl
+                        .create_vertex_array()
+                        .map_err(|e| format!("create_vao: {e}"))?;
+                    let vbo = gl.create_buffer().map_err(|e| {
+                        gl.delete_vertex_array(vao);
+                        format!("create_vbo: {e}")
+                    })?;
+                    gl.bind_vertex_array(Some(vao));
+                    gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+                    let stride = (7 * std::mem::size_of::<f32>()) as i32;
+                    gl.enable_vertex_attrib_array(0);
+                    gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, stride, 0);
+                    gl.enable_vertex_attrib_array(1);
+                    gl.vertex_attrib_pointer_f32(
+                        1,
+                        4,
+                        glow::FLOAT,
+                        false,
+                        stride,
+                        (3 * std::mem::size_of::<f32>()) as i32,
+                    );
+                    gl.bind_vertex_array(None);
+                    Ok((vao, vbo))
+                };
 
-        // 1. Draw opaque 3D ribbons and mood/anxiety/spike octahedra with full depth writes.
-        gl.depth_mask(true);
-        if !scene.opaque_triangles.is_empty() {
-            let bytes = floats_as_bytes(&scene.opaque_triangles);
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STATIC_DRAW);
-            gl.draw_arrays(
-                glow::TRIANGLES,
-                0,
-                (scene.opaque_triangles.len() / 7) as i32,
-            );
-        }
-        // 2. Draw floor grid, target rails, stems, and trajectories.
-        if !scene.lines.is_empty() {
-            let bytes = floats_as_bytes(&scene.lines);
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STATIC_DRAW);
-            gl.draw_arrays(glow::LINES, 0, (scene.lines.len() / 7) as i32);
-        }
-        // 3. Draw translucent target zone plane & glucose curtain without occluding objects behind them.
-        if !scene.translucent_triangles.is_empty() {
-            gl.depth_mask(false);
-            let bytes = floats_as_bytes(&scene.translucent_triangles);
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STATIC_DRAW);
-            gl.draw_arrays(
-                glow::TRIANGLES,
-                0,
-                (scene.translucent_triangles.len() / 7) as i32,
-            );
-            gl.depth_mask(true);
-        }
+            let (opaque_vao, opaque_vbo) = match init_pair(&gl) {
+                Ok(pair) => pair,
+                Err(e) => {
+                    gl.delete_program(program);
+                    return Err(e);
+                }
+            };
+            let (lines_vao, lines_vbo) = match init_pair(&gl) {
+                Ok(pair) => pair,
+                Err(e) => {
+                    gl.delete_buffer(opaque_vbo);
+                    gl.delete_vertex_array(opaque_vao);
+                    gl.delete_program(program);
+                    return Err(e);
+                }
+            };
+            let (translucent_vao, translucent_vbo) = match init_pair(&gl) {
+                Ok(pair) => pair,
+                Err(e) => {
+                    gl.delete_buffer(lines_vbo);
+                    gl.delete_vertex_array(lines_vao);
+                    gl.delete_buffer(opaque_vbo);
+                    gl.delete_vertex_array(opaque_vao);
+                    gl.delete_program(program);
+                    return Err(e);
+                }
+            };
 
-        gl.bind_vertex_array(None);
-        gl.delete_buffer(vbo);
-        gl.delete_vertex_array(vao);
-        gl.delete_program(program);
+            Ok(Self {
+                gl,
+                program,
+                mvp_loc,
+                opaque_vao,
+                opaque_vbo,
+                opaque_verts: 0,
+                lines_vao,
+                lines_vbo,
+                lines_verts: 0,
+                translucent_vao,
+                translucent_vbo,
+                translucent_verts: 0,
+                uploaded_scene_ptr: 0,
+            })
+        }
     }
 
-    Ok(())
+    fn upload_if_needed(&mut self, scene: &Arc<Chart3DScene>) {
+        use glow::HasContext;
+        let ptr = Arc::as_ptr(scene) as usize;
+        if self.uploaded_scene_ptr == ptr {
+            return;
+        }
+        // SAFETY: Buffers belong to `self.gl` and slices are tightly packed `f32` arrays.
+        unsafe {
+            self.gl
+                .bind_buffer(glow::ARRAY_BUFFER, Some(self.opaque_vbo));
+            self.gl.buffer_data_u8_slice(
+                glow::ARRAY_BUFFER,
+                floats_as_bytes(&scene.opaque_triangles),
+                glow::STATIC_DRAW,
+            );
+            self.opaque_verts = (scene.opaque_triangles.len() / 7) as i32;
+
+            self.gl
+                .bind_buffer(glow::ARRAY_BUFFER, Some(self.lines_vbo));
+            self.gl.buffer_data_u8_slice(
+                glow::ARRAY_BUFFER,
+                floats_as_bytes(&scene.lines),
+                glow::STATIC_DRAW,
+            );
+            self.lines_verts = (scene.lines.len() / 7) as i32;
+
+            self.gl
+                .bind_buffer(glow::ARRAY_BUFFER, Some(self.translucent_vbo));
+            self.gl.buffer_data_u8_slice(
+                glow::ARRAY_BUFFER,
+                floats_as_bytes(&scene.translucent_triangles),
+                glow::STATIC_DRAW,
+            );
+            self.translucent_verts = (scene.translucent_triangles.len() / 7) as i32;
+            self.gl.bind_buffer(glow::ARRAY_BUFFER, None);
+        }
+        self.uploaded_scene_ptr = ptr;
+    }
+
+    fn draw(&self, canvas: &web_sys::HtmlCanvasElement, yaw: f32, pitch: f32, distance: f32) {
+        use glam::{Mat4, Vec3};
+        use glow::HasContext;
+
+        let width = canvas.width().max(1) as i32;
+        let height = canvas.height().max(1) as i32;
+        let aspect = width as f32 / height as f32;
+
+        let eye = Vec3::new(
+            distance * pitch.cos() * yaw.sin(),
+            0.55 + distance * pitch.sin(),
+            distance * pitch.cos() * yaw.cos(),
+        );
+        let target = Vec3::new(0.0, 0.55, 0.0);
+        let view = Mat4::look_at_rh(eye, target, Vec3::Y);
+        let proj = Mat4::perspective_rh(42.0_f32.to_radians(), aspect, 0.1, 40.0);
+        let mvp = (proj * view).to_cols_array();
+
+        // SAFETY: Program, VAOs, and vertex counts were initialized on `self.gl`.
+        unsafe {
+            self.gl.viewport(0, 0, width, height);
+            self.gl.clear_color(0.008, 0.024, 0.090, 1.0);
+            self.gl.enable(glow::DEPTH_TEST);
+            self.gl.enable(glow::BLEND);
+            self.gl
+                .blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+            self.gl
+                .clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+
+            self.gl.use_program(Some(self.program));
+            if let Some(loc) = self.mvp_loc.as_ref() {
+                self.gl.uniform_matrix_4_f32_slice(Some(loc), false, &mvp);
+            }
+
+            // 1. Opaque ribbons & octahedra
+            self.gl.depth_mask(true);
+            if self.opaque_verts > 0 {
+                self.gl.bind_vertex_array(Some(self.opaque_vao));
+                self.gl.draw_arrays(glow::TRIANGLES, 0, self.opaque_verts);
+            }
+            // 2. Floor grid, rails, stems, and trajectories
+            if self.lines_verts > 0 {
+                self.gl.bind_vertex_array(Some(self.lines_vao));
+                self.gl.draw_arrays(glow::LINES, 0, self.lines_verts);
+            }
+            // 3. Translucent target plane & glucose curtains
+            if self.translucent_verts > 0 {
+                self.gl.depth_mask(false);
+                self.gl.bind_vertex_array(Some(self.translucent_vao));
+                self.gl
+                    .draw_arrays(glow::TRIANGLES, 0, self.translucent_verts);
+                self.gl.depth_mask(true);
+            }
+            self.gl.bind_vertex_array(None);
+        }
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", any(feature = "hydrate", feature = "csr")))]
+impl Drop for CachedWebGl2Renderer {
+    fn drop(&mut self) {
+        use glow::HasContext;
+        // SAFETY: Releases all GPU handles owned by this renderer once on component unmount.
+        unsafe {
+            self.gl.delete_buffer(self.opaque_vbo);
+            self.gl.delete_vertex_array(self.opaque_vao);
+            self.gl.delete_buffer(self.lines_vbo);
+            self.gl.delete_vertex_array(self.lines_vao);
+            self.gl.delete_buffer(self.translucent_vbo);
+            self.gl.delete_vertex_array(self.translucent_vao);
+            self.gl.delete_program(self.program);
+        }
+    }
 }
 
 #[cfg(all(target_arch = "wasm32", any(feature = "hydrate", feature = "csr")))]
@@ -541,8 +965,25 @@ fn floats_as_bytes(floats: &[f32]) -> &[u8] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mental_health_lingo::{parse_lingo_csv, sample_checkins, SAMPLE_LINGO_CSV};
+    use crate::mental_health_lingo::{
+        parse_lingo_csv, sample_checkins, GlucoseReadingBound, SAMPLE_LINGO_CSV,
+    };
     use leptos::prelude::RenderHtml;
+
+    fn synthetic_reading(
+        hour_offset: f64,
+        glucose_mg_dl: f64,
+        bound: GlucoseReadingBound,
+    ) -> LingoReading {
+        LingoReading {
+            timestamp: format!("2026-07-01T{:02}:00-07:00", (hour_offset as u32) % 24),
+            hour_offset,
+            glucose_mg_dl,
+            lingo_count: None,
+            tag: None,
+            bound,
+        }
+    }
 
     #[test]
     fn builds_valid_3d_triangles_and_lines_for_sample_lingo_data() {
@@ -562,15 +1003,146 @@ mod tests {
     }
 
     #[test]
-    fn renders_3d_canvas_shell_on_ssr() {
-        let readings = RwSignal::new(parse_lingo_csv(SAMPLE_LINGO_CSV).unwrap());
+    fn breaks_3d_ribbons_and_curtains_across_sensor_gaps() {
+        // Two segments separated by a 12-hour sensor-off gap (0..=4h and 16..=20h).
+        let readings = vec![
+            synthetic_reading(0.0, 95.0, GlucoseReadingBound::Measured),
+            synthetic_reading(2.0, 105.0, GlucoseReadingBound::Measured),
+            synthetic_reading(4.0, 110.0, GlucoseReadingBound::Measured),
+            synthetic_reading(16.0, 120.0, GlucoseReadingBound::Measured),
+            synthetic_reading(18.0, 115.0, GlucoseReadingBound::Measured),
+            synthetic_reading(20.0, 100.0, GlucoseReadingBound::Measured),
+        ];
+        let scene = build_lingo_3d_scene(&readings, &[]);
+        // 4 ribbon pairs total (2 per segment) -> 4 quads = 8 triangles = 24 vertices = 168 floats.
+        // If the 12h gap had been bridged, there would be 5 quads (30 vertices = 210 floats).
+        assert_eq!(scene.opaque_triangles.len(), 4 * 6 * 7);
+        // Translucent: 1 target plane quad + 4 curtain quads = 5 quads.
+        assert_eq!(scene.translucent_triangles.len(), 5 * 6 * 7);
+    }
+
+    #[test]
+    fn renders_floor_and_ceiling_saturation_distinctly_above_floor() {
+        let readings = vec![
+            synthetic_reading(0.0, 54.0, GlucoseReadingBound::BelowSensorFloor),
+            synthetic_reading(1.0, 54.0, GlucoseReadingBound::BelowSensorFloor),
+            synthetic_reading(2.0, 100.0, GlucoseReadingBound::Measured),
+            synthetic_reading(3.0, 201.0, GlucoseReadingBound::AboveSensorCeiling),
+            synthetic_reading(4.0, 201.0, GlucoseReadingBound::AboveSensorCeiling),
+        ];
+        let scene = build_lingo_3d_scene(&readings, &[]);
+
+        let has_floor_cap_color = scene.opaque_triangles.chunks_exact(7).any(|v| {
+            (v[3] - COLOR_FLOOR_CAP[0]).abs() < 1e-4
+                && (v[4] - COLOR_FLOOR_CAP[1]).abs() < 1e-4
+                && (v[5] - COLOR_FLOOR_CAP[2]).abs() < 1e-4
+                && v[1] > 0.05 // visibly above the 0.0 chart floor because min_g = 45.0
+        });
+        let has_ceiling_cap_color = scene.opaque_triangles.chunks_exact(7).any(|v| {
+            (v[3] - COLOR_CEILING_CAP[0]).abs() < 1e-4
+                && (v[4] - COLOR_CEILING_CAP[1]).abs() < 1e-4
+                && (v[5] - COLOR_CEILING_CAP[2]).abs() < 1e-4
+        });
+        assert!(
+            has_floor_cap_color,
+            "expected crimson floor-cap geometry above y=0"
+        );
+        assert!(
+            has_ceiling_cap_color,
+            "expected orange-red ceiling-cap geometry"
+        );
+    }
+
+    #[test]
+    fn formats_dynamic_trace_span_labels_and_renders_3d_canvas_shell_on_ssr() {
+        let d14 = vec![
+            synthetic_reading(0.0, 100.0, GlucoseReadingBound::Measured),
+            synthetic_reading(336.0, 105.0, GlucoseReadingBound::Measured),
+        ];
+        assert_eq!(format_trace_span_label(&d14, &[]), "14d");
+
+        let long = vec![
+            synthetic_reading(0.0, 100.0, GlucoseReadingBound::Measured),
+            synthetic_reading(2704.25, 105.0, GlucoseReadingBound::Measured),
+        ];
+        assert_eq!(format_trace_span_label(&long, &[]), "112.7d");
+
+        let readings = RwSignal::new(d14);
         let checkins = RwSignal::new(sample_checkins());
         let html = view! {
             <LingoMood3DChart readings=readings.into() checkins=checkins.into() />
         }
         .to_html();
         assert!(html.contains("<canvas"));
-        assert!(html.contains("Pure-Rust WebGL2 (glow + glam)"));
+        assert!(html.contains("touch-action: none;"));
+        assert!(html.contains("tabindex=\"0\""));
+        assert!(html.contains("3D View · Drag or use arrow keys to rotate"));
+        assert!(html.contains("aria-label=\"Zoom in 3D chart\""));
+        assert!(html.contains("aria-label=\"Zoom out 3D chart\""));
         assert!(html.contains("Reset 3D"));
+        assert!(html.contains("X-axis: 14d timeline"));
+        assert!(html.contains("emerald 70–140 target plane"));
+
+        let custom_range = RwSignal::new((70.0_f64, 180.0_f64));
+        let custom_html = view! {
+            <LingoMood3DChart
+                readings=readings.into()
+                checkins=checkins.into()
+                target_range=custom_range.into()
+            />
+        }
+        .to_html();
+        assert!(custom_html.contains("emerald 70–180 target plane"));
+    }
+
+    #[test]
+    fn custom_target_range_shifts_emerald_rails_and_preserves_saturation_colors() {
+        let readings = vec![
+            synthetic_reading(0.0, 54.0, GlucoseReadingBound::BelowSensorFloor),
+            synthetic_reading(1.0, 155.0, GlucoseReadingBound::Measured),
+            synthetic_reading(2.0, 160.0, GlucoseReadingBound::Measured),
+            synthetic_reading(3.0, 201.0, GlucoseReadingBound::AboveSensorCeiling),
+        ];
+        let tight = build_lingo_3d_scene_with_range(&readings, &[], 70.0, 140.0);
+        let ada = build_lingo_3d_scene_with_range(&readings, &[], 70.0, 180.0);
+
+        let max_emerald_rail_y = |scene: &Chart3DScene| -> f32 {
+            scene
+                .lines
+                .chunks_exact(7)
+                .filter(|v| {
+                    (v[3] - 0.20).abs() < 1e-4
+                        && (v[4] - 0.83).abs() < 1e-4
+                        && (v[5] - 0.60).abs() < 1e-4
+                        && (v[6] - 0.55).abs() < 1e-4
+                })
+                .map(|v| v[1])
+                .fold(0.0_f32, f32::max)
+        };
+
+        let y_tight = max_emerald_rail_y(&tight);
+        let y_ada = max_emerald_rail_y(&ada);
+        assert!(
+            y_ada > y_tight + 0.25,
+            "expected ADA 180 mg/dL emerald rail ({y_ada}) to sit noticeably above tight 140 mg/dL rail ({y_tight})"
+        );
+
+        let has_color = |scene: &Chart3DScene, col: [f32; 4]| {
+            scene.opaque_triangles.chunks_exact(7).any(|v| {
+                (v[3] - col[0]).abs() < 1e-4
+                    && (v[4] - col[1]).abs() < 1e-4
+                    && (v[5] - col[2]).abs() < 1e-4
+            })
+        };
+        assert!(
+            has_color(&tight, COLOR_SPIKE),
+            "155–160 mg/dL should render as amber excursion under 70–140"
+        );
+        assert!(
+            !has_color(&ada, COLOR_SPIKE) && has_color(&ada, COLOR_STEADY),
+            "155–160 mg/dL should render as steady cyan under 70–180"
+        );
+        assert!(has_color(&ada, COLOR_FLOOR_CAP));
+        assert!(has_color(&ada, COLOR_CEILING_CAP));
     }
 }

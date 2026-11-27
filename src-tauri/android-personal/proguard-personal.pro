@@ -3,6 +3,7 @@
 -keepclassmembers class * extends app.tauri.plugin.Plugin {
     @app.tauri.annotation.Command <methods>;
     @app.tauri.annotation.ActivityCallback <methods>;
+    @app.tauri.annotation.PermissionCallback <methods>;
 }
 
 # Keep Google ML Kit ComponentDiscovery registrars & Android AICore / GenAI Prompt bindings.

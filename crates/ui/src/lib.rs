@@ -11,6 +11,8 @@ pub mod activity_snapshot;
 pub mod activity_source;
 pub mod agent_chat;
 pub mod analytics;
+pub mod android_download;
+pub mod chart_citations;
 pub mod clinical;
 pub mod commissions;
 pub mod commissions_data;
@@ -18,12 +20,19 @@ pub mod community_activity;
 pub mod community_policy;
 pub mod consent;
 pub mod creators;
+pub mod dashboard_layout;
 pub mod data;
 pub mod health_bridge;
+pub mod i18n;
+pub mod info_tip;
 pub mod local_ai_chat;
 pub mod mental_health;
 pub mod mental_health_3d;
 pub mod mental_health_cgm;
+pub mod mental_health_cgm_alerts;
+pub mod mental_health_cgm_alerts_view;
+pub mod mental_health_cgm_analytics;
+pub mod mental_health_cgm_views;
 pub mod mental_health_episodes;
 pub mod mental_health_exports;
 pub mod mental_health_lingo;
@@ -34,6 +43,7 @@ pub mod patient_ehr;
 pub mod portfolio;
 pub mod portfolio_chart;
 pub mod privacy;
+pub mod recovery_search;
 pub mod sections;
 pub mod tools;
 
@@ -100,6 +110,7 @@ pub fn App() -> impl IntoView {
 pub fn AppWithMode(mode: AppShellMode) -> impl IntoView {
     provide_meta_context();
     provide_consent_context();
+    i18n::provide_i18n_context();
     provide_context(mode);
 
     let is_demo_app = mode == AppShellMode::ClinicalDemoApp;
@@ -136,6 +147,7 @@ pub fn AppWithMode(mode: AppShellMode) -> impl IntoView {
                         }
                     />
                     <Route path=StaticSegment("privacy") view=PrivacyPage />
+                    <Route path=StaticSegment("android") view=android_download::AndroidDownloadPage />
                     <Route path=StaticSegment("clinical") view=clinical::ClinicalOverviewPage />
                     <Route
                         path=(StaticSegment("clinical"), StaticSegment("patient"))
@@ -150,6 +162,10 @@ pub fn AppWithMode(mode: AppShellMode) -> impl IntoView {
                     <Route path=StaticSegment("creators") view=creators::CreatorsPage />
                     <Route path=StaticSegment("community-policy") view=CommunityPolicyPage />
                     <Route path=StaticSegment("community-activity") view=community_activity::CommunityActivityPage ssr=leptos_router::SsrMode::Async />
+                    <Route
+                        path=(StaticSegment("tools"), StaticSegment("recovery"))
+                        view=recovery_search::RecoveryToolPage
+                    />
                     <Route
                         path=(StaticSegment("tools"), StaticSegment("investment-account"))
                         view=InvestmentAccountPage

@@ -2,6 +2,10 @@
 /target
 **/target
 
+# Local recovery-index API/website fetch cache
+/.cache
+
+
 # Leptos / Trunk build output
 /dist
 /crates/**/dist

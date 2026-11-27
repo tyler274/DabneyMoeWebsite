@@ -19,8 +19,10 @@ from pathlib import Path
 import re
 import subprocess
 
-# Terraform and the self-host stack are applied by hand, never by this workflow.
-SKIP_PREFIXES = ("terraform/", "selfhost/")
+# Terraform, Anubis policy, and the self-host stack are applied out-of-band,
+# never by this workflow.
+SKIP_PREFIXES = ("terraform/", "selfhost/", "anubis/")
+SKIP_FILES = {"scripts/setup-cloudflare-edge.sh"}
 
 # Inputs of the Tauri desktop + Android builds: the Tauri shell, the UI crates
 # it links (never `crates/web/`), the Trunk frontend bundle (styles + copied
@@ -28,6 +30,7 @@ SKIP_PREFIXES = ("terraform/", "selfhost/")
 # `nix/web-server.nix`, which is web-only).
 TAURI_PREFIXES = (
     "src-tauri/",
+    "crates/recovery-index/",
     "crates/ui/",
     "crates/clinical-workspace/",
     "crates/tauri-ui/",
@@ -55,7 +58,7 @@ TAURI_FILES = {
 
 
 def skippable(path):
-    return path.endswith(".md") or path.startswith(SKIP_PREFIXES)
+    return path.endswith(".md") or path.startswith(SKIP_PREFIXES) or path in SKIP_FILES
 
 
 def tauri_input(path):

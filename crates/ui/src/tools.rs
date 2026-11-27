@@ -2,6 +2,7 @@
 
 use leptos::prelude::*;
 
+use crate::i18n::Msg;
 use crate::portfolio::{
     analyze_buy, analyze_portfolio, analyze_rebalance, parse_deposit, parse_withdrawal,
     parse_withholding_pct, AccountType, BuyReport, PortfolioImpact, RebalanceReport, SellReport,
@@ -39,26 +40,50 @@ pub const TOOLS_LINKS: &[NavMenuLink] = &[
     NavMenuLink {
         href: "/clinical",
         label: "Clinical Workspace",
+        msg: Some(Msg::ToolClinicalSuite),
+        accent: false,
     },
     NavMenuLink {
         href: "/clinical/patient",
         label: "Patient Experience Demo",
+        msg: Some(Msg::ToolPatientDemo),
+        accent: false,
     },
     NavMenuLink {
         href: "/clinical/physician",
         label: "Physician Workspace Demo",
+        msg: Some(Msg::ToolPhysicianDemo),
+        accent: false,
     },
     NavMenuLink {
         href: "/mental-health",
         label: "Mental Health & Lingo CGM",
+        msg: Some(Msg::ToolMentalHealth),
+        accent: false,
+    },
+    NavMenuLink {
+        href: "/tools/recovery",
+        label: "Recovery & Mental Health Finder",
+        msg: Some(Msg::ToolRecoveryFinder),
+        accent: true,
+    },
+    NavMenuLink {
+        href: "/android",
+        label: "Android App (APK & F-Droid)",
+        msg: Some(Msg::ToolAndroidApp),
+        accent: true,
     },
     NavMenuLink {
         href: "/tools/investment-account",
         label: "Investment Account Calculator",
+        msg: Some(Msg::ToolPortfolio),
+        accent: false,
     },
     NavMenuLink {
         href: "/ownership",
         label: "Code Ownership Report",
+        msg: Some(Msg::ToolOwnership),
+        accent: false,
     },
 ];
 
@@ -67,6 +92,7 @@ pub fn ToolsMenu(open: RwSignal<OpenNavMenu>) -> impl IntoView {
     view! {
         <NavDropdown
             label="Tools"
+            label_msg=Msg::NavTools
             menu=OpenNavMenu::Tools
             open=open
             links=TOOLS_LINKS

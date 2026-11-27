@@ -7,6 +7,41 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Indicates whether a sensor reading was measured directly or hit a sensor ceiling/floor sentinel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GlucoseReadingBound {
+    #[default]
+    Measured,
+    BelowSensorFloor,
+    AboveSensorCeiling,
+}
+
+impl GlucoseReadingBound {
+    /// Whether this reading was clipped at a sensor floor or ceiling bound.
+    pub fn is_capped(self) -> bool {
+        !matches!(self, Self::Measured)
+    }
+
+    /// Whether this reading hit the lower sensor floor bound (e.g. Lingo `<55 mg/dL`).
+    pub fn is_floor_capped(self) -> bool {
+        matches!(self, Self::BelowSensorFloor)
+    }
+
+    /// Whether this reading hit the upper sensor ceiling bound (e.g. Lingo `>200 mg/dL`).
+    pub fn is_ceiling_capped(self) -> bool {
+        matches!(self, Self::AboveSensorCeiling)
+    }
+
+    /// Canonical wire string for `dabney.health_bridge.v1` JSON (`None` when directly measured).
+    pub fn bridge_str(self) -> Option<&'static str> {
+        match self {
+            Self::Measured => None,
+            Self::BelowSensorFloor => Some("below_floor"),
+            Self::AboveSensorCeiling => Some("above_ceiling"),
+        }
+    }
+}
+
 /// A single interstitial glucose reading from an Abbott Lingo biosensor.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LingoReading {
@@ -20,6 +55,9 @@ pub struct LingoReading {
     pub lingo_count: Option<f64>,
     /// Optional meal, exercise, or stressor tag.
     pub tag: Option<String>,
+    /// Whether this reading was directly measured or clipped at a sensor floor/ceiling sentinel.
+    #[serde(default)]
+    pub bound: GlucoseReadingBound,
 }
 
 /// Severity classification for PHQ-9 (0–27) and GAD-7 (0–21).
@@ -341,12 +379,21 @@ pub fn parse_lingo_csv(input: &str) -> Result<Vec<LingoReading>, String> {
             readings.len() as f64 * 0.5
         };
 
+        let bound = if glucose <= 54.5 {
+            GlucoseReadingBound::BelowSensorFloor
+        } else if glucose >= 200.5 {
+            GlucoseReadingBound::AboveSensorCeiling
+        } else {
+            GlucoseReadingBound::Measured
+        };
+
         readings.push(LingoReading {
             timestamp,
             hour_offset,
             glucose_mg_dl: glucose,
             lingo_count,
             tag,
+            bound,
         });
     }
 
@@ -626,5 +673,20 @@ mod tests {
 
         let series = build_assessment_series(&sample_assessment_history(), &checkins);
         assert_eq!(series.len(), 4);
+    }
+
+    #[test]
+    fn deserializes_legacy_lingo_reading_json_without_bound_field() {
+        let legacy_json = r#"{
+            "timestamp": "2026-11-21 08:00",
+            "hour_offset": 2.0,
+            "glucose_mg_dl": 112.0,
+            "lingo_count": null,
+            "tag": "Oatmeal"
+        }"#;
+        let reading: LingoReading =
+            serde_json::from_str(legacy_json).expect("legacy LingoReading JSON deserializes");
+        assert_eq!(reading.bound, GlucoseReadingBound::Measured);
+        assert!(!reading.bound.is_capped());
     }
 }

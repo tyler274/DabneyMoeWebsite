@@ -1,0 +1,339 @@
+{
+  "states": [
+    {
+      "state": "AK",
+      "facilities": 116,
+      "retrieved": "2026-11-25",
+      "sha256": "b498b84965e543c1657395afb5a659974e90bdb75afeb232f73cbc0123061ae5"
+    },
+    {
+      "state": "AL",
+      "facilities": 205,
+      "retrieved": "2026-11-25",
+      "sha256": "9c0acbb5512ab33bc334f382ef3ba967079f13344e32501475cf0e6729dee47e"
+    },
+    {
+      "state": "AR",
+      "facilities": 231,
+      "retrieved": "2026-11-25",
+      "sha256": "00abb71d49eb4bd6ebf587dba991e0f35f67695947ab01e58481115d1da21ca0"
+    },
+    {
+      "state": "AZ",
+      "facilities": 569,
+      "retrieved": "2026-11-27",
+      "sha256": "f8950308582493cf31255beb67168ed96aa9ae3c18ef57c9b7f7cf5aca922d21",
+      "enriched_facilities": 569
+    },
+    {
+      "state": "CA",
+      "facilities": 1698,
+      "retrieved": "2026-11-27",
+      "sha256": "43b7d9bf581ff5c5f6a7cd82144efef130fd534db1af5483f7aefc4d90d3e6e9",
+      "enriched_facilities": 1698
+    },
+    {
+      "state": "CO",
+      "facilities": 337,
+      "retrieved": "2026-11-27",
+      "sha256": "2bd7eeb276525766bf1e8b74a236d50bb113333e9769d1d0dbb0bc67d9cdbd45",
+      "enriched_facilities": 337
+    },
+    {
+      "state": "CT",
+      "facilities": 251,
+      "retrieved": "2026-11-25",
+      "sha256": "bc8b40296bbc025a221e000b1f4c3f0fec00a600e40de09a164ad47c5eaa7223"
+    },
+    {
+      "state": "DC",
+      "facilities": 39,
+      "retrieved": "2026-11-25",
+      "sha256": "a575ce7f0265e52f36bf9a78ae546e0ac36f68758c5ffe504e28c71a25962926"
+    },
+    {
+      "state": "DE",
+      "facilities": 63,
+      "retrieved": "2026-11-25",
+      "sha256": "a5eaa13d2e780d1b722b7e98b57408a5026469a1d2f38118f1ba41d1fc93ef17"
+    },
+    {
+      "state": "FL",
+      "facilities": 803,
+      "retrieved": "2026-11-25",
+      "sha256": "5e7a76da5393af3f00b921eee7abaa482007353a7e2dc9a6d80877f5cd78c206"
+    },
+    {
+      "state": "GA",
+      "facilities": 362,
+      "retrieved": "2026-11-25",
+      "sha256": "97907a003cb0917d770feda1eb04929a655ce21b42014348707b20272f207d21"
+    },
+    {
+      "state": "GU",
+      "facilities": 3,
+      "retrieved": "2026-11-25",
+      "sha256": "c541686a3fc30105ba89cb8cab42fe580b9f7ad115016a56b4429540677fd6ae"
+    },
+    {
+      "state": "HI",
+      "facilities": 95,
+      "retrieved": "2026-11-25",
+      "sha256": "a1bb6acf1f539ddae5b3ca39ae574de8488f9dec43c9defd693ddb1c49693eea"
+    },
+    {
+      "state": "IA",
+      "facilities": 279,
+      "retrieved": "2026-11-25",
+      "sha256": "cab7d4ecec2dc862c49f0ea16f966b66e87d9b6ff1d7b331d22a3b352ac43a67"
+    },
+    {
+      "state": "ID",
+      "facilities": 250,
+      "retrieved": "2026-11-25",
+      "sha256": "9272076d24ef0f9dad8d9e5efe64cec6adafc6c94203d7d5378177595b48a4c8"
+    },
+    {
+      "state": "IL",
+      "facilities": 766,
+      "retrieved": "2026-11-25",
+      "sha256": "d1f0c997ded3e73d860b22b6749c8baf583447f79760917fde8ed7fed9846b26"
+    },
+    {
+      "state": "IN",
+      "facilities": 501,
+      "retrieved": "2026-11-25",
+      "sha256": "9222a02f0e0dbfcf52bdf5c86d90ae091aeb231a85f9b9447687b5b7349e00c1"
+    },
+    {
+      "state": "KS",
+      "facilities": 188,
+      "retrieved": "2026-11-25",
+      "sha256": "6f8673347e49468fe48ef0eb32a2773cf50a35a49713db6a6a3a39a5202b606e"
+    },
+    {
+      "state": "KY",
+      "facilities": 557,
+      "retrieved": "2026-11-25",
+      "sha256": "9a272484e7c795f4c5d1b8f4c71090ddd3845a5f4a2377c1a86865452f758d38"
+    },
+    {
+      "state": "LA",
+      "facilities": 223,
+      "retrieved": "2026-11-25",
+      "sha256": "c4e2030279a16732139ff12d3510ed231de9ff5b2c41029f05cdb4b105d45637"
+    },
+    {
+      "state": "MA",
+      "facilities": 447,
+      "retrieved": "2026-11-25",
+      "sha256": "dc1f4f17be14822569df35744952768f524818fae1af56c658a1adbe5145db02"
+    },
+    {
+      "state": "MD",
+      "facilities": 640,
+      "retrieved": "2026-11-25",
+      "sha256": "60017ece3d58a1f83c3dacce87a583b2d4f528a281c59aaa9a02a5cfc0eb76dc"
+    },
+    {
+      "state": "ME",
+      "facilities": 169,
+      "retrieved": "2026-11-25",
+      "sha256": "0bfe6d89288c4fe6d3c2a9e63e058e605a965cf55f65b5e6fc6f5363aa714f9e"
+    },
+    {
+      "state": "MI",
+      "facilities": 530,
+      "retrieved": "2026-11-25",
+      "sha256": "7093e6ea3ca2e71c311ab1f73efe785b25c479559f278e1c6029efa52a309648"
+    },
+    {
+      "state": "MN",
+      "facilities": 539,
+      "retrieved": "2026-11-25",
+      "sha256": "542b90d1db065c7bfccac01a908a913a667ac0d95f3da96eb20e0e2e7c420d87"
+    },
+    {
+      "state": "MO",
+      "facilities": 385,
+      "retrieved": "2026-11-25",
+      "sha256": "5524ab33fd5adcefcc38c72582aca75075cbd4fa6ac63c6a239739203d01f1cc"
+    },
+    {
+      "state": "MP",
+      "facilities": 1,
+      "retrieved": "2026-11-25",
+      "sha256": "69d32e8847912535bb647ebcbd6677917af55392de28d91c302d02d3779aeb3b"
+    },
+    {
+      "state": "MS",
+      "facilities": 152,
+      "retrieved": "2026-11-25",
+      "sha256": "69022e3fd201dd4858bcdcd4a4a165267e5473d79b0548751ab7bc3ee44fe1c5"
+    },
+    {
+      "state": "MT",
+      "facilities": 95,
+      "retrieved": "2026-11-25",
+      "sha256": "b290b72021a2df8edefe0c879ea1d1ac65a9bee3cc8f8b0a2e4cd1381a1aeed9"
+    },
+    {
+      "state": "NC",
+      "facilities": 553,
+      "retrieved": "2026-11-25",
+      "sha256": "945a90dcd7f2e8c7aebb646c529630d4be1fec8ed598a4dce98a4345032f150e"
+    },
+    {
+      "state": "ND",
+      "facilities": 83,
+      "retrieved": "2026-11-25",
+      "sha256": "2c7ad7adeafe1cb39fad02aec7c19725d5df85aa7034b5542fff24f6aaad919e"
+    },
+    {
+      "state": "NE",
+      "facilities": 161,
+      "retrieved": "2026-11-25",
+      "sha256": "dafca53ef6b77c1f2d42bc6bd488d09d4b14b5f312b6ac179a2e83346114ea40"
+    },
+    {
+      "state": "NH",
+      "facilities": 109,
+      "retrieved": "2026-11-25",
+      "sha256": "46c87bff9c40ab37c8ec94ad1e28c6af5aff11dd1984a8727fe859423d7ffcfa"
+    },
+    {
+      "state": "NJ",
+      "facilities": 520,
+      "retrieved": "2026-11-25",
+      "sha256": "43df9dab3006c534e97beaf24ce58634b92dbcef87bbe79926bf2c128808d995"
+    },
+    {
+      "state": "NM",
+      "facilities": 147,
+      "retrieved": "2026-11-25",
+      "sha256": "f578b92322b21ef4d7876365da9ec4dd912450d09cd128d131a49a53a0afcb18"
+    },
+    {
+      "state": "NV",
+      "facilities": 172,
+      "retrieved": "2026-11-25",
+      "sha256": "08ccbe2addf2e330c9b0f72fd3fa1a86a647a184698afedc8ef2270722c37ecc"
+    },
+    {
+      "state": "NY",
+      "facilities": 1278,
+      "retrieved": "2026-11-27",
+      "sha256": "b60ad33b78ac9b05b200830cb2021d6f39f13e7353479312624fb4f328a2071b",
+      "enriched_facilities": 1278
+    },
+    {
+      "state": "OH",
+      "facilities": 903,
+      "retrieved": "2026-11-25",
+      "sha256": "dcd335cfeb934bb75d5f4d6871b6674cd7d93347f780d85170a773c0432fd538"
+    },
+    {
+      "state": "OK",
+      "facilities": 180,
+      "retrieved": "2026-11-25",
+      "sha256": "2eb099aa21b92020f63753b2e1478ade5cdc626273ea459329c06d5f2042063e"
+    },
+    {
+      "state": "OR",
+      "facilities": 266,
+      "retrieved": "2026-11-25",
+      "sha256": "1c0000c5633eb5171cfa32d29873cf543345dc35b2af7a98879c2bfebd06828b"
+    },
+    {
+      "state": "PA",
+      "facilities": 787,
+      "retrieved": "2026-11-25",
+      "sha256": "b0df57c1d0532d37cab213171e79055b86527b704950731c743087c75ff030f6"
+    },
+    {
+      "state": "PR",
+      "facilities": 92,
+      "retrieved": "2026-11-25",
+      "sha256": "c8720f4df3a6ff0aca302c103ecd0cb0826c7511c682d4417c171aefc1016f20"
+    },
+    {
+      "state": "RI",
+      "facilities": 68,
+      "retrieved": "2026-11-25",
+      "sha256": "a966db0c2d22952145d0374bf99aeb5bbe7f9c921619d3e5af2402b67730a896"
+    },
+    {
+      "state": "SC",
+      "facilities": 178,
+      "retrieved": "2026-11-25",
+      "sha256": "a79b0dd64fa3a1ddef102fcb668d07b56f9be1b204678fc3ae3f4d3f7ec24bf4"
+    },
+    {
+      "state": "SD",
+      "facilities": 67,
+      "retrieved": "2026-11-25",
+      "sha256": "21fd4e05dcbb10f3de247642f3eb04bbd007564b971d5e3ebd2cfaf889f75cce"
+    },
+    {
+      "state": "TN",
+      "facilities": 440,
+      "retrieved": "2026-11-25",
+      "sha256": "d848ca196bfe81bcef2378df1ffcbc6d6e1ff3cd41b5f7b0edd76049187fc2f4"
+    },
+    {
+      "state": "TX",
+      "facilities": 704,
+      "retrieved": "2026-11-25",
+      "sha256": "bb0c1c40691a2bb3170308fce87e109209349bf2b819756825f200a2008ba252"
+    },
+    {
+      "state": "UT",
+      "facilities": 422,
+      "retrieved": "2026-11-25",
+      "sha256": "57e2595b281ab21ffa8dc4704d72f4f7f1144dfdd545c1b6da81306900aaae35"
+    },
+    {
+      "state": "VA",
+      "facilities": 407,
+      "retrieved": "2026-11-25",
+      "sha256": "22e799f5390033aa02e6ae9e9d1732b8d9e2f430f1456be07470be5263f48041"
+    },
+    {
+      "state": "VI",
+      "facilities": 3,
+      "retrieved": "2026-11-25",
+      "sha256": "16c197e782469339534b505f2398b7c479a5b28f84081914d212ee49d14f65b1"
+    },
+    {
+      "state": "VT",
+      "facilities": 83,
+      "retrieved": "2026-11-25",
+      "sha256": "e2abf11e3603dc60694a5f97ef9939c3f6fe8b5b7e4f65e190f595708736999a"
+    },
+    {
+      "state": "WA",
+      "facilities": 446,
+      "retrieved": "2026-11-25",
+      "sha256": "40caa24384ab0cdef73c2467136ff38bedd71287e4d7fbe70f15b579ec981788"
+    },
+    {
+      "state": "WI",
+      "facilities": 372,
+      "retrieved": "2026-11-25",
+      "sha256": "18ecd29a48ad071f85630799a0a979282d0419fdee31c48349126af75cea27c3"
+    },
+    {
+      "state": "WV",
+      "facilities": 159,
+      "retrieved": "2026-11-25",
+      "sha256": "f4dbc6a8be7baefa34af0caa503b7411d74fa47c8b76f7b713356e6181d94b22"
+    },
+    {
+      "state": "WY",
+      "facilities": 54,
+      "retrieved": "2026-11-25",
+      "sha256": "115a8c3b2a282eb43d17265d2e9d1140a30d6a300728e29024f2d004d3fab774",
+      "enriched_facilities": 35
+    }
+  ]
+}

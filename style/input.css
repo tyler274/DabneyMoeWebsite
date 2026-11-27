@@ -16,3 +16,82 @@
     background-color: rgb(34 211 238 / 0.3);
   }
 }
+
+/* Respect user motion preferences across transitions, animations, and smooth scrolling. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Print ONLY a crisp, unclipped, black-on-white 1-Page Clinician Visit Brief. */
+@media print {
+  @page {
+    margin: 0.5in;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  nav,
+  footer,
+  .print-hide,
+  [data-print-hide="true"] {
+    display: none !important;
+  }
+
+  .print-brief-page {
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .print-brief-container {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .print-brief-card {
+    border: none !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .print-brief-card h2,
+  .print-brief-card p {
+    color: #000000 !important;
+  }
+
+  .print-brief-pre {
+    max-height: none !important;
+    height: auto !important;
+    overflow: visible !important;
+    border: none !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    font-size: 10pt !important;
+    line-height: 1.45 !important;
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+  }
+}
