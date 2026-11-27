@@ -67,32 +67,35 @@ async fn main() {
     .layer(RequestBodyLimitLayer::new(8 * 1024))
     .with_state(leptos_options.clone());
 
-    let app = web::mount_clinical_api_routes(Router::new(), clinical_api_proxy)
-        .merge(site_routes)
-        .layer(axum::middleware::from_fn(
-            web::community_activity::privacy_headers,
-        ))
-        .layer(SetRequestIdLayer::new(
-            HeaderName::from_static("x-request-id"),
-            MakeRequestUuid,
-        ))
-        .layer(PropagateRequestIdLayer::new(HeaderName::from_static(
-            "x-request-id",
-        )))
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(|request: &axum::http::Request<axum::body::Body>| {
-                    let path = scrub_path(request.uri().path());
-                    tracing::info_span!(
-                        "http_request",
-                        service = "dabney-web",
-                        method = %request.method(),
-                        path = %path,
-                    )
-                })
-                .on_response(DefaultOnResponse::new().level(Level::INFO))
-                .on_failure(DefaultOnFailure::new().level(Level::ERROR)),
-        );
+    let app = web::mount_dux_static(
+        web::mount_clinical_api_routes(Router::new(), clinical_api_proxy),
+        &leptos_options.site_root,
+    )
+    .merge(site_routes)
+    .layer(axum::middleware::from_fn(
+        web::community_activity::privacy_headers,
+    ))
+    .layer(SetRequestIdLayer::new(
+        HeaderName::from_static("x-request-id"),
+        MakeRequestUuid,
+    ))
+    .layer(PropagateRequestIdLayer::new(HeaderName::from_static(
+        "x-request-id",
+    )))
+    .layer(
+        TraceLayer::new_for_http()
+            .make_span_with(|request: &axum::http::Request<axum::body::Body>| {
+                let path = scrub_path(request.uri().path());
+                tracing::info_span!(
+                    "http_request",
+                    service = "dabney-web",
+                    method = %request.method(),
+                    path = %path,
+                )
+            })
+            .on_response(DefaultOnResponse::new().level(Level::INFO))
+            .on_failure(DefaultOnFailure::new().level(Level::ERROR)),
+    );
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     tracing::info!(%addr, service = "dabney-web", "listening");
     axum::serve(

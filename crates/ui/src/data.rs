@@ -123,6 +123,19 @@ pub const PROJECTS: &[Project] = &[
         icon: Some("/favicon.png"),
     },
     Project {
+        name: "Dux Ancestry & Genetics Workbench",
+        blurb: "Browser-only Rust & WebAssembly population genetics and personal genomics \
+                workbench hosted at dabney.moe/dux/: distance & NNLS admixture modeling, PCA, \
+                2D/3D coordinate views, multi-provider raw DNA & VCF parsing, pharmacogenomic \
+                and clinical marker calling, polygenic risk scoring, ROH & KING kinship/IBD, \
+                formal f3/f4/qpWave/qpAdm, Hudson Fst, and diploid HMM chromosome painting \
+                with zero server uploads.",
+        tags: &["Rust", "Dioxus", "WASM", "Web Workers", "Genomics"],
+        href: "https://dabney.moe/dux/",
+        demo_href: Some("/dux/"),
+        icon: Some("/favicon.png"),
+    },
+    Project {
         name: "Elysian Studio",
         blurb: "Safe-Rust rewrite of Bambu Studio. Deterministic CPU slicing (walls, infill, \
                 supports), wgpu Vulkan compute contours, an iced UI, and LAN MQTT/FTPS \

@@ -139,6 +139,9 @@ pub struct NavMenuLink {
     pub label: &'static str,
     pub msg: Option<Msg>,
     pub accent: bool,
+    /// When `true`, render a full-document `<a rel="external">` instead of a
+    /// client-side Leptos router `<A>` (for standalone static WASM apps like `/dux/`).
+    pub external: bool,
 }
 
 /// A desktop navbar dropdown whose open state lives in the navbar's shared
@@ -197,10 +200,33 @@ pub fn NavDropdown(
                                 Some(msg) => t(locale.get(), msg),
                                 None => link.label,
                             };
-                            view! {
-                                <A href=link.href attr:class=item_cls attr:role="menuitem" on:click=close>
-                                    {text}
-                                </A>
+                            let href = link.href;
+                            if link.external {
+                                view! {
+                                    <a
+                                        href=href
+                                        rel="external"
+                                        class=item_cls
+                                        role="menuitem"
+                                        on:click=move |_ev| {
+                                            #[cfg(any(feature = "csr", feature = "hydrate"))]
+                                            if open_site_or_external(href) {
+                                                _ev.prevent_default();
+                                            }
+                                            open.set(OpenNavMenu::None);
+                                        }
+                                    >
+                                        {text}
+                                    </a>
+                                }
+                                .into_any()
+                            } else {
+                                view! {
+                                    <A href=href attr:class=item_cls attr:role="menuitem" on:click=close>
+                                        {text}
+                                    </A>
+                                }
+                                .into_any()
                             }
                         })
                         .collect_view()}
@@ -234,10 +260,32 @@ fn MobileNavGroup(
                     Some(msg) => t(locale.get(), msg),
                     None => link.label,
                 };
-                view! {
-                    <A href=link.href attr:class=MOBILE_NAV_SUBLINK on:click=move |_| mobile_open.set(false)>
-                        {text}
-                    </A>
+                let href = link.href;
+                if link.external {
+                    view! {
+                        <a
+                            href=href
+                            rel="external"
+                            class=MOBILE_NAV_SUBLINK
+                            on:click=move |_ev| {
+                                #[cfg(any(feature = "csr", feature = "hydrate"))]
+                                if open_site_or_external(href) {
+                                    _ev.prevent_default();
+                                }
+                                mobile_open.set(false);
+                            }
+                        >
+                            {text}
+                        </a>
+                    }
+                    .into_any()
+                } else {
+                    view! {
+                        <A href=href attr:class=MOBILE_NAV_SUBLINK on:click=move |_| mobile_open.set(false)>
+                            {text}
+                        </A>
+                    }
+                    .into_any()
                 }
             })
             .collect_view()}

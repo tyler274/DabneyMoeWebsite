@@ -94,6 +94,80 @@ where
 }
 
 #[cfg(feature = "ssr")]
+pub fn mount_dux_static<S>(router: axum::Router<S>, site_root: &str) -> axum::Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    use axum::http::Method;
+    use axum::middleware::{from_fn, Next};
+    use axum::response::{IntoResponse, Redirect};
+    use std::path::PathBuf;
+
+    let dux_dir = PathBuf::from(site_root).join("dux");
+
+    let redirect_dux_root = |req: axum::extract::Request, next: Next| async move {
+        if matches!(*req.method(), Method::GET | Method::HEAD) && req.uri().path() == "/dux" {
+            let target = match req.uri().query() {
+                Some(q) if !q.is_empty() => format!("/dux/?{q}"),
+                _ => "/dux/".to_string(),
+            };
+            return Redirect::permanent(&target).into_response();
+        }
+        next.run(req).await
+    };
+
+    let static_router = axum::Router::new()
+        .fallback_service(tower_http::services::ServeDir::new(dux_dir))
+        .layer(from_fn(dux_static_cache_headers))
+        .layer(tower_http::compression::CompressionLayer::new());
+
+    router
+        .nest_service("/dux", static_router)
+        .layer(from_fn(redirect_dux_root))
+}
+
+#[cfg(feature = "ssr")]
+async fn dux_static_cache_headers(
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{header, HeaderValue};
+
+    // Nix store files carry mtime = 1970-01-01 00:00:01 UTC; strip conditional
+    // mtime headers so browsers with an older 1970 cache entry never get a
+    // false `304 Not Modified` across deployments, and strip `Last-Modified`
+    // from responses to prevent multi-year RFC 9111 heuristic freshness.
+    req.headers_mut().remove(header::IF_MODIFIED_SINCE);
+    req.headers_mut().remove(header::IF_UNMODIFIED_SINCE);
+
+    let path = req.uri().path().to_owned();
+    let has_version_query = req
+        .uri()
+        .query()
+        .is_some_and(|q| q.split('&').any(|kv| kv.starts_with("v=") && kv.len() > 2));
+
+    let mut resp = next.run(req).await;
+    resp.headers_mut().remove(header::LAST_MODIFIED);
+
+    if resp.status().is_success() {
+        let is_html = resp
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.starts_with("text/html"));
+        let immutable = !is_html && (has_version_query || path.starts_with("/assets/"));
+        let cache_value = if immutable {
+            HeaderValue::from_static("public, max-age=31536000, immutable")
+        } else {
+            HeaderValue::from_static("no-cache")
+        };
+        resp.headers_mut()
+            .insert(header::CACHE_CONTROL, cache_value);
+    }
+    resp
+}
+
+#[cfg(feature = "ssr")]
 pub fn mount_clinical_api_routes<S>(
     router: axum::Router<S>,
     api_proxy: Option<clinical_proxy::ClinicalApiProxyConfig>,
@@ -1735,5 +1809,133 @@ mod tests {
                 "missing from /tools/recovery: {expected}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn dux_static_redirects_bare_path_and_serves_bundle_with_nix_safe_cache_headers() {
+        use leptos::prelude::LeptosOptions;
+        use leptos_axum::LeptosRoutes;
+
+        let site_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../public")
+            .canonicalize()
+            .expect("public dir exists");
+        let options = LeptosOptions::builder()
+            .output_name("dabney")
+            .site_root(site_root.to_string_lossy().into_owned())
+            .build();
+        let site_routes = Router::new()
+            .leptos_routes(&options, crate::test_route_list(), {
+                let options = options.clone();
+                move || ui::shell(options.clone())
+            })
+            .fallback(leptos_axum::file_and_error_handler(ui::shell))
+            .with_state(options.clone());
+        let app = super::mount_dux_static(Router::new(), &options.site_root).merge(site_routes);
+
+        // 1. Bare /dux redirects permanently to /dux/ (preserving query string)
+        for (uri, expected_location) in [("/dux", "/dux/"), ("/dux?v=abc123", "/dux/?v=abc123")] {
+            for method in [Method::GET, Method::HEAD] {
+                let resp = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status(), StatusCode::PERMANENT_REDIRECT, "{uri}");
+                assert_eq!(
+                    resp.headers().get(header::LOCATION).unwrap(),
+                    expected_location
+                );
+            }
+        }
+
+        // 2. /dux/ serves index.html with no-cache and strips Last-Modified / If-Modified-Since
+        let index_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/dux/")
+                    .header(header::IF_MODIFIED_SINCE, "Thu, 01 Jan 1970 00:00:01 GMT")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(index_resp.status(), StatusCode::OK);
+        assert_eq!(
+            index_resp.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-cache"
+        );
+        assert!(index_resp.headers().get(header::LAST_MODIFIED).is_none());
+        let index_html = String::from_utf8(
+            to_bytes(index_resp.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(index_html.contains("./boot.js?v="));
+        assert!(index_html.contains("Ancestry tools"));
+
+        // 3. Version-stamped JS and WASM get immutable cache headers and proper MIME types
+        let boot_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/dux/boot.js?v=teststamp")
+                    .header(header::IF_MODIFIED_SINCE, "Thu, 01 Jan 1970 00:00:01 GMT")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(boot_resp.status(), StatusCode::OK);
+        assert_eq!(
+            boot_resp.headers().get(header::CACHE_CONTROL).unwrap(),
+            "public, max-age=31536000, immutable"
+        );
+        assert!(boot_resp.headers().get(header::LAST_MODIFIED).is_none());
+
+        let wasm_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/dux/ancestry-app_bg.wasm?v=teststamp")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(wasm_resp.status(), StatusCode::OK);
+        assert_eq!(
+            wasm_resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/wasm"
+        );
+        assert_eq!(
+            wasm_resp.headers().get(header::CACHE_CONTROL).unwrap(),
+            "public, max-age=31536000, immutable"
+        );
+
+        // 4. Homepage SSR links to /dux/
+        let home_resp = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(home_resp.status(), StatusCode::OK);
+        let home_html = String::from_utf8(
+            to_bytes(home_resp.into_body(), 1024 * 1024)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(home_html.contains("href=\"/dux/\""));
+        assert!(home_html.contains("Dux Ancestry &amp; Genetics Workbench"));
     }
 }

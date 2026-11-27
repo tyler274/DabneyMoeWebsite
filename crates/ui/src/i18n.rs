@@ -433,6 +433,7 @@ pub enum Msg {
     ToolPhysicianDemo,
     ToolPortfolio,
     ToolAndroidApp,
+    ToolDuxAncestry,
     ToolOwnership,
 
     // Clinical Suite Switcher & Overview
@@ -612,6 +613,7 @@ impl Msg {
         Msg::ToolPhysicianDemo,
         Msg::ToolPortfolio,
         Msg::ToolAndroidApp,
+        Msg::ToolDuxAncestry,
         Msg::ToolOwnership,
         // Clinical Suite Switcher & Overview
         Msg::SuiteAriaLabel,
@@ -799,6 +801,7 @@ const fn translate_en(key: Msg) -> &'static str {
         Msg::ToolPhysicianDemo => "Physician Workspace Demo",
         Msg::ToolPortfolio => "Investment Account Calculator",
         Msg::ToolAndroidApp => "Android App (F-Droid / APK)",
+        Msg::ToolDuxAncestry => "Dux Ancestry & Genetics",
         Msg::ToolOwnership => "Code Ownership Report",
 
         // Clinical Suite Switcher & Overview
@@ -984,6 +987,7 @@ const fn translate_es(key: Msg) -> &'static str {
         Msg::ToolPhysicianDemo => "Demo de Espacio Médico",
         Msg::ToolPortfolio => "Calculadora de Cuenta de Inversión",
         Msg::ToolAndroidApp => "App Android (F-Droid / APK)",
+        Msg::ToolDuxAncestry => "Dux Ascendencia y Genética",
         Msg::ToolOwnership => "Informe de Propiedad del Código",
 
         // Clinical Suite Switcher & Overview
@@ -1171,6 +1175,7 @@ const fn translate_fr(key: Msg) -> &'static str {
         Msg::ToolPhysicianDemo => "Démo Espace Médecin",
         Msg::ToolPortfolio => "Calculateur de Compte d'Investissement",
         Msg::ToolAndroidApp => "Application Android (F-Droid / APK)",
+        Msg::ToolDuxAncestry => "Dux Ascendance et Génétique",
         Msg::ToolOwnership => "Rapport de Propriété du Code",
 
         // Clinical Suite Switcher & Overview
@@ -1356,6 +1361,7 @@ const fn translate_pt(key: Msg) -> &'static str {
         Msg::ToolPhysicianDemo => "Demo do Espaço Médico",
         Msg::ToolPortfolio => "Calculadora de Conta de Investimento",
         Msg::ToolAndroidApp => "App Android (F-Droid / APK)",
+        Msg::ToolDuxAncestry => "Dux Ancestralidade e Genética",
         Msg::ToolOwnership => "Relatório de Propriedade do Código",
 
         // Clinical Suite Switcher & Overview
@@ -1541,6 +1547,7 @@ const fn translate_de(key: Msg) -> &'static str {
         Msg::ToolPhysicianDemo => "Arzt-Arbeitsbereich-Demo",
         Msg::ToolPortfolio => "Anlagekonto-Rechner",
         Msg::ToolAndroidApp => "Android-App (F-Droid / APK)",
+        Msg::ToolDuxAncestry => "Dux Abstammung & Genetik",
         Msg::ToolOwnership => "Code-Eigentümerschaftsbericht",
 
         // Clinical Suite Switcher & Overview
@@ -1726,6 +1733,7 @@ const fn translate_zh_hans(key: Msg) -> &'static str {
         Msg::ToolPhysicianDemo => "医生工作台演示",
         Msg::ToolPortfolio => "投资账户计算器",
         Msg::ToolAndroidApp => "Android 应用（F-Droid / APK）",
+        Msg::ToolDuxAncestry => "Dux 祖源与遗传分析",
         Msg::ToolOwnership => "代码归属报告",
 
         // Clinical Suite Switcher & Overview
@@ -1907,6 +1915,7 @@ const fn translate_ja(key: Msg) -> &'static str {
         Msg::ToolPhysicianDemo => "医師向けワークスペースデモ",
         Msg::ToolPortfolio => "投資口座計算ツール",
         Msg::ToolAndroidApp => "Android アプリ（F-Droid / APK）",
+        Msg::ToolDuxAncestry => "Dux 祖先・遺伝解析",
         Msg::ToolOwnership => "コード所有権レポート",
 
         // Clinical Suite Switcher & Overview
@@ -2090,6 +2099,7 @@ const fn translate_ko(key: Msg) -> &'static str {
         Msg::ToolPhysicianDemo => "의료진 워크스페이스 데모",
         Msg::ToolPortfolio => "투자 계좌 계산기",
         Msg::ToolAndroidApp => "Android 앱 (F-Droid / APK)",
+        Msg::ToolDuxAncestry => "Dux 조상·유전 분석",
         Msg::ToolOwnership => "코드 소유권 보고서",
 
         // Clinical Suite Switcher & Overview
@@ -2271,6 +2281,7 @@ const fn translate_ar(key: Msg) -> &'static str {
         Msg::ToolPhysicianDemo => "عرض مساحة الطبيب",
         Msg::ToolPortfolio => "حاسبة حساب الاستثمار",
         Msg::ToolAndroidApp => "تطبيق أندرويد (F-Droid / APK)",
+        Msg::ToolDuxAncestry => "Dux تحليل الأصول والوراثة",
         Msg::ToolOwnership => "تقرير ملكية الشيفرة",
 
         // Clinical Suite Switcher & Overview

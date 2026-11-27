@@ -16,18 +16,21 @@ pub const COMMISSIONS_LINKS: &[NavMenuLink] = &[
         label: "Lapidary",
         msg: None,
         accent: false,
+        external: false,
     },
     NavMenuLink {
         href: "/commissions/artwork",
         label: "Artwork",
         msg: None,
         accent: false,
+        external: false,
     },
     NavMenuLink {
         href: "/commissions/songs",
         label: "Songs",
         msg: None,
         accent: false,
+        external: false,
     },
 ];
 
