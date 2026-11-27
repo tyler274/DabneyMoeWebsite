@@ -13,12 +13,12 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly main: (a: number, b: number) => number;
     readonly __wbg_jsowner_free: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_12584: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_17885: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_13824: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_13825: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_13205: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_13823: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_13589: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_18894: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_14832: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_14833: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_14213: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_14831: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

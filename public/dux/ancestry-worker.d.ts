@@ -13,9 +13,9 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly main: (a: number, b: number) => number;
     readonly __wbg_jsowner_free: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_199: (a: number, b: number, c: number, d: number) => number;
-    readonly __wasm_bindgen_func_elem_4366: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_4368: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_361: (a: number, b: number, c: number, d: number) => number;
+    readonly __wasm_bindgen_func_elem_4596: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_4598: (a: number, b: number, c: number, d: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

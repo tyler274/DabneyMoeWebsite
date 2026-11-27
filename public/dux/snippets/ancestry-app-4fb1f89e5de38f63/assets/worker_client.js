@@ -5,7 +5,7 @@
 
 // The worker module sits beside the page's index.html. The export script
 // stamps this address with a cache-busting version.
-const WORKER_URL = "./worker.js?v=cbee550b331b";
+const WORKER_URL = "./worker.js?v=895e7d77b51a";
 
 function unaddressed(reason) {
   return JSON.stringify({ kind: "unaddressed", reason: String(reason) });

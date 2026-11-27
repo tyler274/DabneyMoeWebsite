@@ -1,6 +1,6 @@
 // Starts the ancestry app. A file rather than an inline script so the page's
 // policy can forbid inline scripts. The export script stamps the import with
 // a cache-busting version.
-import init from "./ancestry-app.js?v=cbee550b331b";
+import init from "./ancestry-app.js?v=895e7d77b51a";
 
 await init();

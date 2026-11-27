@@ -1,5 +1,5 @@
 /* @ts-self-types="./ancestry-worker.d.ts" */
-import { fetch_bytes, fetch_text, post_progress, serve } from './snippets/ancestry-app-4fb1f89e5de38f63/assets/worker_host.js?v=cbee550b331b';
+import { fetch_bytes, fetch_text, post_progress, serve } from './snippets/ancestry-app-4fb1f89e5de38f63/assets/worker_host.js?v=895e7d77b51a';
 
 
 export class JSOwner {
@@ -71,7 +71,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return __wasm_bindgen_func_elem_4368(a, state0.b, arg0, arg1);
+                        return __wasm_bindgen_func_elem_4598(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -127,13 +127,13 @@ function __wbg_get_imports() {
             return addHeapObject(ret);
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 236, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_4366);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 258, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_4596);
             return addHeapObject(ret);
         },
         __wbindgen_generic_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [String], shim_idx: 46, ret: NamedExternref("Promise<any>"), inner_ret: Some(NamedExternref("Promise<any>")) }, mutable: false }) -> Externref`.
-            const ret = makeClosure(arg0, arg1, __wasm_bindgen_func_elem_199);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [String], shim_idx: 88, ret: NamedExternref("Promise<any>"), inner_ret: Some(NamedExternref("Promise<any>")) }, mutable: false }) -> Externref`.
+            const ret = makeClosure(arg0, arg1, __wasm_bindgen_func_elem_361);
             return addHeapObject(ret);
         },
         __wbindgen_generic_0000000000000003: function(arg0, arg1) {
@@ -155,14 +155,14 @@ function __wbg_get_imports() {
     };
 }
 
-function __wasm_bindgen_func_elem_4368(arg0, arg1, arg2, arg3) {
-    wasm.__wasm_bindgen_func_elem_4368(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3));
+function __wasm_bindgen_func_elem_4598(arg0, arg1, arg2, arg3) {
+    wasm.__wasm_bindgen_func_elem_4598(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3));
 }
 
-function __wasm_bindgen_func_elem_4366(arg0, arg1, arg2) {
+function __wasm_bindgen_func_elem_4596(arg0, arg1, arg2) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        wasm.__wasm_bindgen_func_elem_4366(retptr, arg0, arg1, addHeapObject(arg2));
+        wasm.__wasm_bindgen_func_elem_4596(retptr, arg0, arg1, addHeapObject(arg2));
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         if (r1) {
@@ -173,10 +173,10 @@ function __wasm_bindgen_func_elem_4366(arg0, arg1, arg2) {
     }
 }
 
-function __wasm_bindgen_func_elem_199(arg0, arg1, arg2) {
+function __wasm_bindgen_func_elem_361(arg0, arg1, arg2) {
     const ptr0 = passStringToWasm0(arg2, wasm.__wbindgen_export, wasm.__wbindgen_export2);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.__wasm_bindgen_func_elem_199(arg0, arg1, ptr0, len0);
+    const ret = wasm.__wasm_bindgen_func_elem_361(arg0, arg1, ptr0, len0);
     return takeObject(ret);
 }
 
@@ -455,7 +455,7 @@ async function __wbg_init(module_or_path) {
     }
 
     if (module_or_path === undefined) {
-        module_or_path = new URL('ancestry-worker_bg.wasm?v=cbee550b331b', import.meta.url);
+        module_or_path = new URL('ancestry-worker_bg.wasm?v=895e7d77b51a', import.meta.url);
     }
     const imports = __wbg_get_imports();
 

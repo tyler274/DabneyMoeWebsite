@@ -9,7 +9,7 @@ self.onmessage = (event) => {
 };
 
 // The export script stamps this import with a cache-busting version.
-import("./ancestry-worker.js?v=cbee550b331b")
+import("./ancestry-worker.js?v=895e7d77b51a")
   .then((glue) => glue.default())
   .catch((error) => {
     self.postMessage(
