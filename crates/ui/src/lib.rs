@@ -22,6 +22,7 @@ pub mod creators;
 pub mod dashboard_layout;
 pub mod data;
 pub mod health_bridge;
+pub mod i18n;
 pub mod info_tip;
 pub mod local_ai_chat;
 pub mod mental_health;
@@ -106,6 +107,7 @@ pub fn App() -> impl IntoView {
 pub fn AppWithMode(mode: AppShellMode) -> impl IntoView {
     provide_meta_context();
     provide_consent_context();
+    i18n::provide_i18n_context();
     provide_context(mode);
 
     let is_demo_app = mode == AppShellMode::ClinicalDemoApp;
