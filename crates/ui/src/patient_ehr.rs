@@ -10,17 +10,19 @@ use std::collections::HashMap;
 #[cfg(any(feature = "csr", feature = "hydrate"))]
 use clinical_workspace::parse_health_passport_json;
 use clinical_workspace::{
-    build_health_passport, build_roi_mailto_uri, build_smart_authorize_url, data_download_uri,
-    dispatch_roi_batch, find_portal_organization, ingest_fhir_r4_bundle,
+    build_health_passport_with_options, build_roi_mailto_uri, build_smart_authorize_url,
+    data_download_uri, dispatch_roi_batch, find_portal_organization, ingest_clinical_document,
     merge_fhir_import_into_chart, portal_directory, render_passport_fhir_ips_bundle,
     render_passport_html, render_passport_markdown, render_roi_cover_text,
     render_roi_followup_letter, render_roi_form_html, revoke_roi_request,
-    sandbox_fhir_bundle_for_org, search_portal_directory, sign_roi_request, AllergyEntry,
-    HealthPassport, LinkedPortalConnection, PassportAudience, PatientChart, PatientDemoState,
-    PortalConnectionMode, PortalConnectionStatus, PortalOrganization, PortalVendor,
-    RoiBatchDispatchReport, RoiDateRange, RoiDeliveryChannel, RoiElectronicFormat, RoiLegalBasis,
-    RoiRecipient, RoiRecordCategory, RoiRequest, RoiStatus, SmartPkceSession,
-    SMART_READ_ONLY_SCOPES,
+    sandbox_ccda_xml_for_patient, sandbox_fhir_bundle_for_org, sandbox_hl7v2_message_for_patient,
+    sandbox_kipu_payload_for_patient, sandbox_smart_health_link_uri, search_portal_directory,
+    sign_roi_request, AllergyEntry, ClinicalDocumentFormat, HealthPassport, IntegrationCapability,
+    LinkedPortalConnection, PassportAudience, PassportExportOptions, PatientChart,
+    PatientDemoState, PortalConnectionMode, PortalConnectionStatus, PortalOrganization,
+    PortalVendor, RoiBatchDispatchReport, RoiDateRange, RoiDeliveryChannel, RoiElectronicFormat,
+    RoiLegalBasis, RoiRecipient, RoiRecordCategory, RoiRequest, RoiStatus, SmartHealthLinkPayload,
+    SmartPkceSession,
 };
 use leptos::prelude::*;
 
@@ -41,6 +43,27 @@ fn portal_status_badge_class(status: &PortalConnectionStatus) -> &'static str {
         }
         PortalConnectionStatus::Disconnected { .. } => {
             "border-slate-500/40 bg-slate-800/80 text-slate-300"
+        }
+    }
+}
+
+fn capability_badge_class(cap: IntegrationCapability) -> &'static str {
+    match cap {
+        IntegrationCapability::Part2SudProtected => {
+            "border-amber-400/45 bg-amber-500/15 text-amber-200"
+        }
+        IntegrationCapability::KipuApiV3Hmac => {
+            "border-violet-400/40 bg-violet-500/15 text-violet-200"
+        }
+        IntegrationCapability::SmartOnFhirR4V2Pkce | IntegrationCapability::SmartOnFhirR4V1Pkce => {
+            "border-emerald-400/35 bg-emerald-500/10 text-emerald-200"
+        }
+        IntegrationCapability::SmartHealthLink => "border-cyan-400/35 bg-cyan-500/10 text-cyan-200",
+        IntegrationCapability::CcdaXmlImport | IntegrationCapability::Hl7V2Import => {
+            "border-sky-400/35 bg-sky-500/10 text-sky-200"
+        }
+        IntegrationCapability::VendorRestApi | IntegrationCapability::AutomatedHipaaRoi => {
+            "border-white/15 bg-white/[0.04] text-slate-200"
         }
     }
 }
@@ -78,6 +101,7 @@ pub fn PatientEhrPortalsPanel(
     let search_query = RwSignal::new(String::new());
     let vendor_filter = RwSignal::new(Option::<PortalVendor>::None);
     let pending_session = RwSignal::new(Option::<SmartPkceSession>::None);
+    let inspected_shlink = RwSignal::new(Option::<SmartHealthLinkPayload>::None);
     let custom_name = RwSignal::new(String::new());
     let custom_fhir_url = RwSignal::new(String::new());
     let fhir_paste = RwSignal::new(String::new());
@@ -110,14 +134,47 @@ pub fn PatientEhrPortalsPanel(
               org_name: String,
               vendor: PortalVendor,
               fhir_base_url: String,
-              bundle_json: String,
-              mode: PortalConnectionMode| {
+              raw_document: String,
+              mode_override: Option<PortalConnectionMode>| {
             error_notice.set(None);
             let pid = patient_id.get_value();
             let source_label = format!("{org_name} ({})", vendor.short_badge());
-            match ingest_fhir_r4_bundle(&source_label, &org_id, &bundle_json) {
-                Ok(import) => {
-                    let mut added_ids: Vec<String> = Vec::new();
+            match ingest_clinical_document(&source_label, &org_id, &raw_document) {
+                Ok(ingested) => {
+                    if let Some(shl) = ingested.smart_health_link {
+                        let host = shl.host();
+                        let label_txt = shl
+                            .label
+                            .clone()
+                            .unwrap_or_else(|| "SMART Health Link".to_string());
+                        inspected_shlink.set(Some(shl));
+                        let msg = format!(
+                            "Verified SMART Health Link (`{label_txt}`) targeting HTTPS manifest host `{host}` with valid 32-byte AES-256 key."
+                        );
+                        status_notice.set(Some(msg.clone()));
+                        on_records_updated.run(msg);
+                        return;
+                    }
+
+                    let Some(import) = ingested.import else {
+                        error_notice.set(Some("No clinical records decoded from input.".into()));
+                        return;
+                    };
+
+                    let mode = mode_override.unwrap_or(match ingested.format {
+                        ClinicalDocumentFormat::FhirR4Json => {
+                            PortalConnectionMode::ImportedFhirBundle
+                        }
+                        ClinicalDocumentFormat::KipuJson => PortalConnectionMode::KipuApiV3,
+                        ClinicalDocumentFormat::CcdaR21Xml => PortalConnectionMode::ImportedCcdaXml,
+                        ClinicalDocumentFormat::Hl7V2Pipe => PortalConnectionMode::ImportedHl7V2,
+                        ClinicalDocumentFormat::SmartHealthLinkUri => {
+                            PortalConnectionMode::SmartHealthLink
+                        }
+                    });
+
+                    let mut added_standard_ids: Vec<String> = Vec::new();
+                    let mut added_part2_count = 0usize;
                     let mut counts = clinical_workspace::MergeCounts::default();
                     let mut current_allergies =
                         allergies_map.with_untracked(|m| m.get(&pid).cloned().unwrap_or_default());
@@ -133,7 +190,11 @@ pub fn PatientEhrPortalsPanel(
                             );
                             for rec in &import.records {
                                 if !existing_ids.contains(&rec.id) {
-                                    added_ids.push(rec.id.clone());
+                                    if rec.confidentiality.is_part2_sud() {
+                                        added_part2_count += 1;
+                                    } else {
+                                        added_standard_ids.push(rec.id.clone());
+                                    }
                                 }
                             }
                         }
@@ -141,10 +202,12 @@ pub fn PatientEhrPortalsPanel(
                     allergies_map.update(|map| {
                         map.insert(pid.clone(), current_allergies);
                     });
-                    if !added_ids.is_empty() {
+                    // Only auto-select standard HIPAA records; 42 CFR Part 2 SUD records
+                    // stay unselected & protected from Passport export unless opted in!
+                    if !added_standard_ids.is_empty() {
                         demo_states.update(|map| {
                             if let Some(st) = map.get_mut(&pid) {
-                                for id in &added_ids {
+                                for id in &added_standard_ids {
                                     if !st.selected_record_ids.contains(id) {
                                         st.selected_record_ids.push(id.clone());
                                     }
@@ -182,18 +245,24 @@ pub fn PatientEhrPortalsPanel(
                     let warn_note = if import.warnings.is_empty() {
                         String::new()
                     } else {
-                        format!(
-                            " ({} partial resource warning(s) noted)",
-                            import.warnings.len()
-                        )
+                        format!(" ({} partial warning(s) noted)", import.warnings.len())
+                    };
+                    let part2_note = if import.confidentiality.is_part2_sud()
+                        || added_part2_count > 0
+                    {
+                        " Tagged 42 CFR Part 2 (SUD): excluded from Portable Health Passport exports unless you explicitly opt in."
+                    } else {
+                        " Records are now live in Your Health, the Agentic Harness, and your Portable Passport."
                     };
                     let msg = format!(
-                    "Linked {org_name}: merged {} new record(s), {} medication(s), {} allergy(ies) ({} duplicate(s) skipped){warn_note}. Records are now live in Your Health, the Agentic Harness, and your Portable Passport.",
-                    counts.added_records,
-                    counts.added_medications,
-                    counts.added_allergies,
-                    counts.skipped_duplicates,
-                );
+                        "Imported {} from {org_name}: merged {} new record(s), {} medication(s), {} problem(s), {} allergy(ies) ({} duplicate(s) skipped){warn_note}.{part2_note}",
+                        ingested.format.label(),
+                        counts.added_records,
+                        counts.added_medications,
+                        counts.added_problems,
+                        counts.added_allergies,
+                        counts.skipped_duplicates,
+                    );
                     status_notice.set(Some(msg.clone()));
                     on_records_updated.run(msg);
                 }
@@ -226,6 +295,7 @@ pub fn PatientEhrPortalsPanel(
             him_fax: None,
             him_address: None,
             is_sandbox: false,
+            transport: PortalVendor::CustomSmartFhir.default_transport_profile(),
         };
         start_smart_launch(org);
     };
@@ -234,16 +304,19 @@ pub fn PatientEhrPortalsPanel(
         ev.prevent_default();
         let raw = fhir_paste.get();
         if raw.trim().is_empty() {
-            error_notice.set(Some("Paste a FHIR R4 Bundle JSON payload first.".into()));
+            error_notice.set(Some(
+                "Paste a FHIR R4 JSON, KipuEMR JSON, C-CDA R2.1 XML, HL7 v2 message, or shlink:/ URI first."
+                    .into(),
+            ));
             return;
         }
         complete_portal_import(
-            "org-manual-fhir".into(),
-            "Uploaded FHIR R4 Portal Export".into(),
+            "org-manual-import".into(),
+            "Pasted Clinical Export".into(),
             PortalVendor::CustomSmartFhir,
-            "local://fhir-bundle-upload".into(),
+            "local://clinical-document-paste".into(),
             raw,
-            PortalConnectionMode::ImportedFhirBundle,
+            None,
         );
         fhir_paste.set(String::new());
     };
@@ -272,11 +345,11 @@ pub fn PatientEhrPortalsPanel(
                     if let Some(text) = val.as_string() {
                         complete_portal_import(
                             format!("file-{}", fname.len()),
-                            format!("Portal File: {fname}"),
+                            format!("Clinical File: {fname}"),
                             PortalVendor::CustomSmartFhir,
                             format!("local://{fname}"),
                             text,
-                            PortalConnectionMode::ImportedFhirBundle,
+                            None,
                         );
                     }
                 }
@@ -394,16 +467,27 @@ pub fn PatientEhrPortalsPanel(
                                                 <button
                                                     type="button"
                                                     on:click=move |_| {
-                                                        let bundle = patient_snapshot.with_value(|p| {
-                                                            sandbox_fhir_bundle_for_org(&org_id_sync, p)
+                                                        let payload = patient_snapshot.with_value(|p| {
+                                                            if vendor_sync == PortalVendor::KipuEmr {
+                                                                sandbox_kipu_payload_for_patient(p)
+                                                            } else if !vendor_sync.default_transport_profile().supports_smart_on_fhir() {
+                                                                sandbox_ccda_xml_for_patient(p)
+                                                            } else {
+                                                                sandbox_fhir_bundle_for_org(&org_id_sync, p)
+                                                            }
                                                         });
+                                                        let mode = if vendor_sync == PortalVendor::KipuEmr {
+                                                            Some(PortalConnectionMode::KipuApiV3)
+                                                        } else {
+                                                            Some(PortalConnectionMode::InteractiveSandboxDemo)
+                                                        };
                                                         complete_portal_import(
                                                             org_id_sync.clone(),
                                                             org_name_sync.clone(),
                                                             vendor_sync,
                                                             base_sync.clone(),
-                                                            bundle,
-                                                            PortalConnectionMode::InteractiveSandboxDemo,
+                                                            payload,
+                                                            mode,
                                                         );
                                                     }
                                                     class="rounded-full border border-cyan-400/35 bg-cyan-500/10 px-3 py-1 text-[11px] font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
@@ -492,7 +576,7 @@ pub fn PatientEhrPortalsPanel(
                                 <div class="rounded-xl border border-white/10 bg-slate-950/70 p-3 space-y-1">
                                     <p class="font-semibold text-emerald-300">"Requested Read-Only Scopes"</p>
                                     <p class="break-words font-mono text-[10px] leading-relaxed text-slate-300">
-                                        {SMART_READ_ONLY_SCOPES}
+                                        {session.scopes.clone()}
                                     </p>
                                 </div>
                             </div>
@@ -510,7 +594,7 @@ pub fn PatientEhrPortalsPanel(
                                             s_vendor,
                                             s_base.clone(),
                                             bundle,
-                                            PortalConnectionMode::InteractiveSandboxDemo,
+                                            Some(PortalConnectionMode::InteractiveSandboxDemo),
                                         );
                                     }
                                     class="min-h-[42px] rounded-full bg-emerald-500 px-5 py-2 text-xs font-semibold text-slate-950 transition hover:bg-emerald-400"
@@ -531,6 +615,58 @@ pub fn PatientEhrPortalsPanel(
                 })
             }}
 
+            // Inspected SMART Health Link (shlink:/) verification card
+            {move || {
+                inspected_shlink.get().map(|shl| {
+                    let host = shl.host();
+                    let label = shl
+                        .label
+                        .clone()
+                        .unwrap_or_else(|| "SMART Health Link".to_string());
+                    let flags_view = shl.flags.clone();
+                    let exp_txt = shl
+                        .exp
+                        .map(|ts| format!("UNIX {ts}"))
+                        .unwrap_or_else(|| "No expiration".into());
+                    view! {
+                        <section
+                            data-shlink-preview="true"
+                            class="rounded-2xl border border-cyan-400/45 bg-cyan-500/[0.06] p-4 space-y-2.5 text-xs"
+                        >
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                    <p class="text-[11px] font-semibold uppercase tracking-widest text-cyan-300">
+                                        "SMART Health Link (shlink:/) Verified · HTTPS SSRF-Checked"
+                                    </p>
+                                    <h3 class="mt-0.5 text-sm font-bold text-white">{label}</h3>
+                                </div>
+                                <button
+                                    type="button"
+                                    on:click=move |_| inspected_shlink.set(None)
+                                    class="rounded-full border border-white/15 px-3 py-1 text-[11px] text-slate-300 hover:bg-white/5"
+                                >
+                                    "Dismiss"
+                                </button>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-2 font-mono text-[11px] text-slate-200">
+                                <span>{format!("Manifest host: {host}")}</span>
+                                <span>"·"</span>
+                                <span class="text-emerald-300">"32-byte AES-256 key validated (not displayed)"</span>
+                                <span>"·"</span>
+                                <span>{format!("v{} · Expires: {exp_txt}", shl.v)}</span>
+                            </div>
+                            <div class="flex flex-wrap gap-1.5">
+                                {flags_view.into_iter().map(|fl| view! {
+                                    <span class="rounded-full border border-cyan-400/35 bg-slate-950/70 px-2.5 py-0.5 text-[10px] font-semibold text-cyan-200">
+                                        {fl.label()}
+                                    </span>
+                                }).collect_view()}
+                            </div>
+                        </section>
+                    }
+                })
+            }}
+
             // Searchable Health System Directory
             <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4">
                 <div class="flex flex-wrap items-center justify-between gap-2">
@@ -539,56 +675,52 @@ pub fn PatientEhrPortalsPanel(
                             "Doctors & Hospitals Directory"
                         </h3>
                         <p class="text-xs text-slate-300">
-                            "Search by health system, city, or EHR portal vendor to sign in and import records."
+                            "Search SMART on FHIR R4, behavioral health (KipuEMR · 42 CFR Part 2), C-CDA / HL7 v2, and ROI-fallback EHRs."
                         </p>
                     </div>
                 </div>
 
-                <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div class="space-y-2.5">
                     <input
                         type="search"
                         aria-label="Search doctors and hospital portals"
-                        placeholder="Search Stanford, UCSF, Mayo, Kaiser, Epic, Oracle, VA, Medicare..."
+                        placeholder="Search Epic, Oracle, athenahealth, healow, MEDITECH, NextGen, Veradigm, Elation, VA, Medicare, KipuEMR, Hint, SimplePractice, DrChrono, ModMed..."
                         prop:value=move || search_query.get()
                         on:input=move |ev| search_query.set(event_target_value(&ev))
-                        class="min-h-[42px] flex-1 rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2 text-sm text-white placeholder:text-slate-400 focus:border-cyan-400/60 focus:outline-none"
+                        class="min-h-[42px] w-full rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2 text-sm text-white placeholder:text-slate-400 focus:border-cyan-400/60 focus:outline-none"
                     />
                     <div class="flex flex-wrap gap-1.5">
                         <button
                             type="button"
                             on:click=move |_| vendor_filter.set(None)
                             class=move || if vendor_filter.get().is_none() {
-                                "rounded-full bg-cyan-500 px-3 py-1.5 text-xs font-semibold text-slate-950"
+                                "rounded-full bg-cyan-500 px-3 py-1 text-[11px] font-semibold text-slate-950"
                             } else {
-                                "rounded-full border border-white/15 px-3 py-1.5 text-xs text-slate-300 hover:text-white"
+                                "rounded-full border border-white/15 px-3 py-1 text-[11px] text-slate-300 hover:text-white"
                             }
                         >
                             "All"
                         </button>
-                        {[
-                            PortalVendor::EpicMyChart,
-                            PortalVendor::OracleHealth,
-                            PortalVendor::AthenaHealth,
-                            PortalVendor::VaHealth,
-                            PortalVendor::MedicareBlueButton,
-                        ]
-                        .into_iter()
-                        .map(|v| {
-                            view! {
-                                <button
-                                    type="button"
-                                    on:click=move |_| vendor_filter.set(Some(v))
-                                    class=move || if vendor_filter.get() == Some(v) {
-                                        "rounded-full bg-cyan-500 px-3 py-1.5 text-xs font-semibold text-slate-950"
-                                    } else {
-                                        "rounded-full border border-white/15 px-3 py-1.5 text-xs text-slate-300 hover:text-white"
-                                    }
-                                >
-                                    {v.short_badge()}
-                                </button>
-                            }
-                        })
-                        .collect_view()}
+                        {PortalVendor::all()
+                            .iter()
+                            .copied()
+                            .filter(|v| *v != PortalVendor::CustomSmartFhir)
+                            .map(|v| {
+                                view! {
+                                    <button
+                                        type="button"
+                                        on:click=move |_| vendor_filter.set(Some(v))
+                                        class=move || if vendor_filter.get() == Some(v) {
+                                            "rounded-full bg-cyan-500 px-3 py-1 text-[11px] font-semibold text-slate-950"
+                                        } else {
+                                            "rounded-full border border-white/15 px-3 py-1 text-[11px] text-slate-300 hover:text-white"
+                                        }
+                                    >
+                                        {v.short_badge()}
+                                    </button>
+                                }
+                            })
+                            .collect_view()}
                     </div>
                 </div>
 
@@ -606,10 +738,19 @@ pub fn PatientEhrPortalsPanel(
                         results
                             .into_iter()
                             .map(|org| {
+                                let supports_smart = org.supports_smart_on_fhir();
+                                let is_kipu = org.transport.supports_kipu_api();
+                                let caps = org.transport.capabilities.clone();
+                                let notes = org.transport.notes.clone();
+                                let endpoint_preview = if org.fhir_base_url.is_empty() {
+                                    "C-CDA / PDF Export & Automated ROI".to_string()
+                                } else {
+                                    org.fhir_base_url.clone()
+                                };
                                 let org_for_btn = org.clone();
                                 view! {
                                     <article class="flex flex-col justify-between gap-3 rounded-xl border border-white/10 bg-slate-950/65 p-4 transition hover:border-cyan-400/35">
-                                        <div>
+                                        <div class="space-y-1.5">
                                             <div class="flex flex-wrap items-center justify-between gap-2">
                                                 <span class="rounded bg-white/10 px-2 py-0.5 font-mono text-[10px] text-cyan-200">
                                                     {org.vendor.short_badge()}
@@ -620,20 +761,78 @@ pub fn PatientEhrPortalsPanel(
                                                     </span>
                                                 })}
                                             </div>
-                                            <h4 class="mt-2 text-sm font-semibold text-white">{org.name}</h4>
-                                            <p class="mt-0.5 text-xs text-slate-400">{org.city_state}</p>
+                                            <h4 class="text-sm font-semibold text-white">{org.name}</h4>
+                                            <p class="text-xs text-slate-400">{org.city_state}</p>
+                                            <div class="flex flex-wrap gap-1 pt-0.5">
+                                                {caps.into_iter().map(|cap| {
+                                                    let cls = capability_badge_class(cap);
+                                                    view! {
+                                                        <span class=format!("rounded-full border px-2 py-0.5 text-[10px] font-medium {cls}")>
+                                                            {cap.badge_label()}
+                                                        </span>
+                                                    }
+                                                }).collect_view()}
+                                            </div>
+                                            <p class="text-[11px] leading-snug text-slate-300">{notes}</p>
                                         </div>
                                         <div class="flex items-center justify-between gap-2 border-t border-white/10 pt-2.5">
                                             <span class="truncate font-mono text-[10px] text-slate-400">
-                                                {org.fhir_base_url}
+                                                {endpoint_preview}
                                             </span>
-                                            <button
-                                                type="button"
-                                                on:click=move |_| start_smart_launch(org_for_btn.clone())
-                                                class="shrink-0 rounded-full bg-emerald-500 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-400"
-                                            >
-                                                "Sign in →"
-                                            </button>
+                                            {if supports_smart {
+                                                view! {
+                                                    <button
+                                                        type="button"
+                                                        on:click=move |_| start_smart_launch(org_for_btn.clone())
+                                                        class="shrink-0 rounded-full bg-emerald-500 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-400"
+                                                    >
+                                                        "Sign in →"
+                                                    </button>
+                                                }
+                                                .into_any()
+                                            } else if is_kipu {
+                                                view! {
+                                                    <button
+                                                        type="button"
+                                                        on:click=move |_| {
+                                                            let kipu_json = patient_snapshot.with_value(sandbox_kipu_payload_for_patient);
+                                                            complete_portal_import(
+                                                                org_for_btn.id.clone(),
+                                                                org_for_btn.name.clone(),
+                                                                org_for_btn.vendor,
+                                                                org_for_btn.fhir_base_url.clone(),
+                                                                kipu_json,
+                                                                Some(PortalConnectionMode::KipuApiV3),
+                                                            );
+                                                        }
+                                                        class="shrink-0 rounded-full bg-amber-400 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-amber-300"
+                                                    >
+                                                        "Load Kipu (Part 2) →"
+                                                    </button>
+                                                }
+                                                .into_any()
+                                            } else {
+                                                view! {
+                                                    <button
+                                                        type="button"
+                                                        on:click=move |_| {
+                                                            let ccda = patient_snapshot.with_value(sandbox_ccda_xml_for_patient);
+                                                            complete_portal_import(
+                                                                org_for_btn.id.clone(),
+                                                                org_for_btn.name.clone(),
+                                                                org_for_btn.vendor,
+                                                                "local://ccda-export".into(),
+                                                                ccda,
+                                                                Some(PortalConnectionMode::ImportedCcdaXml),
+                                                            );
+                                                        }
+                                                        class="shrink-0 rounded-full border border-cyan-400/45 bg-cyan-500/15 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/25"
+                                                    >
+                                                        "Import C-CDA / ROI"
+                                                    </button>
+                                                }
+                                                .into_any()
+                                            }}
                                         </div>
                                     </article>
                                 }
@@ -644,7 +843,7 @@ pub fn PatientEhrPortalsPanel(
                 </div>
             </section>
 
-            // Custom SMART Endpoint + Local FHIR R4 Bundle Upload
+            // Custom SMART Endpoint + Multi-Format Clinical Document Import
             <div class="grid gap-4 md:grid-cols-2">
                 <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-3">
                     <h3 class="text-sm font-semibold text-white">
@@ -681,16 +880,16 @@ pub fn PatientEhrPortalsPanel(
 
                 <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-3">
                     <h3 class="text-sm font-semibold text-white">
-                        "Import Downloaded FHIR R4 Bundle (.json)"
+                        "Import Downloaded FHIR R4 Bundle, Kipu JSON, C-CDA XML, HL7 v2, or shlink:/"
                     </h3>
                     <p class="text-xs text-slate-300">
-                        "Already downloaded your chart from MyChart, Apple Health, or an ROI fulfillment? Load it locally in browser RAM."
+                        "Auto-detects FHIR R4 (.json), KipuEMR API JSON (42 CFR Part 2), C-CDA R2.1 (.xml), HL7 v2 (.hl7), or SMART Health Links (`shlink:/`) locally in browser RAM."
                     </p>
                     <label class="block">
-                        <span class="sr-only">"Choose a FHIR R4 JSON file"</span>
+                        <span class="sr-only">"Choose a clinical document file (.json, .xml, .hl7)"</span>
                         <input
                             type="file"
-                            accept=".json,application/json,application/fhir+json"
+                            accept=".json,.xml,.ccda,.hl7,.txt,application/json,application/fhir+json,application/xml,text/xml,text/plain"
                             on:change=on_upload_fhir_file
                             class="block w-full text-xs text-slate-300 file:mr-3 file:rounded-full file:border-0 file:bg-emerald-500 file:px-3.5 file:py-1.5 file:text-xs file:font-semibold file:text-slate-950 hover:file:bg-emerald-400"
                         />
@@ -698,18 +897,88 @@ pub fn PatientEhrPortalsPanel(
                     <form on:submit=on_paste_fhir_import class="space-y-2">
                         <textarea
                             rows="2"
-                            aria-label="Paste raw FHIR R4 JSON bundle"
-                            placeholder="Or paste FHIR R4 Bundle JSON here (zero data leaves your device)..."
+                            aria-label="Paste FHIR R4 JSON, Kipu JSON, C-CDA XML, HL7 v2, or shlink:/ URI"
+                            placeholder="Paste FHIR R4 JSON, Kipu JSON, C-CDA XML, HL7 v2 (`MSH|...`), or `shlink:/...` URI (zero data leaves your device)..."
                             prop:value=move || fhir_paste.get()
                             on:input=move |ev| fhir_paste.set(event_target_value(&ev))
                             class="w-full rounded-xl border border-white/15 bg-slate-950 p-2.5 font-mono text-[11px] text-white placeholder:text-slate-400 focus:border-emerald-400/60 focus:outline-none"
                         />
-                        <button
-                            type="submit"
-                            class="rounded-full border border-emerald-400/40 bg-emerald-500/15 px-4 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
-                        >
-                            "Parse & Merge FHIR R4 Bundle"
-                        </button>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button
+                                type="submit"
+                                class="rounded-full border border-emerald-400/40 bg-emerald-500/15 px-4 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
+                            >
+                                "Auto-Detect & Merge Document"
+                            </button>
+                            <button
+                                type="button"
+                                on:click=move |_| {
+                                    let sample = patient_snapshot.with_value(sandbox_kipu_payload_for_patient);
+                                    complete_portal_import(
+                                        "org-kipu-sandbox".into(),
+                                        "Harborview Behavioral (KipuEMR Sandbox)".into(),
+                                        PortalVendor::KipuEmr,
+                                        "https://api.kipuworks.com".into(),
+                                        sample,
+                                        Some(PortalConnectionMode::KipuApiV3),
+                                    );
+                                }
+                                class="rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1 text-[11px] font-medium text-amber-200 hover:bg-amber-500/20"
+                            >
+                                "+ Kipu Sandbox (Part 2)"
+                            </button>
+                            <button
+                                type="button"
+                                on:click=move |_| {
+                                    let sample = patient_snapshot.with_value(sandbox_ccda_xml_for_patient);
+                                    complete_portal_import(
+                                        "org-ccda-sandbox".into(),
+                                        "C-CDA R2.1 CCD Sample".into(),
+                                        PortalVendor::SimplePractice,
+                                        "local://ccda-sample.xml".into(),
+                                        sample,
+                                        Some(PortalConnectionMode::ImportedCcdaXml),
+                                    );
+                                }
+                                class="rounded-full border border-sky-400/40 bg-sky-500/10 px-3 py-1 text-[11px] font-medium text-sky-200 hover:bg-sky-500/20"
+                            >
+                                "+ C-CDA XML Sample"
+                            </button>
+                            <button
+                                type="button"
+                                on:click=move |_| {
+                                    let sample = patient_snapshot.with_value(sandbox_hl7v2_message_for_patient);
+                                    complete_portal_import(
+                                        "org-hl7v2-sandbox".into(),
+                                        "Regional Lab HL7 v2.5.1 ORU".into(),
+                                        PortalVendor::Meditech,
+                                        "local://oru-r01.hl7".into(),
+                                        sample,
+                                        Some(PortalConnectionMode::ImportedHl7V2),
+                                    );
+                                }
+                                class="rounded-full border border-sky-400/40 bg-sky-500/10 px-3 py-1 text-[11px] font-medium text-sky-200 hover:bg-sky-500/20"
+                            >
+                                "+ HL7 v2 Sample"
+                            </button>
+                            <button
+                                type="button"
+                                on:click=move |_| {
+                                    let uri = patient_snapshot.with_value(sandbox_smart_health_link_uri);
+                                    complete_portal_import(
+                                        "org-shlink-sandbox".into(),
+                                        "SMART Health Link Sandbox".into(),
+                                        PortalVendor::CustomSmartFhir,
+                                        "https://shl-sandbox.dabney-demo.invalid".into(),
+                                        uri,
+                                        Some(PortalConnectionMode::SmartHealthLink),
+                                    );
+                                }
+                                class="rounded-full border border-cyan-400/40 bg-cyan-500/10 px-3 py-1 text-[11px] font-medium text-cyan-200 hover:bg-cyan-500/20"
+                            >
+                                "Inspect shlink:/ Sample"
+                            </button>
+                        </div>
                     </form>
                 </section>
             </div>
@@ -741,15 +1010,29 @@ pub fn PortablePassportSection(
     let copy_status = RwSignal::new(Option::<String>::None);
     let import_status = RwSignal::new(Option::<String>::None);
     let import_error = RwSignal::new(Option::<String>::None);
+    // Hard 42 CFR Part 2 invariant: SUD records are strictly excluded by default unless opted in.
+    let include_part2_sud = RwSignal::new(false);
 
     let active_passport = Memo::new(move |_| {
         let aud = audience.get();
         let em = emergency_note.get();
+        let inc_part2 = include_part2_sud.get();
         patient_sv.with_value(|p| {
             state_sv.with_value(|st| {
                 allergies_sv.with_value(|algs| {
                     portals_sv.with_value(|lp| {
-                        build_health_passport(p, st, algs, lp, aud, &em, DEMO_TIMESTAMP)
+                        build_health_passport_with_options(
+                            p,
+                            st,
+                            algs,
+                            lp,
+                            aud,
+                            &em,
+                            DEMO_TIMESTAMP,
+                            PassportExportOptions {
+                                include_part2_sud_records: inc_part2,
+                            },
+                        )
                     })
                 })
             })
@@ -893,7 +1176,7 @@ pub fn PortablePassportSection(
             </div>
 
             // Optional Emergency / Quick Context Note
-            <div class="space-y-1.5">
+            <div class="space-y-2.5">
                 <label class="block text-xs font-medium text-slate-300">
                     "Emergency / Quick-Glance Instructions (included in exported file)"
                     <input
@@ -903,6 +1186,23 @@ pub fn PortablePassportSection(
                         on:input=move |ev| emergency_note.set(event_target_value(&ev))
                         class="mt-1.5 w-full rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2 text-xs text-white placeholder:text-slate-400 focus:border-cyan-400/60 focus:outline-none"
                     />
+                </label>
+
+                <label class="flex cursor-pointer items-start gap-2.5 rounded-xl border border-amber-400/30 bg-amber-500/[0.06] p-3 text-xs text-amber-100">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || include_part2_sud.get()
+                        on:change=move |ev| include_part2_sud.set(event_target_checked(&ev))
+                        class="mt-0.5 accent-amber-400"
+                    />
+                    <span class="space-y-0.5">
+                        <strong class="block text-amber-200">
+                            "Explicit 42 CFR Part 2 Opt-In (Substance Use Disorder Records — Default: Excluded)"
+                        </strong>
+                        <span class="block text-[11px] leading-relaxed text-amber-100/90">
+                            "Any 42 CFR Part 2-tagged records (e.g., KipuEMR behavioral health imports) are withheld from your Portable Health Passport by default. Checking this box includes them and embeds the statutory 42 CFR § 2.32 Prohibition on Redisclosure notice across JSON, HTML, Markdown, and FHIR R4 IPS exports."
+                        </span>
+                    </span>
                 </label>
             </div>
 
@@ -949,6 +1249,20 @@ pub fn PortablePassportSection(
                                 </p>
                             </div>
                         </div>
+
+                        {(passport.part2_sud_included || passport.excluded_part2_record_count > 0).then(|| view! {
+                            <div class="rounded-xl border border-amber-400/35 bg-amber-500/10 px-3.5 py-2 text-xs text-amber-100">
+                                {if passport.part2_sud_included {
+                                    "42 CFR § 2.32 Prohibition on Redisclosure notice embedded in JSON, HTML, Markdown, and FHIR R4 IPS exports."
+                                        .to_string()
+                                } else {
+                                    format!(
+                                        "42 CFR Part 2 protection active: {} SUD-tagged record(s) withheld from this export.",
+                                        passport.excluded_part2_record_count
+                                    )
+                                }}
+                            </div>
+                        })}
 
                         <div class="flex flex-wrap gap-2.5">
                             <a
@@ -1052,6 +1366,13 @@ pub fn AutomatedRoiPanel(
     let recipient_name = RwSignal::new(String::new());
     let recipient_dest = RwSignal::new("patient-demo@dabney-demo.invalid".to_string());
     let include_sensitive = RwSignal::new(false);
+    let include_part2_sud_cat = RwSignal::new(false);
+    let include_part2_counseling = RwSignal::new(false);
+    let part2_specific_desc = RwSignal::new(
+        "Outpatient SUD admission summary, medication orders, vitals, and lab results (excluding separate SUD counseling notes)."
+            .to_string(),
+    );
+    let selected_vendor = RwSignal::new(Option::<PortalVendor>::None);
     let selected_categories = RwSignal::new(RoiRecordCategory::standard_default().to_vec());
     let signer_name = RwSignal::new(patient.display_name);
     let next_seq = RwSignal::new(3usize);
@@ -1062,10 +1383,19 @@ pub fn AutomatedRoiPanel(
 
     let prefill_from_org = move |org_id: String| {
         if let Some(org) = find_portal_organization(&org_id) {
+            let is_part2 = org.vendor.is_part2_sensitive() || org.transport.part2_sensitive;
             clinic_name.set(format!("{} — Health Information Management", org.name));
             him_email.set(org.him_email.unwrap_or_default());
             him_fax.set(org.him_fax.unwrap_or_default());
             him_address.set(org.him_address.unwrap_or_default());
+            selected_vendor.set(Some(org.vendor));
+            if is_part2 {
+                legal_basis.set(RoiLegalBasis::Part2SudAuthorization42Cfr2);
+                include_part2_sud_cat.set(true);
+            } else if legal_basis.get_untracked().is_part2_sud() {
+                legal_basis.set(RoiLegalBasis::HipaaRightOfAccess164524);
+                include_part2_sud_cat.set(false);
+            }
         }
     };
 
@@ -1088,6 +1418,17 @@ pub fn AutomatedRoiPanel(
         {
             cats.push(RoiRecordCategory::SensitivePsychotherapyAndBehavioral);
         }
+        let basis = legal_basis.get_untracked();
+        if (basis.is_part2_sud() || include_part2_sud_cat.get_untracked())
+            && !cats.contains(&RoiRecordCategory::Part2SubstanceUseDisorder)
+        {
+            cats.push(RoiRecordCategory::Part2SubstanceUseDisorder);
+        }
+        if include_part2_counseling.get_untracked()
+            && !cats.contains(&RoiRecordCategory::Part2SudCounselingNotes)
+        {
+            cats.push(RoiRecordCategory::Part2SudCounselingNotes);
+        }
         let range = match date_range_choice.get_untracked().as_str() {
             "last_12_months" => RoiDateRange::Last12Months,
             "all" => RoiDateRange::AllAvailableHistory,
@@ -1108,6 +1449,10 @@ pub fn AutomatedRoiPanel(
         let seq = next_seq.get_untracked();
         next_seq.set(seq + 1);
         let pid = patient_id.get_value();
+        let clinic_str = clinic_name.get_untracked().trim().to_string();
+        let is_part2 = basis.is_part2_sud()
+            || include_part2_sud_cat.get_untracked()
+            || include_part2_counseling.get_untracked();
 
         let draft = RoiRequest {
             id: format!("roi-{pid}-{seq}"),
@@ -1115,22 +1460,34 @@ pub fn AutomatedRoiPanel(
             patient_name: patient_name.get_value(),
             patient_birth_date: patient_dob.get_value(),
             patient_contact_email: "patient-demo@dabney-demo.invalid".into(),
-            clinic_name: clinic_name.get_untracked().trim().to_string(),
+            clinic_name: clinic_str.clone(),
             clinic_him_email: him_email.get_untracked().trim().to_string(),
             clinic_him_fax: him_fax.get_untracked().trim().to_string(),
             clinic_address: him_address.get_untracked().trim().to_string(),
-            clinic_portal_vendor: None,
-            legal_basis: legal_basis.get_untracked(),
+            clinic_portal_vendor: selected_vendor.get_untracked(),
+            legal_basis: basis,
             delivery_channel: delivery_channel.get_untracked(),
             electronic_format: electronic_format.get_untracked(),
             date_range: range,
             categories: cats,
             recipient,
             expiration_date: "2027-02-24".into(),
-            purpose_note: "Patient-requested electronic medical records for continuity of care."
-                .into(),
+            purpose_note: if is_part2 {
+                "At the request of the patient for continuity of care (42 CFR Part 2 consent)."
+                    .into()
+            } else {
+                "Patient-requested electronic medical records for continuity of care.".into()
+            },
             attestation_accepted: false,
             status: RoiStatus::Draft,
+            part2_disclosing_program: if is_part2 { clinic_str } else { String::new() },
+            part2_specific_description: if is_part2 {
+                part2_specific_desc.get_untracked().trim().to_string()
+            } else {
+                String::new()
+            },
+            part2_tpo_redisclosure_acknowledged: false,
+            part2_separate_counseling_notes_consent: include_part2_counseling.get_untracked(),
         };
 
         if let Err(err) = clinical_workspace::validate_roi_request(&draft) {
@@ -1145,9 +1502,12 @@ pub fn AutomatedRoiPanel(
         him_email.set(String::new());
         him_fax.set(String::new());
         him_address.set(String::new());
+        selected_vendor.set(None);
         include_sensitive.set(false);
+        include_part2_sud_cat.set(false);
+        include_part2_counseling.set(false);
         roi_notice.set(Some(
-            "Added new ROI draft below. Review, check the patient attestation box, sign, and dispatch in batch.".into(),
+            "Added new ROI draft below. Review, check the required attestation(s), sign, and dispatch in batch.".into(),
         ));
     };
 
@@ -1180,12 +1540,21 @@ pub fn AutomatedRoiPanel(
         }
     };
 
-    let directory_clinics = StoredValue::new(
-        portal_directory()
-            .into_iter()
-            .filter(|o| o.him_email.is_some() || o.him_fax.is_some())
-            .collect::<Vec<_>>(),
-    );
+    let directory_clinics = StoredValue::new({
+        let all = portal_directory();
+        let priority_ids = [
+            "org-stanford-mychart",
+            "org-ucsf-mychart",
+            "org-kipu-sandbox",
+            "org-simplepractice-clinic",
+            "org-hint-dpc",
+            "org-mayo-mychart",
+        ];
+        priority_ids
+            .iter()
+            .filter_map(|id| all.iter().find(|o| o.id == *id).cloned())
+            .collect::<Vec<_>>()
+    });
 
     view! {
         <div class="space-y-6" data-patient-roi-automation="true">
@@ -1328,12 +1697,16 @@ pub fn AutomatedRoiPanel(
                         <label class="space-y-1 text-slate-300">
                             <span class="text-[11px] font-medium">"Legal Basis"</span>
                             <select
-                                aria-label="HIPAA legal basis"
+                                aria-label="HIPAA and 42 CFR Part 2 legal basis"
                                 on:change=move |ev| {
                                     match event_target_value(&ev).as_str() {
                                         "164508" => {
                                             legal_basis.set(RoiLegalBasis::ThirdPartyAuthorization164508);
                                             recipient_is_third_party.set(true);
+                                        }
+                                        "part2" => {
+                                            legal_basis.set(RoiLegalBasis::Part2SudAuthorization42Cfr2);
+                                            include_part2_sud_cat.set(true);
                                         }
                                         _ => {
                                             legal_basis.set(RoiLegalBasis::HipaaRightOfAccess164524);
@@ -1343,8 +1716,24 @@ pub fn AutomatedRoiPanel(
                                 }
                                 class="w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-2 text-xs text-white"
                             >
-                                <option value="164524">"HIPAA Right of Access (45 CFR § 164.524)"</option>
-                                <option value="164508">"Third-Party ROI (45 CFR § 164.508)"</option>
+                                <option
+                                    value="164524"
+                                    selected=move || legal_basis.get() == RoiLegalBasis::HipaaRightOfAccess164524
+                                >
+                                    "HIPAA Right of Access (45 CFR § 164.524)"
+                                </option>
+                                <option
+                                    value="164508"
+                                    selected=move || legal_basis.get() == RoiLegalBasis::ThirdPartyAuthorization164508
+                                >
+                                    "Third-Party ROI (45 CFR § 164.508)"
+                                </option>
+                                <option
+                                    value="part2"
+                                    selected=move || legal_basis.get() == RoiLegalBasis::Part2SudAuthorization42Cfr2
+                                >
+                                    "42 CFR Part 2 SUD Authorization (42 CFR § 2.31 & § 2.32)"
+                                </option>
                             </select>
                         </label>
                         <label class="space-y-1 text-slate-300">
@@ -1458,6 +1847,35 @@ pub fn AutomatedRoiPanel(
                                 "Include psychotherapy / behavioral health notes (excluded by default unless checked)."
                             </span>
                         </label>
+                        {move || (legal_basis.get().is_part2_sud() || include_part2_sud_cat.get()).then(|| view! {
+                            <div class="rounded-xl border border-amber-400/40 bg-amber-500/10 p-3 space-y-2.5 text-[11px] text-amber-100">
+                                <p class="font-semibold text-amber-200">
+                                    "42 CFR Part 2 Written Consent Elements (§ 2.31 & § 2.32)"
+                                </p>
+                                <label class="block space-y-1">
+                                    <span class="text-amber-100">"Specific SUD information description (§ 2.31(a)(3)) *"</span>
+                                    <input
+                                        type="text"
+                                        aria-label="42 CFR Part 2 specific SUD information description"
+                                        prop:value=move || part2_specific_desc.get()
+                                        on:input=move |ev| part2_specific_desc.set(event_target_value(&ev))
+                                        class="w-full rounded-lg border border-amber-300/35 bg-slate-950 px-2.5 py-1.5 text-xs text-white"
+                                    />
+                                </label>
+                                <label class="flex cursor-pointer items-start gap-2">
+                                    <input
+                                        type="checkbox"
+                                        prop:checked=move || include_part2_counseling.get()
+                                        on:change=move |ev| include_part2_counseling.set(event_target_checked(&ev))
+                                        class="mt-0.5 accent-amber-400"
+                                    />
+                                    <span>
+                                        <strong>"Separate Written Consent (42 CFR § 2.31(b)): "</strong>
+                                        "Include separately maintained SUD counseling notes (excluded by default)."
+                                    </span>
+                                </label>
+                            </div>
+                        })}
                     </div>
 
                     <button
@@ -1504,6 +1922,7 @@ pub fn AutomatedRoiPanel(
                             let badge_cls = roi_status_badge_class(&req.status);
                             let status_label = req.status.label();
                             let req_id_att = req.id.clone();
+                            let req_id_part2_ack = req.id.clone();
                             let req_id_sign = req.id.clone();
                             let req_id_fulfill = req.id.clone();
                             let req_id_revoke = req.id.clone();
@@ -1516,6 +1935,8 @@ pub fn AutomatedRoiPanel(
                             let is_draft = matches!(req.status, RoiStatus::Draft);
                             let is_dispatched = matches!(req.status, RoiStatus::Dispatched { .. });
                             let is_revoked = matches!(req.status, RoiStatus::Revoked { .. });
+                            let is_part2 = req.requires_part2_consent();
+                            let part2_ack = req.part2_tpo_redisclosure_acknowledged;
                             let ref_badge = req.status.reference_id().map(str::to_string);
                             let due_note = match &req.status {
                                 RoiStatus::Dispatched { due_by_30d, transport_note, .. } => {
@@ -1538,6 +1959,11 @@ pub fn AutomatedRoiPanel(
                                                 <h4 class="text-sm font-semibold text-white">
                                                     {req.clinic_name.clone()}
                                                 </h4>
+                                                {is_part2.then(|| view! {
+                                                    <span class="rounded-full border border-amber-400/45 bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-200">
+                                                        "42 CFR Part 2"
+                                                    </span>
+                                                })}
                                                 {ref_badge.map(|r| view! {
                                                     <span class="rounded bg-white/10 px-2 py-0.5 font-mono text-[10px] text-cyan-200">
                                                         {r}
@@ -1602,6 +2028,30 @@ pub fn AutomatedRoiPanel(
                                                     "I authorize this releasing provider to deliver the selected electronic records above and understand I may revoke this authorization in writing at any time."
                                                 </span>
                                             </label>
+                                            {is_part2.then(|| view! {
+                                                <label class="flex cursor-pointer items-start gap-2 text-amber-100">
+                                                    <input
+                                                        type="checkbox"
+                                                        prop:checked=part2_ack
+                                                        on:change=move |ev| {
+                                                            let checked = event_target_checked(&ev);
+                                                            let pid = patient_id.get_value();
+                                                            let rid = req_id_part2_ack.clone();
+                                                            roi_map.update(|map| {
+                                                                if let Some(list) = map.get_mut(&pid) {
+                                                                    if let Some(item) = list.iter_mut().find(|r| r.id == rid) {
+                                                                        item.part2_tpo_redisclosure_acknowledged = checked;
+                                                                    }
+                                                                }
+                                                            });
+                                                        }
+                                                        class="mt-0.5 accent-amber-400"
+                                                    />
+                                                    <span>
+                                                        "42 CFR § 2.31(a)(10) Acknowledgment: I understand these SUD records are protected by 42 CFR Part 2, that redisclosure by HIPAA recipients may occur as permitted under HIPAA (except in proceedings against me), and that refusal to sign will not affect treatment or benefits."
+                                                    </span>
+                                                </label>
+                                            })}
                                             <button
                                                 type="button"
                                                 on:click=move |_| {
@@ -1766,7 +2216,14 @@ mod tests {
         .to_html();
         assert!(portals_html.contains("SMART on FHIR R4 + PKCE"));
         assert!(portals_html.contains("Stanford Health Care"));
+        assert!(portals_html.contains("KipuEMR"));
+        assert!(portals_html.contains("SimplePractice"));
+        assert!(portals_html.contains("Hint Health"));
+        assert!(portals_html.contains("42 CFR Part 2"));
         assert!(portals_html.contains("Import Downloaded FHIR R4 Bundle"));
+        assert!(portals_html.contains("C-CDA XML Sample"));
+        assert!(portals_html.contains("HL7 v2 Sample"));
+        assert!(portals_html.contains("shlink:/"));
 
         let passport_html = view! {
             <PortablePassportSection
@@ -1782,6 +2239,7 @@ mod tests {
         .to_html();
         assert!(passport_html.contains("Your Portable Health Passport"));
         assert!(passport_html.contains("dabney.health_passport.v1"));
+        assert!(passport_html.contains("Explicit 42 CFR Part 2 Opt-In"));
         assert!(passport_html.contains("Download Printable Brief"));
         assert!(passport_html.contains("Persist Portable File"));
         assert!(passport_html.contains("Download FHIR R4 IPS"));
@@ -1795,6 +2253,7 @@ mod tests {
         .to_html();
         assert!(roi_html.contains("Automate Sending Release of Information"));
         assert!(roi_html.contains("45 CFR"));
+        assert!(roi_html.contains("42 CFR Part 2 SUD Authorization"));
         assert!(roi_html.contains("Automate Send All Signed ROI Forms (1)"));
         assert!(roi_html.contains("Stanford Health Care"));
 

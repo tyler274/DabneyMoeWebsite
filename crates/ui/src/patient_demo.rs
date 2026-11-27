@@ -1575,6 +1575,11 @@ fn PatientRecordCard(
                     <span class=format!("rounded-full border px-2.5 py-0.5 text-[11px] font-semibold {kind_cls}")>
                         {record.kind.label()}
                     </span>
+                    {record.confidentiality.is_part2_sud().then(|| view! {
+                        <span class="rounded-full border border-amber-400/45 bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-200">
+                            "42 CFR Part 2"
+                        </span>
+                    })}
                     {is_cited.then(|| view! {
                         <span class="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-cyan-200">
                             "Cited"
