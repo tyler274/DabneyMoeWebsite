@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use leptos::prelude::*;
 
-use crate::mental_health_cgm::select_notable_spike_peaks;
+use crate::mental_health_cgm::{
+    glucose_axis_domain, select_notable_spike_peaks, timeline_hour_span,
+};
 use crate::mental_health_cgm_analytics::{downsample_segments_for_chart, DEFAULT_CHART_GAP_HOURS};
 use crate::mental_health_lingo::{LingoReading, MentalHealthCheckIn};
 
@@ -244,20 +246,12 @@ pub fn build_lingo_3d_scene_with_range(
 ) -> Chart3DScene {
     let (target_low, target_high) = sanitize_target_range(target_low_mg_dl, target_high_mg_dl);
     let mut scene = Chart3DScene::default();
-    let max_hour = readings
-        .iter()
-        .map(|r| r.hour_offset)
-        .chain(checkins.iter().map(|c| c.hour_offset))
-        .fold(24.0_f64, f64::max)
-        .max(1.0);
-    // Lower floor to 45 mg/dL so Lingo floor-capped 54 mg/dL (<55) readings sit visibly above the grid.
-    let min_g = 45.0_f64;
-    let max_g = readings
-        .iter()
-        .map(|r| r.glucose_mg_dl)
-        .fold(180.0_f64, f64::max)
-        .max(180.0)
-        .max(target_high);
+    let max_hour = timeline_hour_span(readings, checkins);
+    let (min_g, max_g) = glucose_axis_domain(readings.iter().map(|r| r.glucose_mg_dl).chain([
+        target_low,
+        target_high,
+        180.0,
+    ]));
 
     let x_for = |h: f64| -1.55 + ((h / max_hour) as f32) * 3.10;
     let y_for_g = |g: f64| (((g.clamp(min_g, max_g) - min_g) / (max_g - min_g)) as f32) * 1.55;
@@ -1036,7 +1030,7 @@ mod tests {
             (v[3] - COLOR_FLOOR_CAP[0]).abs() < 1e-4
                 && (v[4] - COLOR_FLOOR_CAP[1]).abs() < 1e-4
                 && (v[5] - COLOR_FLOOR_CAP[2]).abs() < 1e-4
-                && v[1] > 0.05 // visibly above the 0.0 chart floor because min_g = 45.0
+                && v[1] > 0.05 // visibly above the 0.0 chart floor, which sits below the lowest reading
         });
         let has_ceiling_cap_color = scene.opaque_triangles.chunks_exact(7).any(|v| {
             (v[3] - COLOR_CEILING_CAP[0]).abs() < 1e-4

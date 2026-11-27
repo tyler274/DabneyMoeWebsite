@@ -31,11 +31,13 @@ use crate::mental_health_3d::LingoMood3DChart;
 #[cfg(any(feature = "hydrate", feature = "csr"))]
 use crate::mental_health_cgm::{export_health_bridge_json_compact, monitor_hint_from_filename};
 use crate::mental_health_cgm::{
-    nominal_window_hours_for_trace, parse_commercial_glucose_input, parse_timestamp,
-    sample_csv_for_monitor, select_notable_spike_peaks, slice_readings_window,
-    summarize_commercial_glucose_with_window, AdaTimeInRangeBar, AgpPercentileChart,
-    CommercialGlucoseImport, GlucoseImportDiagnostics, GlucoseMonitor, GlucoseUnit, GlucoseWindow,
-    MeasurementMethod, ValidationLevel, SAMPLE_APPLE_HEALTH_XML, SAMPLE_HEALTH_BRIDGE_JSON,
+    glucose_axis_domain, glucose_axis_ticks, nominal_window_hours_for_trace,
+    parse_commercial_glucose_input, parse_timestamp, sample_csv_for_monitor,
+    select_notable_spike_peaks, slice_checkins_window, slice_readings_window,
+    summarize_commercial_glucose_with_window, timeline_hour_span, AdaTimeInRangeBar,
+    AgpPercentileChart, CommercialGlucoseImport, GlucoseImportDiagnostics, GlucoseMonitor,
+    GlucoseUnit, GlucoseWindow, MeasurementMethod, ValidationLevel, SAMPLE_APPLE_HEALTH_XML,
+    SAMPLE_HEALTH_BRIDGE_JSON,
 };
 #[cfg(any(feature = "hydrate", feature = "csr"))]
 use crate::mental_health_cgm_alerts::{
@@ -292,8 +294,11 @@ pub fn MentalHealthPage() -> impl IntoView {
 
     let checkins = RwSignal::new(sample_checkins());
     let user_added_checkins = RwSignal::new(false);
+    let windowed_checkins = Memo::new(move |_| {
+        readings.with(|r| checkins.with(|c| slice_checkins_window(c, r, window.get())))
+    });
     let correlations = Memo::new(move |_| {
-        windowed_readings.with(|r| checkins.with(|c| correlate_glucose_and_mood(r, c)))
+        windowed_readings.with(|r| windowed_checkins.with(|c| correlate_glucose_and_mood(r, c)))
     });
     let max_checkin_hour = Memo::new(move |_| {
         windowed_readings
@@ -1996,7 +2001,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                     ChartViewMode::WebGl3D => view! {
                         <LingoMood3DChart
                             readings=windowed_readings.into()
-                            checkins=checkins.into()
+                            checkins=windowed_checkins.into()
                             target_range=target_range_signal
                             monitor_name=Signal::derive(move || detected_monitor.get().display_name().to_string())
                         />
@@ -2007,7 +2012,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                         view! {
                             <LingoMoodTimelineChart
                                 readings=windowed_readings.get()
-                                checkins=checkins.get()
+                                checkins=windowed_checkins.get()
                                 target_low_mg_dl=target_low
                                 target_high_mg_dl=target_high
                                 monitor_name=mon_name
@@ -2812,35 +2817,34 @@ fn select_svg_floor_cap_markers(
     reps.into_iter().map(|i| readings[i].clone()).collect()
 }
 
-fn timeline_x_axis_labels(readings: &[LingoReading], max_hour: f64) -> (String, String, String) {
-    if max_hour >= 24.0 {
-        let first_date = readings
-            .first()
-            .and_then(|r| parse_timestamp(&r.timestamp, None))
-            .map(|p| p.local_date);
-        let last_date = readings
-            .last()
-            .and_then(|r| parse_timestamp(&r.timestamp, None))
-            .map(|p| p.local_date);
-        if let (Some(d0), Some(d1)) = (first_date, last_date) {
-            let span_days = (d1 - d0).num_days();
-            if span_days >= 2 {
-                let d_mid = d0 + chrono::TimeDelta::days(span_days / 2);
-                return (d0.to_string(), d_mid.to_string(), d1.to_string());
+/// The timeline's x-axis words at its start, middle and end (`0`, `max_hour / 2`, `max_hour`), each
+/// saying the time at that very point: the local date across two days or more, the local date and
+/// clock time across less, or the elapsed time when the first reading's timestamp doesn't parse.
+fn timeline_x_axis_labels(readings: &[LingoReading], max_hour: f64) -> [String; 3] {
+    let start = readings.first().and_then(|r| {
+        let parsed = parse_timestamp(&r.timestamp, None)?;
+        let minute = extract_local_minute(&r.timestamp, parsed.utc_minutes);
+        let local =
+            parsed
+                .local_date
+                .and_hms_opt(u32::from(parsed.local_hour), u32::from(minute), 0)?;
+        Some(local - chrono::TimeDelta::minutes((r.hour_offset * 60.0).round() as i64))
+    });
+    [0.0, 0.5, 1.0].map(|share| {
+        let hour = share * max_hour;
+        match start {
+            Some(start) => {
+                let at = start + chrono::TimeDelta::minutes((hour * 60.0).round() as i64);
+                if max_hour >= 48.0 {
+                    at.date().to_string()
+                } else {
+                    at.format("%m-%d %H:%M").to_string()
+                }
             }
+            None if max_hour >= 72.0 => format!("{:.1}d", hour / 24.0),
+            None => format!("{hour:.0}h"),
         }
-    }
-    let mid = if max_hour >= 72.0 {
-        format!("{:.1}d", (max_hour / 2.0) / 24.0)
-    } else {
-        format!("{:.0}h", max_hour / 2.0)
-    };
-    let end = if max_hour >= 72.0 {
-        format!("{:.1}d", max_hour / 24.0)
-    } else {
-        format!("{:.0}h", max_hour)
-    };
-    ("0h".to_string(), mid, end)
+    })
 }
 
 #[component]
@@ -2880,20 +2884,12 @@ fn LingoMoodTimelineChart(
     let plot_w = width - pad_l - pad_r;
     let plot_h = height - pad_t - pad_b;
 
-    let max_hour = readings
-        .iter()
-        .map(|r| r.hour_offset)
-        .chain(checkins.iter().map(|c| c.hour_offset))
-        .fold(24.0_f64, f64::max)
-        .max(1.0);
-    // Lower floor to 45 mg/dL so floor-capped 54 mg/dL (<55) readings sit visibly above the bottom edge.
-    let min_g = 45.0_f64;
-    let max_g = readings
-        .iter()
-        .map(|r| r.glucose_mg_dl)
-        .fold(190.0_f64, f64::max)
-        .max(190.0)
-        .max(target_high + 10.0);
+    let max_hour = timeline_hour_span(&readings, &checkins);
+    let (min_g, max_g) = glucose_axis_domain(readings.iter().map(|r| r.glucose_mg_dl).chain([
+        target_low,
+        target_high,
+        180.0,
+    ]));
 
     let x_for = |h: f64| pad_l + (h / max_hour) * plot_w;
     let y_for_g = |g: f64| {
@@ -2911,12 +2907,19 @@ fn LingoMoodTimelineChart(
     let y_180 = y_for_g(180.0);
     let show_180_ref = (target_high - 180.0).abs() > 0.5;
     let show_180_label = show_180_ref && (y_180 - band_top).abs() > 10.0;
-    let top_ref_y = if show_180_ref {
-        y_180.min(band_top)
-    } else {
-        band_top
-    };
-    let show_max_g_label = (top_ref_y - pad_t).abs() > 14.0;
+    let labelled: Vec<f64> = [
+        Some(band_top),
+        Some(band_bottom),
+        show_180_label.then_some(y_180),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let grid_ticks: Vec<(f64, f64)> = glucose_axis_ticks((min_g, max_g))
+        .into_iter()
+        .map(|g| (g, y_for_g(g)))
+        .filter(|&(_, y)| labelled.iter().all(|&l| (y - l).abs() > 10.0))
+        .collect();
 
     let segments = downsample_segments_for_chart(&readings, 360, DEFAULT_CHART_GAP_HOURS);
     let spike_peaks: Vec<LingoReading> = select_notable_spike_peaks(&readings, 36)
@@ -2924,7 +2927,7 @@ fn LingoMoodTimelineChart(
         .filter(|r| r.bound.is_ceiling_capped() || r.glucose_mg_dl > target_high)
         .collect();
     let floor_caps = select_svg_floor_cap_markers(&readings, 24);
-    let (x_left, x_mid, x_right) = timeline_x_axis_labels(&readings, max_hour);
+    let [x_left, x_mid, x_right] = timeline_x_axis_labels(&readings, max_hour);
 
     // Sample up to 36 evenly spaced points across the timeline for smooth hover/tap inspection.
     let inspect_points: Vec<LingoReading> = if readings.len() <= 36 {
@@ -2975,6 +2978,11 @@ fn LingoMoodTimelineChart(
                 role="img"
                 aria-label=chart_aria_label
             >
+                // Round value gridlines, labelled where they clear the target and 180 labels
+                {grid_ticks.into_iter().map(|(g, y)| view! {
+                    <line x1=pad_l y1=y x2=width - pad_r y2=y stroke="rgba(148, 163, 184, 0.12)" />
+                    <text x="8" y=y + 4.0 fill=SLATE_LIGHT font-size="10">{format!("{g:.0}")}</text>
+                }).collect_view()}
                 // Configurable target-range shaded metabolic zone
                 <rect
                     x=pad_l
@@ -2996,9 +3004,6 @@ fn LingoMoodTimelineChart(
                 })}
                 <text x="8" y=band_top + 4.0 fill=SLATE_LIGHT font-size="10">{format!("{target_high:.0}")}</text>
                 <text x="8" y=band_bottom + 4.0 fill=SLATE_LIGHT font-size="10">{format!("{target_low:.0}")}</text>
-                {show_max_g_label.then(|| view! {
-                    <text x="8" y=pad_t + 6.0 fill=SLATE_LIGHT font-size="10">{format!("{:.0}", max_g)}</text>
-                })}
 
                 // Gap-aware glucose segments (never bridged across >2h sensor gaps)
                 {segment_polylines.into_iter().map(|pts| view! {
@@ -3642,6 +3647,42 @@ mod tests {
         assert!(html.contains("2026-07-03"));
         assert!(html.contains("#f97316"), "ceiling-capped spike marker");
         assert!(html.contains("#f43f5e"), "floor-capped dip marker");
+    }
+
+    #[test]
+    fn timeline_x_labels_say_the_time_at_their_place() {
+        let reading = |timestamp: &str, hour_offset: f64| LingoReading {
+            timestamp: timestamp.to_string(),
+            hour_offset,
+            glucose_mg_dl: 100.0,
+            lingo_count: None,
+            tag: None,
+            bound: crate::mental_health_lingo::GlucoseReadingBound::Measured,
+        };
+        // A 6h trace: start, 3h in, and the end, each with its clock time.
+        let short = [
+            reading("2026-07-01T22:00-07:00", 0.0),
+            reading("2026-07-02T04:00-07:00", 6.0),
+        ];
+        assert_eq!(
+            timeline_x_axis_labels(&short, 6.0),
+            ["07-01 22:00", "07-02 01:00", "07-02 04:00"].map(String::from)
+        );
+        // Four days: the middle label is the date halfway along the axis.
+        let long = [
+            reading("2026-07-01T00:00-07:00", 0.0),
+            reading("2026-07-05T00:00-07:00", 96.0),
+        ];
+        assert_eq!(
+            timeline_x_axis_labels(&long, 96.0),
+            ["2026-07-01", "2026-07-03", "2026-07-05"].map(String::from)
+        );
+        // Unparseable timestamps fall back to elapsed time.
+        let bare = [reading("t0", 0.0), reading("t1", 6.0)];
+        assert_eq!(
+            timeline_x_axis_labels(&bare, 6.0),
+            ["0h", "3h", "6h"].map(String::from)
+        );
     }
 
     #[test]
