@@ -7,6 +7,42 @@ lock-in: you can build the OCI container with **Nix** or a standard
 **Dockerfile** and ship it to any OCI registry, any Linux VPS, Fly.io, GCP
 Cloud Run, AWS App Runner, or Azure Container Apps.
 
+## Non-US hosting first
+
+The preferred homes for dabney.moe are EU providers, spanning zero-card free hosting and a single EU VPS. Both keep `scripts/deploy.sh` and `scripts/deploy-serv00.sh` dry-run by default, and cover public, demo and non-PHI surfaces only.
+
+| | Tier 0A (zero-card free EU) | Tier 0B (Scaleway free tier) | Tier 1 (one EU VPS) |
+| --- | --- | --- | --- |
+| Compute | Serv00 FreeBSD (`x86_64`, Poland) + Codeberg `git-pages` (Germany) | Scaleway Serverless Container (Paris), scales to zero (card required) | Hetzner CX23 in Helsinki or Falkenstein |
+| Services | `dabney-forge` (`git.dabney.moe`) & `dabney-web` (`dabney.moe`) via native FreeBSD binaries; static clinical site & WASM demo on Codeberg `git-pages` | `dabney-web` on a subdomain | Everything in [`selfhost/eu`](../selfhost/eu/README.md): the SSR site, the Rust forge, Radicle, Postgres 16, Valkey 8, Attic, Pocket ID, and the optional clinical demo |
+| DNS | deSEC with DNSSEC ([`terraform/eu`](../terraform/eu/README.md)) | deSEC with DNSSEC | deSEC with DNSSEC |
+| Static clinical site | Codeberg `git-pages` (`_git-pages-repository` TXT) | Codeberg `git-pages` | Codeberg `git-pages`, or Caddy on the VPS |
+| Images | Native FreeBSD `x86_64` binaries via `nix develop .#freebsd` | Scaleway Container Registry (`rg.fr-par.scw.cloud`) | Scaleway Container Registry or Codeberg packages |
+| Deploy | `./scripts/deploy-serv00.sh --service forge\|web` ([guide](../selfhost/serv00/README.md)) | `./scripts/deploy.sh --target scaleway` | `./scripts/deploy.sh --target ssh --compose-dir selfhost/eu` |
+
+A CNAME cannot sit at the zone apex, so Scaleway Tier 0B serves a subdomain such as
+`beta.dabney.moe`; `dabney.moe` at the apex uses Serv00 `A` records (Tier 0A) or Tier 1. The `.moe` registry
+backend is operated by a US company whichever registrar holds the domain.
+
+```bash
+# Tier 0A (zero credit card): cross-compile and deploy to Serv00 FreeBSD
+nix develop .#freebsd --command cargo zigbuild --release --target x86_64-unknown-freebsd -p forge --bin dabney-forge
+./scripts/deploy-serv00.sh --service forge --host sN.serv00.com --user <login> \
+  --domain git.dabney.moe --port <reserved-port> --serv00-ip <ip> --push
+
+# Provision (reviewed saved plan only): zone, VPS, registry, optional container
+(cd terraform/eu && tofu init && tofu plan -out=eu.tfplan)
+
+# Tier 1: the whole stack on the VPS
+./scripts/deploy.sh --target ssh --compose-dir selfhost/eu \
+  --ssh-host deploy@<server_ipv4> --domain dabney.moe --acme-email ops@dabney.moe --push
+
+# Tier 0B: push to Scaleway Container Registry and roll the Serverless Container
+SCW_SECRET_KEY=... ./scripts/deploy.sh --target scaleway --region fr-par --push
+```
+
+The US clouds below remain available.
+
 ## 1. Building the OCI Container Image
 
 Two interchangeable build paths produce the same non-root runtime contract
@@ -91,6 +127,28 @@ running **Docker** or **Podman**, with automatic Let's Encrypt HTTPS for
 
 See [`selfhost/README.md`](../selfhost/README.md) for firewall, DNS, Let's
 Encrypt staging, and SELinux notes.
+
+### Target: Scaleway Serverless Containers (`--target scaleway`)
+
+Pushes the image to Scaleway Container Registry
+(`rg.<region>.scw.cloud/<namespace>/dabney-web`, namespace from `--scw-namespace`,
+default `dabney-moe`) and points the Serverless Container from
+[`terraform/eu`](../terraform/eu/) at it with `scw container container update`,
+which redeploys it. `SCW_SECRET_KEY` authenticates the push; the container ID
+comes from `--scw-container-id` or the `serverless_container_id` output.
+Regions: `fr-par`, `nl-ams`, `pl-waw`.
+
+```bash
+./scripts/deploy.sh --target scaleway --region fr-par           # dry-run
+SCW_SECRET_KEY=... ./scripts/deploy.sh --target scaleway --region fr-par --push
+```
+
+### Target: the full EU stack over SSH (`--compose-dir selfhost/eu`)
+
+`--compose-dir` selects which compose stack `--target ssh` syncs. The default,
+`selfhost`, is the single-site stack; `selfhost/eu` is the multi-service stack
+with per-service encrypted `secrets/*.sops.env` files, which the host decrypts
+with its own age key into mode-`0600` `secrets/*.env` files.
 
 ### Target: Fly.io (`--target fly`)
 

@@ -1,0 +1,11 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+backend/*.tfbackend
+*.tfplan
+secrets/*
+!secrets/*.sops.*
+*.agekey
+keys.txt

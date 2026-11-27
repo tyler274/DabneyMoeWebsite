@@ -44,7 +44,7 @@
           inherit pkgs;
           rustToolchainFile = ./rust-toolchain.toml;
         };
-        inherit (toolchains) rustToolchain rustToolchainAndroid rustToolchainMusl;
+        inherit (toolchains) rustToolchain rustToolchainAndroid rustToolchainMusl rustToolchainFreebsd;
 
         tauri = import ./nix/tauri-deps.nix { inherit pkgs; };
         inherit (tauri) tauriDeps pkgConfigPath ldLibraryPath;
@@ -91,6 +91,7 @@
             pkgs
             rustToolchain
             rustToolchainAndroid
+            rustToolchainFreebsd
             baseTools
             tauriDeps
             pkgConfigPath
@@ -103,6 +104,7 @@
         devShells.default = shells.default;
         devShells.deploy = shells.deploy;
         devShells.android = shells.android;
+        devShells.freebsd = shells.freebsd;
 
         packages.ci = ci;
         packages.format-check = formatCheck;

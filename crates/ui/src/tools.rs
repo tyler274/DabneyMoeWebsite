@@ -1,16 +1,15 @@
 //! Client-side financial tools (portfolio CSV stays in the browser).
 
 use leptos::prelude::*;
-use leptos_router::components::A;
 
-use crate::i18n::{t, use_locale, Msg};
+use crate::i18n::Msg;
 use crate::portfolio::{
     analyze_buy, analyze_portfolio, analyze_rebalance, parse_deposit, parse_withdrawal,
     parse_withholding_pct, AccountType, BuyReport, PortfolioImpact, RebalanceReport, SellReport,
     TaxWithholding, TradeSide,
 };
 use crate::portfolio_chart::PortfolioImpactCharts;
-use crate::sections::Footer;
+use crate::sections::{Footer, NavDropdown, NavMenuLink, OpenNavMenu};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CalculatorMode {
@@ -36,90 +35,91 @@ fn fmt_usd(amount: f64) -> String {
     format!("{sign}${dollars_str}.{cents:02}")
 }
 
-#[component]
-pub fn ToolsMenu() -> impl IntoView {
-    let locale = use_locale();
-    let open = RwSignal::new(false);
-    let toggle = move |_| open.update(|value| *value = !*value);
-    let close = move |_| open.set(false);
+/// Tool pages, shared by the desktop dropdown and the mobile menu.
+pub const TOOLS_LINKS: &[NavMenuLink] = &[
+    NavMenuLink {
+        href: "/clinical",
+        label: "Clinical Workspace",
+        msg: Some(Msg::ToolClinicalSuite),
+        accent: false,
+    },
+    NavMenuLink {
+        href: "/clinical/patient",
+        label: "Patient Experience Demo",
+        msg: Some(Msg::ToolPatientDemo),
+        accent: false,
+    },
+    NavMenuLink {
+        href: "/clinical/physician",
+        label: "Physician Workspace Demo",
+        msg: Some(Msg::ToolPhysicianDemo),
+        accent: false,
+    },
+    NavMenuLink {
+        href: "/mental-health",
+        label: "Mental Health & Lingo CGM",
+        msg: Some(Msg::ToolMentalHealth),
+        accent: false,
+    },
+    NavMenuLink {
+        href: "/tools/recovery",
+        label: "Recovery & Mental Health Finder",
+        msg: Some(Msg::ToolRecoveryFinder),
+        accent: true,
+    },
+    NavMenuLink {
+        href: "/android",
+        label: "Android App (APK & F-Droid)",
+        msg: Some(Msg::ToolAndroidApp),
+        accent: true,
+    },
+    NavMenuLink {
+        href: "/tools/investment-account",
+        label: "Investment Account Calculator",
+        msg: Some(Msg::ToolPortfolio),
+        accent: false,
+    },
+    NavMenuLink {
+        href: "/ownership",
+        label: "Code Ownership Report",
+        msg: Some(Msg::ToolOwnership),
+        accent: false,
+    },
+];
 
+#[component]
+pub fn ToolsMenu(open: RwSignal<OpenNavMenu>) -> impl IntoView {
     view! {
-        <div class="relative">
-            <button
-                type="button"
-                class="flex items-center gap-1 transition hover:text-white"
-                aria-expanded=move || open.get()
-                aria-haspopup="true"
-                on:click=toggle
-            >
-                {move || t(locale.get(), Msg::NavTools)}
-                <span class="text-[10px] opacity-70">{move || if open.get() { "▲" } else { "▼" }}</span>
-            </button>
-            <Show when=move || open.get()>
-                <div
-                    class="absolute end-0 z-50 mt-2 min-w-56 rounded-xl border border-white/10 bg-slate-900 py-2 text-start shadow-xl"
-                    role="menu"
-                >
-                    <A href="/clinical" on:click=close>
-                        <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            {move || t(locale.get(), Msg::ToolClinicalSuite)}
-                        </span>
-                    </A>
-                    <A href="/clinical/patient" on:click=close>
-                        <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            {move || t(locale.get(), Msg::ToolPatientDemo)}
-                        </span>
-                    </A>
-                    <A href="/clinical/physician" on:click=close>
-                        <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            {move || t(locale.get(), Msg::ToolPhysicianDemo)}
-                        </span>
-                    </A>
-                    <A href="/mental-health" on:click=close>
-                        <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            {move || t(locale.get(), Msg::ToolMentalHealth)}
-                        </span>
-                    </A>
-                    <A href="/tools/recovery" on:click=close>
-                        <span class="block px-4 py-2 text-emerald-300 transition hover:bg-white/5 hover:text-emerald-200" role="menuitem">
-                            {move || t(locale.get(), Msg::ToolRecoveryFinder)}
-                        </span>
-                    </A>
-                    <A href="/android" on:click=close>
-                        <span class="block px-4 py-2 text-emerald-300 transition hover:bg-white/5 hover:text-emerald-200" role="menuitem">
-                            {move || t(locale.get(), Msg::ToolAndroidApp)}
-                        </span>
-                    </A>
-                    <A href="/tools/investment-account" on:click=close>
-                        <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            {move || t(locale.get(), Msg::ToolPortfolio)}
-                        </span>
-                    </A>
-                    <A href="/ownership" on:click=close>
-                        <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            {move || t(locale.get(), Msg::ToolOwnership)}
-                        </span>
-                    </A>
-                </div>
-            </Show>
-        </div>
+        <NavDropdown
+            label="Tools"
+            label_msg=Msg::NavTools
+            menu=OpenNavMenu::Tools
+            open=open
+            links=TOOLS_LINKS
+            width="min-w-56"
+        />
     }
 }
 
 #[component]
 pub fn InvestmentAccountPage() -> impl IntoView {
-    use crate::sections::NavBar;
+    use crate::sections::{CrestSize, DabneyCrestBadge, NavBar};
 
     view! {
         <NavBar />
         <section class="border-b border-white/5 px-6 py-20">
             <div class="mx-auto max-w-4xl">
-                <p class="mb-2 text-sm font-semibold uppercase tracking-widest text-cyan-400">
-                    "Tools"
-                </p>
-                <h1 class="mb-3 text-3xl font-bold tracking-tight text-white sm:text-4xl">
-                    "Investment Account Calculator"
-                </h1>
+                <div class="mb-4 flex items-center gap-3.5">
+                    <DabneyCrestBadge size=CrestSize::Md decorative=true />
+                    <div>
+                        <p class="text-sm font-semibold uppercase tracking-widest text-cyan-400">
+                            "Tools"
+                        </p>
+                        <h1 class="text-3xl font-bold tracking-tight text-white sm:text-4xl">
+                            "Investment Account Calculator"
+                        </h1>
+                    </div>
+                </div>
                 <p class="mb-10 max-w-2xl text-lg leading-relaxed text-slate-300">
                     "Upload a Raymond James portfolio CSV. Choose sell, buy, or quarterly rebalance-"
                     "everything runs in your browser and your file never leaves this device."

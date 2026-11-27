@@ -6,6 +6,128 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod ccda;
+pub mod ehr_portal;
+pub mod harness;
+pub mod hl7v2;
+pub mod kipu;
+pub mod passport;
+pub mod roi;
+
+pub use ccda::{ingest_ccda_xml, sandbox_ccda_xml_for_patient};
+pub use ehr_portal::{
+    base64_encode_standard, base64url_decode_strict, build_shlink_manifest_request_body,
+    build_shlink_uri, build_smart_authorize_url, data_download_uri, default_allergies_for_patient,
+    find_portal_organization, html_escape, ingest_clinical_document, ingest_fhir_r4_bundle,
+    merge_fhir_import_into_chart, parse_smart_health_link, percent_encode, pkce_s256_challenge,
+    portal_directory, sandbox_fhir_bundle_for_org, sandbox_smart_health_link_uri,
+    search_portal_directory, sha256_hex, smart_scopes_are_read_only, validate_public_https_url,
+    validate_smart_endpoint_url, AllergyEntry, ClinicalDocumentFormat, ClinicalDocumentIngest,
+    EhrTransportProfile, FhirImportResult, FhirResourceWarning, IntegrationCapability,
+    LinkedPortalConnection, MergeCounts, PortalConnectionMode, PortalConnectionStatus,
+    PortalOrganization, PortalVendor, SmartHealthLinkFlag, SmartHealthLinkPayload,
+    SmartPkceSession, SmartScopeVersion, MEDICARE_BLUE_BUTTON_SCOPES, SMART_READ_ONLY_SCOPES,
+    SMART_V1_READ_ONLY_SCOPES,
+};
+pub use harness::{
+    build_harness_llm_prompt, format_sse_events, run_agent_turn, tool_catalog, AgentAudience,
+    AgentChatRequest, AgentEvent, AgentRunOptions, AgentStep, AgentThread, AgentTool, AgentTurn,
+    CitedValue, HarnessOutcome, RunBudget, ToolExecutionStatus, ToolSpec, WorkingNote,
+};
+pub use hl7v2::{ingest_hl7v2_message, sandbox_hl7v2_message_for_patient};
+pub use kipu::{
+    content_md5_base64, hmac_sha1, hmac_sha256, ingest_kipu_payload, md5_bytes,
+    sandbox_kipu_payload_for_patient, sha1_bytes, sign_kipu_request, KipuAuthScheme, KipuEndpoint,
+    KipuSignedRequest, KIPU_API_V3_ACCEPT, KIPU_API_V4_ACCEPT, KIPU_DEFAULT_BASE_URL,
+};
+pub use passport::{
+    build_health_passport, build_health_passport_with_options, parse_health_passport_json,
+    render_passport_fhir_ips_bundle, render_passport_html, render_passport_markdown,
+    HealthPassport, PassportAudience, PassportExportOptions, PassportPortalSummary,
+    HEALTH_PASSPORT_SCHEMA,
+};
+pub use roi::{
+    build_roi_mailto_uri, default_roi_requests_for_patient, dispatch_roi_batch,
+    dispatch_roi_request, render_roi_cover_text, render_roi_followup_letter, render_roi_form_html,
+    revoke_roi_request, roi_draft_for_portal_org, sign_roi_request, validate_roi_request,
+    RoiAuthorizationKind, RoiBatchDispatchReport, RoiDateRange, RoiDeliveryChannel,
+    RoiDispatchItemOutcome, RoiElectronicFormat, RoiLegalBasis, RoiRecipient, RoiRecordCategory,
+    RoiRequest, RoiStatus,
+};
+
+/// Verbatim 42 CFR § 2.32(a)(1) Prohibition on Redisclosure statutory notice
+/// (2024 Final Rule, 89 FR 12626) that must accompany every disclosure of
+/// Substance Use Disorder (SUD) records made with written patient consent.
+pub const PART2_REDISCLOSURE_NOTICE_LONG: &str = "This record which has been disclosed to you is \
+protected by Federal confidentiality rules (42 CFR part 2). These rules prohibit you from using or \
+disclosing this record, or testimony that describes the information contained in this record, in \
+any civil, criminal, administrative, or legislative proceedings by any Federal, State, or local \
+authority, against the patient, unless authorized by the consent of the patient, except as \
+provided at 42 CFR 2.12(c)(5) or as authorized by a court in accordance with 42 CFR 2.64 or 2.65. \
+In addition, the Federal rules prohibit you from making any other use or disclosure of this record \
+unless at least one of the following applies: (i) Further use or disclosure is expressly permitted \
+by the written consent of the individual whose information is being disclosed in this record or as \
+otherwise permitted by 42 CFR part 2. (ii) You are a covered entity or business associate and have \
+received the record for treatment, payment, or health care operations, or. (iii) You have received \
+the record from a covered entity or business associate as permitted by 45 CFR part 164, subparts A \
+and E. A general authorization for the release of medical or other information is NOT sufficient \
+to meet the required elements of written consent to further use or redisclose the record (see 42 \
+CFR 2.31).";
+
+/// Verbatim 42 CFR § 2.32(a)(2) short-form Prohibition on Redisclosure notice.
+pub const PART2_REDISCLOSURE_NOTICE_SHORT: &str =
+    "42 CFR part 2 prohibits unauthorized use or disclosure of these records.";
+
+/// Statutory confidentiality class attached to a clinical record, medication,
+/// problem, or allergy.
+///
+/// Defaults to [`ConfidentialityClass::StandardHipaa`] so existing serialized
+/// charts, vaults, and passports remain 100% backward-compatible.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfidentialityClass {
+    /// Standard HIPAA-protected record (45 CFR Part 164).
+    #[default]
+    StandardHipaa,
+    /// Substance Use Disorder (SUD) program record protected by 42 CFR Part 2.
+    Part2Sud,
+    /// Separately maintained SUD counseling notes requiring separate written
+    /// consent under 42 CFR § 2.31(b) (never disclosed under general TPO or
+    /// general Part 2 opt-in).
+    Part2SudCounselingNotes,
+}
+
+impl ConfidentialityClass {
+    #[allow(clippy::trivially_copy_pass_by_ref)]
+    pub const fn is_standard(&self) -> bool {
+        matches!(self, Self::StandardHipaa)
+    }
+
+    pub const fn is_part2_sud(self) -> bool {
+        matches!(self, Self::Part2Sud | Self::Part2SudCounselingNotes)
+    }
+
+    pub const fn is_part2_counseling_notes(self) -> bool {
+        matches!(self, Self::Part2SudCounselingNotes)
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::StandardHipaa => "Standard HIPAA (45 CFR Part 164)",
+            Self::Part2Sud => "42 CFR Part 2 (SUD Protected)",
+            Self::Part2SudCounselingNotes => "42 CFR § 2.31(b) SUD Counseling Notes",
+        }
+    }
+
+    pub const fn short_badge(self) -> &'static str {
+        match self {
+            Self::StandardHipaa => "HIPAA",
+            Self::Part2Sud => "42 CFR Part 2",
+            Self::Part2SudCounselingNotes => "42 CFR § 2.31(b) Counseling",
+        }
+    }
+}
+
 /// Category of an individual record inside a synthetic patient chart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -74,6 +196,8 @@ pub struct Medication {
     pub dose: String,
     pub schedule: String,
     pub indication: String,
+    #[serde(default, skip_serializing_if = "ConfidentialityClass::is_standard")]
+    pub confidentiality: ConfidentialityClass,
 }
 
 /// Active clinical problem entry.
@@ -82,6 +206,8 @@ pub struct Problem {
     pub code: String,
     pub label: String,
     pub status: String,
+    #[serde(default, skip_serializing_if = "ConfidentialityClass::is_standard")]
+    pub confidentiality: ConfidentialityClass,
 }
 
 /// Individual longitudinal source record with stable ID for verbatim citation.
@@ -94,6 +220,8 @@ pub struct ChartRecord {
     pub source_label: String,
     pub body: String,
     pub key_values: Vec<(String, String)>,
+    #[serde(default, skip_serializing_if = "ConfidentialityClass::is_standard")]
+    pub confidentiality: ConfidentialityClass,
 }
 
 /// Scheduled appointment slot for the synthetic clinic day.
@@ -180,10 +308,16 @@ pub struct ChatRequest {
 }
 
 /// Structured, chart-grounded response returned for a physician question.
+///
+/// `grounded` is `true` exactly when `citations` is non-empty: an answer is
+/// only grounded when at least one of the patient's own records matched the
+/// question. Construct answers through [`answer_chart_question`], which keeps
+/// the two in step.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatAnswer {
     pub patient_id: String,
     pub question: String,
+    pub grounded: bool,
     pub answer: String,
     pub citations: Vec<ChatCitation>,
     pub basis: String,
@@ -230,11 +364,13 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                     code: "E11.9".into(),
                     label: "Type 2 diabetes mellitus without complications".into(),
                     status: "Active · improving".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 Problem {
                     code: "E78.5".into(),
                     label: "Hyperlipidemia".into(),
                     status: "Active · stable on diet".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
             ],
             medications: vec![Medication {
@@ -242,6 +378,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                 dose: "1000 mg".into(),
                 schedule: "Once daily with dinner".into(),
                 indication: "Glycemic control".into(),
+                confidentiality: ConfidentialityClass::StandardHipaa,
             }],
             records: vec![
                 ChartRecord {
@@ -251,7 +388,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                     recorded_at: "2026-11-20".into(),
                     source_label: "Home CGM Export".into(),
                     body: "14-day sensor wear 96%. Mean glucose 136 mg/dL, GMI 6.6%, CV 23.4%. \
-                           Time in range (70-180 mg/dL) 78%, above 180 mg/dL 21%, below 70 mg/dL 1%. \
+                           Time in range (TIR, 70-180 mg/dL) 78%, above 180 mg/dL 21%, below 70 mg/dL 1%. \
                            Fasting glucose climbs from ~114 mg/dL at 04:00 to ~146 mg/dL by 07:30."
                         .into(),
                     key_values: vec![
@@ -260,6 +397,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                         ("GMI".into(), "6.6%".into()),
                         ("CV".into(), "23.4%".into()),
                     ],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 ChartRecord {
                     id: "nk-lab-02".into(),
@@ -275,6 +413,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                         ("Fasting glucose".into(), "134 mg/dL".into()),
                         ("eGFR".into(), ">90".into()),
                     ],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 ChartRecord {
                     id: "nk-msg-03".into(),
@@ -287,6 +426,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                            shift when I take metformin or wait for our visit?"
                         .into(),
                     key_values: vec![("Reported fasting peak".into(), "~145 mg/dL".into())],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
             ],
             follow_ups: vec![FollowUp {
@@ -327,11 +467,13 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                     code: "I10".into(),
                     label: "Essential hypertension".into(),
                     status: "Active · above target (<130/80)".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 Problem {
                     code: "N18.2".into(),
                     label: "Chronic kidney disease, stage 2".into(),
                     status: "Active · stable".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
             ],
             medications: vec![
@@ -340,12 +482,14 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                     dose: "20 mg".into(),
                     schedule: "Once daily in morning".into(),
                     indication: "Hypertension & renal protection".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 Medication {
                     name: "Amlodipine".into(),
                     dose: "5 mg".into(),
                     schedule: "Once daily in morning".into(),
                     indication: "Hypertension".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
             ],
             records: vec![
@@ -363,6 +507,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                         ("14-day mean BP".into(), "138/84 mmHg".into()),
                         ("Ankle edema".into(), "None".into()),
                     ],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 ChartRecord {
                     id: "cm-lab-02".into(),
@@ -378,6 +523,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                         ("Potassium".into(), "4.3 mEq/L".into()),
                         ("Urine ACR".into(), "22 mg/g".into()),
                     ],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
             ],
             follow_ups: vec![FollowUp {
@@ -407,12 +553,14 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                 code: "F32.1".into(),
                 label: "Major depressive episode, improving".into(),
                 status: "Active · responding".into(),
+                confidentiality: ConfidentialityClass::StandardHipaa,
             }],
             medications: vec![Medication {
                 name: "Sertraline".into(),
                 dose: "50 mg".into(),
                 schedule: "Once daily in morning".into(),
                 indication: "Mood & anxiety".into(),
+                confidentiality: ConfidentialityClass::StandardHipaa,
             }],
             records: vec![
                 ChartRecord {
@@ -429,6 +577,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                         ("GAD-7".into(), "6".into()),
                         ("ASRM".into(), "3".into()),
                     ],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 ChartRecord {
                     id: "pn-cgm-02".into(),
@@ -445,6 +594,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                         ("CV".into(), "19.2%".into()),
                         ("Mean glucose".into(), "104 mg/dL".into()),
                     ],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
             ],
             follow_ups: vec![FollowUp {
@@ -470,6 +620,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                 code: "I48.0".into(),
                 label: "Paroxysmal atrial fibrillation".into(),
                 status: "Active · rate controlled".into(),
+                confidentiality: ConfidentialityClass::StandardHipaa,
             }],
             medications: vec![
                 Medication {
@@ -477,12 +628,14 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                     dose: "5 mg".into(),
                     schedule: "Twice daily".into(),
                     indication: "Stroke prophylaxis".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 Medication {
                     name: "Metoprolol succinate".into(),
                     dose: "25 mg".into(),
                     schedule: "Once daily".into(),
                     indication: "Rate control".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
             ],
             records: vec![
@@ -500,6 +653,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                         ("LVEF".into(), "60%".into()),
                         ("LAVI".into(), "36 mL/m2".into()),
                     ],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 ChartRecord {
                     id: "do-lab-02".into(),
@@ -514,6 +668,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                         ("Hemoglobin".into(), "14.2 g/dL".into()),
                         ("eGFR".into(), "86".into()),
                     ],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
             ],
             follow_ups: vec![FollowUp {
@@ -562,51 +717,293 @@ pub fn find_patient(id: &str) -> Option<PatientChart> {
     synthetic_panel().into_iter().find(|p| p.id == id)
 }
 
+/// Most records a single answer cites.
+const MAX_CITATIONS: usize = 3;
+
+/// How much one query term counts, by the part of a record it appears in.
+/// Titles, structured key names/values and the record kind say what a record
+/// is *about*; body text and source labels only *mention* things, and a
+/// patient's own message mentioning a lab name counts least of all.
+mod weight {
+    pub const TITLE: u32 = 4;
+    pub const KEY_VALUE: u32 = 4;
+    pub const KIND: u32 = 3;
+    pub const CLINICAL_BODY: u32 = 2;
+    pub const MESSAGE_BODY: u32 = 1;
+    pub const SOURCE_LABEL: u32 = 1;
+}
+
+/// Words that carry no clinical meaning in a question. They never select a
+/// record on their own.
+const STOP_WORDS: &[&str] = &[
+    "a",
+    "about",
+    "after",
+    "all",
+    "an",
+    "and",
+    "any",
+    "are",
+    "as",
+    "at",
+    "be",
+    "been",
+    "before",
+    "by",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
+    "for",
+    "from",
+    "give",
+    "had",
+    "has",
+    "have",
+    "he",
+    "her",
+    "hers",
+    "him",
+    "his",
+    "how",
+    "i",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "me",
+    "my",
+    "no",
+    "not",
+    "of",
+    "on",
+    "or",
+    "our",
+    "please",
+    "patient",
+    "patients",
+    "recent",
+    "review",
+    "she",
+    "should",
+    "show",
+    "summarize",
+    "tell",
+    "that",
+    "the",
+    "their",
+    "them",
+    "there",
+    "they",
+    "this",
+    "to",
+    "was",
+    "we",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "will",
+    "with",
+    "would",
+    "you",
+    "your",
+];
+
+impl RecordKind {
+    /// Words a physician uses to ask for this kind of record.
+    pub(crate) const fn query_words(self) -> &'static [&'static str] {
+        match self {
+            Self::LabResult => &["lab", "labs", "panel", "result", "results", "bloodwork"],
+            Self::ProgressNote => &["note", "notes", "progress", "visit"],
+            Self::CgmSummary => &["cgm", "sensor", "glucose"],
+            Self::PatientMessage => &["message", "messages", "ask", "asked", "portal", "wrote"],
+            Self::Imaging => &["imaging", "image", "scan", "echo", "echocardiogram"],
+        }
+    }
+
+    /// Body text weight: clinical documentation outranks a patient's own words.
+    pub(crate) const fn body_weight(self) -> u32 {
+        match self {
+            Self::PatientMessage => weight::MESSAGE_BODY,
+            Self::LabResult | Self::ProgressNote | Self::CgmSummary | Self::Imaging => {
+                weight::CLINICAL_BODY
+            }
+        }
+    }
+}
+
+/// Splits text into lowercase whole words. Hyphens, slashes and punctuation
+/// separate words, so `PHQ-9` yields `phq` and `9`, and `is` never matches
+/// inside `this`.
+fn words(text: &str) -> impl Iterator<Item = String> + '_ {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+}
+
+/// Clinical shorthand pairs treated as equivalent whole words during retrieval.
+const CLINICAL_SYNONYMS: &[(&str, &str)] = &[("a1c", "hba1c")];
+
+/// Whether a query term names the same word as `word`, allowing plurals and
+/// recognized clinical shorthand pairs (such as `A1c` ↔ `HbA1c`).
+pub(crate) fn same_word(term: &str, word: &str) -> bool {
+    word == term
+        || word.strip_suffix('s') == Some(term)
+        || term.strip_suffix('s') == Some(word)
+        || word.strip_suffix("es") == Some(term)
+        || CLINICAL_SYNONYMS
+            .iter()
+            .any(|&(a, b)| (term == a && word == b) || (term == b && word == a))
+}
+
+pub(crate) fn mentions(text: &str, term: &str) -> bool {
+    words(text).any(|w| same_word(term, &w))
+}
+
+/// The meaningful search terms of a question: whole words, minus stop words
+/// and bare numbers, without duplicates.
+pub(crate) fn query_terms(question: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for word in words(question) {
+        let meaningful = word.len() >= 2
+            && !word.chars().all(|c| c.is_ascii_digit())
+            && !STOP_WORDS.contains(&word.as_str());
+        if meaningful && !out.contains(&word) {
+            out.push(word);
+        }
+    }
+    out
+}
+
+/// Weight of the strongest place `term` appears in `rec`, or 0 when absent.
+pub(crate) fn term_weight(rec: &ChartRecord, term: &str) -> u32 {
+    let in_kind = rec.kind.query_words().iter().any(|w| same_word(term, w))
+        || mentions(rec.kind.label(), term);
+    [
+        (mentions(&rec.title, term), weight::TITLE),
+        (
+            rec.key_values
+                .iter()
+                .any(|(k, v)| mentions(k, term) || mentions(v, term)),
+            weight::KEY_VALUE,
+        ),
+        (in_kind, weight::KIND),
+        (mentions(&rec.body, term), rec.kind.body_weight()),
+        (mentions(&rec.source_label, term), weight::SOURCE_LABEL),
+    ]
+    .into_iter()
+    .filter_map(|(hit, w)| hit.then_some(w))
+    .max()
+    .unwrap_or(0)
+}
+
+/// Honorifics and abbreviations whose trailing `.` does not end a sentence.
+const NON_TERMINAL_ABBREVS: &[&str] = &[
+    "dr", "mr", "mrs", "ms", "prof", "sr", "jr", "vs", "approx", "eg", "ie",
+];
+
+fn ends_with_abbreviation(prefix: &str) -> bool {
+    let word = prefix
+        .rsplit(|c: char| !c.is_alphabetic())
+        .next()
+        .unwrap_or("");
+    !word.is_empty()
+        && NON_TERMINAL_ABBREVS
+            .iter()
+            .any(|abbr| abbr.eq_ignore_ascii_case(word))
+}
+
+/// Splits a record body into sentences at `.`, `?` or `!` followed by
+/// whitespace, keeping decimals (`6.7%`) and honorifics (`Dr. Patel`) intact.
+fn sentences(body: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut chars = body.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        let is_abbrev_dot = c == '.' && ends_with_abbreviation(&body[start..i]);
+        let at_boundary = matches!(c, '.' | '?' | '!')
+            && !is_abbrev_dot
+            && chars.peek().is_none_or(|(_, next)| next.is_whitespace());
+        if at_boundary {
+            let end = i + c.len_utf8();
+            let sentence = body[start..end].trim();
+            if !sentence.is_empty() {
+                out.push(sentence);
+            }
+            start = end;
+        }
+    }
+    let tail = body[start..].trim();
+    if !tail.is_empty() {
+        out.push(tail);
+    }
+    out
+}
+
+/// The parts of a matched record that answer the question: body sentences
+/// and key values naming a query term, falling back to the opening sentence
+/// when the record matched only by its title or kind.
+pub(crate) fn relevant_excerpt(rec: &ChartRecord, terms: &[String]) -> String {
+    let hits = |text: &str| terms.iter().any(|t| mentions(text, t));
+    let body_sentences = sentences(&rec.body);
+    let mut parts: Vec<String> = body_sentences
+        .iter()
+        .filter(|s| hits(s))
+        .map(|s| (*s).to_string())
+        .collect();
+    if parts.is_empty() {
+        parts.extend(body_sentences.first().map(|s| (*s).to_string()));
+    }
+    let key_values: Vec<String> = rec
+        .key_values
+        .iter()
+        .filter(|(k, v)| hits(k) || hits(v))
+        .map(|(k, v)| format!("{k}: {v}"))
+        .collect();
+    if !key_values.is_empty() {
+        parts.push(format!("({})", key_values.join("; ")));
+    }
+    parts.join(" ")
+}
+
 /// Answers a physician question strictly from the selected patient's own records,
 /// returning verbatim excerpts and record citations without crossing patient boundaries.
+///
+/// Records are matched on whole words, weighted by where the word appears
+/// (see [`weight`]). When no record matches, the answer says so and cites
+/// nothing rather than presenting unrelated records as evidence.
 pub fn answer_chart_question(patient: &PatientChart, raw_question: &str) -> ChatAnswer {
     let question = raw_question.trim();
-    let terms = tokenize_query(question);
+    let terms = query_terms(question);
 
-    let mut scored: Vec<(usize, &ChartRecord)> = patient
+    let mut scored: Vec<(u32, &ChartRecord)> = patient
         .records
         .iter()
-        .map(|rec| {
-            let haystack = format!(
-                "{} {} {} {}",
-                rec.title,
-                rec.source_label,
-                rec.body,
-                rec.key_values
-                    .iter()
-                    .map(|(k, v)| format!("{k} {v}"))
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            )
-            .to_ascii_lowercase();
-            let score = terms
-                .iter()
-                .filter(|t| haystack.contains(t.as_str()))
-                .count();
-            (score, rec)
-        })
+        .map(|rec| (terms.iter().map(|t| term_weight(rec, t)).sum(), rec))
+        .filter(|(score, _)| *score > 0)
+        .collect();
+    scored.sort_by(|(sa, a), (sb, b)| {
+        sb.cmp(sa)
+            .then_with(|| a.kind.body_weight().cmp(&b.kind.body_weight()).reverse())
+            .then_with(|| b.recorded_at.cmp(&a.recorded_at))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    let matched: Vec<&ChartRecord> = scored
+        .into_iter()
+        .take(MAX_CITATIONS)
+        .map(|(_, r)| r)
         .collect();
 
-    scored.sort_by(|a, b| {
-        b.0.cmp(&a.0)
-            .then_with(|| b.1.recorded_at.cmp(&a.1.recorded_at))
-    });
-
-    let matched: Vec<&ChartRecord> = if scored.iter().any(|(s, _)| *s > 0) {
-        scored
-            .into_iter()
-            .filter(|(s, _)| *s > 0)
-            .take(3)
-            .map(|(_, r)| r)
-            .collect()
-    } else {
-        scored.into_iter().take(2).map(|(_, r)| r).collect()
-    };
+    if matched.is_empty() {
+        return no_match_answer(patient, question, &terms);
+    }
 
     let citations: Vec<ChatCitation> = matched
         .iter()
@@ -619,33 +1016,31 @@ pub fn answer_chart_question(patient: &PatientChart, raw_question: &str) -> Chat
         })
         .collect();
 
-    let meds_line = if patient.medications.is_empty() {
-        "No active medications documented.".to_string()
-    } else {
-        patient
-            .medications
-            .iter()
-            .map(|m| format!("{} {} ({})", m.name, m.dose, m.schedule))
-            .collect::<Vec<_>>()
-            .join("; ")
-    };
-
-    let cite_bullets = citations
+    let findings = matched
         .iter()
-        .map(|c| {
+        .map(|r| {
             format!(
-                "- [{}] {} ({}): {}",
-                c.record_id, c.title, c.recorded_at, c.excerpt
+                "- {} [{}], {}, {}: {}",
+                r.title,
+                r.id,
+                r.kind.label(),
+                r.recorded_at,
+                relevant_excerpt(r, &terms)
             )
         })
         .collect::<Vec<_>>()
         .join("\n");
-
+    let noun = if matched.len() == 1 {
+        "record"
+    } else {
+        "records"
+    };
     let answer = format!(
-        "Chart findings for {} ({}):\n{}\n\nActive medications: {}\n\nGrounded records:\n{}",
-        patient.display_name, patient.mrn, patient.summary, meds_line, cite_bullets
+        "{} matching {noun} in {}'s chart ({}):\n{findings}",
+        matched.len(),
+        patient.display_name,
+        patient.mrn
     );
-
     let cited_ids = citations
         .iter()
         .map(|c| c.record_id.as_str())
@@ -655,29 +1050,42 @@ pub fn answer_chart_question(patient: &PatientChart, raw_question: &str) -> Chat
     ChatAnswer {
         patient_id: patient.id.clone(),
         question: question.to_string(),
+        grounded: true,
         answer,
         citations,
         basis: format!(
-            "Local deterministic chart retrieval scoped exclusively to {} (cited: {}).",
-            patient.mrn, cited_ids
+            "Local deterministic whole-word chart retrieval scoped exclusively to {} (cited: {cited_ids}).",
+            patient.mrn
         ),
     }
 }
 
-fn tokenize_query(query: &str) -> Vec<String> {
-    const STOP_WORDS: &[&str] = &[
-        "the", "and", "for", "with", "what", "how", "are", "was", "were", "has", "have", "does",
-        "did", "this", "that", "from", "into", "about", "their", "her", "his", "any", "show",
-        "tell", "please", "patient", "my", "our", "your", "why", "can", "should", "when", "been",
-    ];
-    let mut out = Vec::new();
-    for raw in query.split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '/') {
-        let lower = raw.to_ascii_lowercase();
-        if lower.len() >= 2 && !STOP_WORDS.contains(&lower.as_str()) && !out.contains(&lower) {
-            out.push(lower);
-        }
+fn no_match_answer(patient: &PatientChart, question: &str, terms: &[String]) -> ChatAnswer {
+    let reason = if terms.is_empty() {
+        "The question has no searchable clinical terms.".to_string()
+    } else {
+        format!(
+            "None of the {} source records mention: {}.",
+            patient.records.len(),
+            terms.join(", ")
+        )
+    };
+    ChatAnswer {
+        patient_id: patient.id.clone(),
+        question: question.to_string(),
+        grounded: false,
+        answer: format!(
+            "No matching records in this chart for {} ({}). {reason} \
+             Nothing is cited, and absence from these records is not evidence either way. \
+             Try asking about a lab value, symptom, medication or message that appears in the records below.",
+            patient.display_name, patient.mrn
+        ),
+        citations: Vec::new(),
+        basis: format!(
+            "Local deterministic whole-word chart retrieval scoped exclusively to {}; no record matched.",
+            patient.mrn
+        ),
     }
-    out
 }
 
 /// Simulated practice-connection state for the zero-PHI patient demo.
@@ -967,7 +1375,7 @@ pub fn build_doctor_share_preview(
 /// queries return zero citations and an explicit no-match notice.
 pub fn answer_patient_question(patient: &PatientChart, raw_question: &str) -> ChatAnswer {
     let question = raw_question.trim();
-    let terms = tokenize_query(question);
+    let terms = query_terms(question);
 
     let mut scored: Vec<(usize, &ChartRecord)> = patient
         .records
@@ -1018,6 +1426,7 @@ pub fn answer_patient_question(patient: &PatientChart, raw_question: &str) -> Ch
         return ChatAnswer {
             patient_id: patient.id.clone(),
             question: question.to_string(),
+            grounded: false,
             answer: format!(
                 "No matching records were found in {}'s synthetic sample chart for that question. \
                  Try asking about labs, CGM trends, medications, or recent notes listed on this profile.",
@@ -1062,6 +1471,7 @@ pub fn answer_patient_question(patient: &PatientChart, raw_question: &str) -> Ch
     ChatAnswer {
         patient_id: patient.id.clone(),
         question: question.to_string(),
+        grounded: true,
         answer: format!(
             "From {}'s synthetic sample records (demo only, not medical advice):\n{}",
             patient.display_name, findings
@@ -1081,39 +1491,125 @@ pub mod api {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
 
-    use axum::extract::{Path, State};
+    use axum::extract::{Path, Query, State};
     use axum::http::{header, HeaderValue, StatusCode};
     use axum::response::{IntoResponse, Response};
     use axum::routing::{get, post};
     use axum::{Json, Router};
+    use serde::Deserialize;
     use tower_http::limit::RequestBodyLimitLayer;
 
     use crate::{
-        answer_chart_question, build_doctor_share_preview, default_patient_demo_state,
-        find_patient, synthetic_panel, today_overview, ChatRequest, DemoSessionResponse,
-        HealthResponse, PatientDemoSnapshot,
+        answer_chart_question, build_doctor_share_preview, build_health_passport_with_options,
+        build_roi_mailto_uri, build_smart_authorize_url, default_allergies_for_patient,
+        default_patient_demo_state, dispatch_roi_batch, find_patient, find_portal_organization,
+        format_sse_events, ingest_clinical_document, ingest_fhir_r4_bundle,
+        render_passport_fhir_ips_bundle, render_passport_html, render_passport_markdown,
+        render_roi_cover_text, render_roi_form_html, run_agent_turn, search_portal_directory,
+        synthetic_panel, today_overview, tool_catalog, validate_roi_request, AgentAudience,
+        AgentChatRequest, AgentRunOptions, ChatRequest, DemoSessionResponse, HealthResponse,
+        PassportAudience, PassportExportOptions, PatientDemoSnapshot, PortalOrganization,
+        PortalVendor, RoiRequest, RunBudget,
     };
 
     const CHAT_BODY_LIMIT: usize = 64 * 1024;
+    const FHIR_BODY_LIMIT: usize = 512 * 1024;
 
     #[derive(Default)]
     struct ApiState {
         session_counter: AtomicU64,
     }
 
+    #[derive(Deserialize)]
+    struct PortalDirectoryQuery {
+        #[serde(default)]
+        q: String,
+        #[serde(default)]
+        vendor: Option<PortalVendor>,
+    }
+
+    #[derive(Deserialize)]
+    struct SmartLaunchRequest {
+        #[serde(default)]
+        organization_id: Option<String>,
+        #[serde(default)]
+        custom_organization: Option<PortalOrganization>,
+        client_id: String,
+        redirect_uri: String,
+        #[serde(default)]
+        scopes: Option<String>,
+        state: String,
+        code_verifier: String,
+    }
+
+    #[derive(Deserialize)]
+    struct FhirIngestRequest {
+        source_label: String,
+        portal_id: String,
+        bundle_json: String,
+    }
+
+    #[derive(Deserialize)]
+    struct ClinicalDocumentIngestRequest {
+        source_label: String,
+        portal_id: String,
+        document: String,
+    }
+
+    #[derive(Deserialize)]
+    struct PassportExportRequest {
+        patient_id: String,
+        #[serde(default)]
+        audience: PassportAudience,
+        #[serde(default)]
+        emergency_note: String,
+        #[serde(default)]
+        selected_record_ids: Option<Vec<String>>,
+        #[serde(default)]
+        include_part2_sud_records: bool,
+        #[serde(default)]
+        include_part2_sud_counseling_notes: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct RoiDispatchBatchRequest {
+        requests: Vec<RoiRequest>,
+        #[serde(default)]
+        dispatched_at: Option<String>,
+        #[serde(default)]
+        due_by_30d: Option<String>,
+    }
+
     /// Builds the clean-room clinical workspace API router mounted at `/clinical/api`.
     pub fn router() -> Router {
         let state = Arc::new(ApiState::default());
-        Router::new()
+        let standard = Router::new()
             .route("/health", get(health))
+            .route("/tools", get(agent_tools))
             .route("/auth/demo-session", post(demo_session))
             .route("/today", get(today))
             .route("/patients", get(patients))
             .route("/patients/{id}", get(patient_detail))
             .route("/patients/{id}/chat", post(patient_chat))
+            .route("/patients/{id}/agent-chat", post(patient_agent_chat))
+            .route(
+                "/patients/{id}/agent-chat/stream",
+                post(patient_agent_chat_stream),
+            )
             .route("/patient-demo/{id}", get(patient_demo_snapshot))
-            .layer(RequestBodyLimitLayer::new(CHAT_BODY_LIMIT))
-            .with_state(state)
+            .route("/portals/directory", get(portal_directory_handler))
+            .route("/portals/smart-launch", post(portal_smart_launch))
+            .route("/passport/export", post(passport_export))
+            .route("/roi/render", post(roi_render))
+            .route("/roi/dispatch", post(roi_dispatch))
+            .layer(RequestBodyLimitLayer::new(CHAT_BODY_LIMIT));
+
+        let fhir_ingest = Router::new()
+            .route("/portals/ingest-fhir", post(portal_ingest_fhir))
+            .route("/portals/ingest-document", post(portal_ingest_document))
+            .layer(RequestBodyLimitLayer::new(FHIR_BODY_LIMIT));
+
+        standard.merge(fhir_ingest).with_state(state)
     }
 
     fn json_no_store<T: serde::Serialize>(status: StatusCode, body: &T) -> Response {
@@ -1198,6 +1694,98 @@ pub mod api {
         }
     }
 
+    async fn agent_tools() -> Response {
+        json_no_store(
+            StatusCode::OK,
+            &serde_json::json!({
+                "physician": tool_catalog(AgentAudience::Physician),
+                "patient": tool_catalog(AgentAudience::Patient),
+            }),
+        )
+    }
+
+    fn execute_agent_request(
+        id: &str,
+        req: &AgentChatRequest,
+    ) -> Result<crate::AgentTurn, (StatusCode, &'static str)> {
+        if req.question.trim().is_empty() {
+            return Err((StatusCode::BAD_REQUEST, "question must not be empty"));
+        }
+        let Some(chart) = find_patient(id) else {
+            return Err((StatusCode::NOT_FOUND, "patient not found"));
+        };
+        let mut budget = RunBudget::default();
+        if let Some(max_steps) = req.max_steps {
+            budget.max_steps = max_steps;
+            budget.max_tool_calls = max_steps;
+        }
+        let turn_index = req.prior_working_notes.len() + 1;
+        Ok(run_agent_turn(
+            &chart,
+            &req.question,
+            req.audience,
+            turn_index,
+            &req.prior_working_notes,
+            AgentRunOptions {
+                budget,
+                stop_after_step: req.stop_after_step,
+            },
+        ))
+    }
+
+    fn error_no_store((status, message): (StatusCode, &'static str)) -> Response {
+        (
+            status,
+            [(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("private, no-store, max-age=0"),
+            )],
+            Json(serde_json::json!({ "error": message })),
+        )
+            .into_response()
+    }
+
+    async fn patient_agent_chat(
+        Path(id): Path<String>,
+        Json(req): Json<AgentChatRequest>,
+    ) -> Response {
+        match execute_agent_request(&id, &req) {
+            Ok(turn) => json_no_store(StatusCode::OK, &turn),
+            Err(err) => error_no_store(err),
+        }
+    }
+
+    async fn patient_agent_chat_stream(
+        Path(id): Path<String>,
+        Json(req): Json<AgentChatRequest>,
+    ) -> Response {
+        let turn = match execute_agent_request(&id, &req) {
+            Ok(turn) => turn,
+            Err(err) => return error_no_store(err),
+        };
+        let body = format_sse_events(&turn.events);
+        (
+            StatusCode::OK,
+            [
+                (
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("text/event-stream; charset=utf-8"),
+                ),
+                (
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static("private, no-store, max-age=0"),
+                ),
+                (
+                    header::HeaderName::from_static("x-accel-buffering"),
+                    HeaderValue::from_static("no"),
+                ),
+                (header::VARY, HeaderValue::from_static("*")),
+            ],
+            body,
+        )
+            .into_response()
+    }
+
     async fn patient_demo_snapshot(Path(id): Path<String>) -> Response {
         match find_patient(&id) {
             Some(patient) => {
@@ -1222,6 +1810,174 @@ pub mod api {
             )
                 .into_response(),
         }
+    }
+
+    async fn portal_directory_handler(Query(query): Query<PortalDirectoryQuery>) -> Response {
+        let orgs = search_portal_directory(&query.q, query.vendor);
+        json_no_store(
+            StatusCode::OK,
+            &serde_json::json!({
+                "organizations": orgs,
+                "read_only_scopes": crate::SMART_READ_ONLY_SCOPES,
+            }),
+        )
+    }
+
+    async fn portal_smart_launch(Json(req): Json<SmartLaunchRequest>) -> Response {
+        let org = match (req.custom_organization, req.organization_id.as_deref()) {
+            (Some(custom), _) => custom,
+            (None, Some(id)) => match find_portal_organization(id) {
+                Some(found) => found,
+                None => {
+                    return error_no_store((StatusCode::NOT_FOUND, "portal organization not found"))
+                }
+            },
+            (None, None) => {
+                return error_no_store((
+                    StatusCode::BAD_REQUEST,
+                    "provide organization_id or custom_organization",
+                ));
+            }
+        };
+
+        match build_smart_authorize_url(
+            &org,
+            &req.client_id,
+            &req.redirect_uri,
+            req.scopes.as_deref(),
+            &req.state,
+            &req.code_verifier,
+        ) {
+            Ok(session) => json_no_store(StatusCode::OK, &session),
+            Err(err) => json_no_store(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({ "error": err }),
+            ),
+        }
+    }
+
+    async fn portal_ingest_fhir(Json(req): Json<FhirIngestRequest>) -> Response {
+        match ingest_fhir_r4_bundle(&req.source_label, &req.portal_id, &req.bundle_json) {
+            Ok(imported) => json_no_store(StatusCode::OK, &imported),
+            Err(err) => json_no_store(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({ "error": err }),
+            ),
+        }
+    }
+
+    async fn portal_ingest_document(Json(req): Json<ClinicalDocumentIngestRequest>) -> Response {
+        match ingest_clinical_document(&req.source_label, &req.portal_id, &req.document) {
+            Ok(ingested) => {
+                // Never echo raw 32-byte SHLink AES-256 decryption keys over HTTP.
+                let sanitized_shl = ingested.smart_health_link.map(|shl| {
+                    serde_json::json!({
+                        "valid": true,
+                        "version": shl.v,
+                        "manifest_host": shl.host(),
+                        "manifest_url": shl.url,
+                        "key_bytes": 32,
+                        "key_valid": true,
+                        "exp": shl.exp,
+                        "flag": shl.flag,
+                        "flags": shl.flags,
+                        "label": shl.label,
+                        "viewer_origin": shl.viewer_origin,
+                        "passcode_required": shl.requires_passcode(),
+                        "direct_file_url": shl.is_direct_file_url(),
+                        "long_term": shl.is_long_term(),
+                    })
+                });
+                json_no_store(
+                    StatusCode::OK,
+                    &serde_json::json!({
+                        "format": ingested.format,
+                        "import": ingested.import,
+                        "smart_health_link": sanitized_shl,
+                    }),
+                )
+            }
+            Err(err) => json_no_store(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({ "error": err }),
+            ),
+        }
+    }
+
+    async fn passport_export(Json(req): Json<PassportExportRequest>) -> Response {
+        let Some(patient) = find_patient(&req.patient_id) else {
+            return error_no_store((StatusCode::NOT_FOUND, "patient not found"));
+        };
+        let mut state = default_patient_demo_state(&patient);
+        if let Some(ids) = req.selected_record_ids {
+            state.selected_record_ids = ids;
+        }
+        let allergies = default_allergies_for_patient(&patient.id);
+        let passport = build_health_passport_with_options(
+            &patient,
+            &state,
+            &allergies,
+            &[],
+            req.audience,
+            &req.emergency_note,
+            "2026-11-26T04:30:00Z",
+            PassportExportOptions {
+                include_part2_sud_records: req.include_part2_sud_records,
+                include_part2_sud_counseling_notes: req.include_part2_sud_counseling_notes,
+            },
+        );
+        let fhir_ips = render_passport_fhir_ips_bundle(&passport);
+        let html = render_passport_html(&passport);
+        let markdown = render_passport_markdown(&passport);
+        json_no_store(
+            StatusCode::OK,
+            &serde_json::json!({
+                "passport": passport,
+                "fhir_ips_bundle": fhir_ips,
+                "html": html,
+                "markdown": markdown,
+            }),
+        )
+    }
+
+    async fn roi_render(Json(req): Json<RoiRequest>) -> Response {
+        if let Err(err) = validate_roi_request(&req) {
+            return json_no_store(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({ "error": err }),
+            );
+        }
+        json_no_store(
+            StatusCode::OK,
+            &serde_json::json!({
+                "request_id": req.id,
+                "html": render_roi_form_html(&req),
+                "cover_text": render_roi_cover_text(&req),
+                "mailto_uri": build_roi_mailto_uri(&req),
+            }),
+        )
+    }
+
+    async fn roi_dispatch(Json(mut req): Json<RoiDispatchBatchRequest>) -> Response {
+        let dispatched_at = req
+            .dispatched_at
+            .as_deref()
+            .unwrap_or("2026-11-26T04:30:00Z");
+        let due_by_30d = req.due_by_30d.as_deref().unwrap_or("2026-12-26");
+        let report = dispatch_roi_batch(
+            &mut req.requests,
+            dispatched_at,
+            due_by_30d,
+            "Embedded local sandbox dispatch (zero external PHI egress)",
+        );
+        json_no_store(
+            StatusCode::OK,
+            &serde_json::json!({
+                "mode": "local_sandbox",
+                "report": report,
+                "requests": req.requests,
+            }),
+        )
     }
 }
 
@@ -1264,6 +2020,221 @@ mod tests {
             );
         }
         assert!(answer.answer.contains("6.7%"));
+        assert!(answer.grounded);
+    }
+
+    fn assert_no_match(patient_id: &str, question: &str) {
+        let chart = find_patient(patient_id).expect("patient");
+        let answer = answer_chart_question(&chart, question);
+        assert!(
+            answer.citations.is_empty(),
+            "{question:?} on {patient_id} cited {:?}",
+            answer
+                .citations
+                .iter()
+                .map(|c| &c.record_id)
+                .collect::<Vec<_>>()
+        );
+        assert!(!answer.grounded, "{question:?} must not claim grounding");
+        assert!(
+            answer
+                .answer
+                .starts_with("No matching records in this chart"),
+            "{question:?}: {}",
+            answer.answer
+        );
+        assert!(answer.basis.contains("no record matched"));
+    }
+
+    #[test]
+    fn gibberish_question_cites_nothing() {
+        assert_no_match("pt-priya-nair", "zzzz");
+    }
+
+    #[test]
+    fn absent_statin_is_reported_honestly() {
+        assert_no_match("pt-carlos-mendez", "Is he on a statin?");
+    }
+
+    #[test]
+    fn absent_stroke_history_is_reported_honestly() {
+        assert_no_match("pt-david-okafor", "Any history of stroke?");
+    }
+
+    #[test]
+    fn stop_word_only_question_cites_nothing() {
+        assert_no_match("pt-nadia-kulkarni", "What is this?");
+    }
+
+    #[test]
+    fn terms_match_whole_words_not_substrings() {
+        // "age" appears only inside "average" and "dosage"-like words.
+        assert_no_match("pt-carlos-mendez", "age");
+        assert!(!mentions("Basic Metabolic Panel & Urine ACR", "is"));
+        assert!(mentions("Potassium 4.3 mEq/L", "potassium"));
+        assert!(mentions("Mild left atrial enlargement", "enlargements"));
+    }
+
+    #[test]
+    fn potassium_question_ranks_the_lab_first() {
+        let nadia = find_patient("pt-nadia-kulkarni").expect("nadia");
+        let answer = answer_chart_question(&nadia, "What is her potassium?");
+        assert!(answer.grounded);
+        assert_eq!(answer.citations[0].record_id, "nk-lab-02");
+        assert!(answer.answer.contains("potassium 4.1 mEq/L"));
+    }
+
+    #[test]
+    fn clinical_record_outranks_a_message_mentioning_the_same_word() {
+        let mut chart = find_patient("pt-carlos-mendez").expect("carlos");
+        chart.records.push(ChartRecord {
+            id: "cm-msg-99".into(),
+            kind: RecordKind::PatientMessage,
+            title: "Diet question".into(),
+            recorded_at: "2026-11-24".into(),
+            source_label: "Patient Portal".into(),
+            body: "Should I eat bananas for potassium before my visit?".into(),
+            key_values: vec![],
+            confidentiality: ConfidentialityClass::StandardHipaa,
+        });
+        let answer = answer_chart_question(&chart, "What is his potassium?");
+        let ids: Vec<_> = answer
+            .citations
+            .iter()
+            .map(|c| c.record_id.as_str())
+            .collect();
+        assert_eq!(ids, ["cm-lab-02", "cm-msg-99"]);
+    }
+
+    #[test]
+    fn answer_body_is_built_from_the_matched_excerpts() {
+        let carlos = find_patient("pt-carlos-mendez").expect("carlos");
+        let edema = answer_chart_question(&carlos, "Any ankle edema on amlodipine?");
+        let labs = answer_chart_question(&carlos, "Review eGFR, potassium, and urine ACR labs");
+        assert_eq!(edema.citations[0].record_id, "cm-note-01");
+        assert_eq!(labs.citations[0].record_id, "cm-lab-02");
+        assert!(edema.answer.contains("ankle edema"));
+        assert!(!edema.answer.contains("Urine albumin"));
+        assert!(labs.answer.contains("eGFR 74"));
+        assert_ne!(edema.answer, labs.answer);
+        // The fixed summary + medication template is gone.
+        assert!(!edema.answer.contains(&carlos.summary));
+        assert!(!edema.answer.contains("Active medications"));
+    }
+
+    #[test]
+    fn suggested_questions_stay_grounded_and_patient_scoped() {
+        let cases = [
+            (
+                "pt-nadia-kulkarni",
+                "What does the 14-day CGM show about morning fasting glucose?",
+                "nk-cgm-01",
+            ),
+            (
+                "pt-nadia-kulkarni",
+                "Summarize HbA1c, eGFR, and metformin regimen",
+                "nk-lab-02",
+            ),
+            (
+                "pt-nadia-kulkarni",
+                "What did the patient ask about metformin timing?",
+                "nk-msg-03",
+            ),
+            (
+                "pt-carlos-mendez",
+                "What is the 14-day home blood pressure average?",
+                "cm-note-01",
+            ),
+            (
+                "pt-priya-nair",
+                "How did PHQ-9, GAD-7, and ASRM scores change?",
+                "pn-note-01",
+            ),
+            (
+                "pt-priya-nair",
+                "Summarize CGM time in range and post-lunch spikes",
+                "pn-cgm-02",
+            ),
+            (
+                "pt-david-okafor",
+                "What did the transthoracic echocardiogram show?",
+                "do-img-01",
+            ),
+            (
+                "pt-david-okafor",
+                "Review hemoglobin, renal panel, and apixaban dosing",
+                "do-lab-02",
+            ),
+        ];
+        for (patient_id, question, expected_first) in cases {
+            let chart = find_patient(patient_id).expect("patient");
+            let answer = answer_chart_question(&chart, question);
+            assert!(answer.grounded, "{question:?}");
+            assert_eq!(
+                answer.citations[0].record_id, expected_first,
+                "{question:?}"
+            );
+            assert!(answer.citations.len() <= MAX_CITATIONS);
+            for cite in &answer.citations {
+                assert!(
+                    chart.records.iter().any(|r| r.id == cite.record_id),
+                    "{question:?}: citation {} escaped {patient_id}",
+                    cite.record_id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sentences_keep_decimals_together() {
+        assert_eq!(
+            sentences("HbA1c 6.7% (prior 7.4%). Fasting glucose 134 mg/dL."),
+            ["HbA1c 6.7% (prior 7.4%).", "Fasting glucose 134 mg/dL."]
+        );
+    }
+
+    #[test]
+    fn negative_phrasing_without_matching_facts_cites_nothing() {
+        assert_no_match("pt-david-okafor", "No stroke history?");
+        assert_no_match("pt-carlos-mendez", "Does he have no statin?");
+        assert_no_match("pt-carlos-mendez", "Is he not on a statin?");
+    }
+
+    #[test]
+    fn sentences_do_not_split_on_honorifics_or_abbreviations() {
+        assert_eq!(
+            sentences("Hi Dr. Patel, my numbers stay flat overnight. Should I shift metformin?"),
+            [
+                "Hi Dr. Patel, my numbers stay flat overnight.",
+                "Should I shift metformin?",
+            ]
+        );
+        let nadia = find_patient("pt-nadia-kulkarni").expect("nadia");
+        let answer = answer_chart_question(&nadia, "Show patient portal messages");
+        assert!(answer.grounded);
+        assert_eq!(answer.citations[0].record_id, "nk-msg-03");
+        assert!(
+            answer
+                .answer
+                .contains("Hi Dr. Patel, my numbers stay flat overnight"),
+            "honorific must not truncate message excerpt: {}",
+            answer.answer
+        );
+        assert!(!answer.answer.trim_end().ends_with("Hi Dr."));
+    }
+
+    #[test]
+    fn clinical_shorthand_a1c_and_tir_match_nadia_records() {
+        let nadia = find_patient("pt-nadia-kulkarni").expect("nadia");
+        let a1c = answer_chart_question(&nadia, "What is her A1c?");
+        assert!(a1c.grounded);
+        assert_eq!(a1c.citations[0].record_id, "nk-lab-02");
+        assert!(a1c.answer.contains("6.7%"), "{}", a1c.answer);
+
+        let tir = answer_chart_question(&nadia, "What is her TIR?");
+        assert!(tir.grounded);
+        assert_eq!(tir.citations[0].record_id, "nk-cgm-01");
+        assert!(tir.answer.contains("78%"), "{}", tir.answer);
     }
 
     #[test]
@@ -1400,6 +2371,7 @@ mod tests {
         assert!(!snapshot.preview.shared_records.is_empty());
 
         let missing = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .uri("/patient-demo/pt-nonexistent")
@@ -1409,5 +2381,71 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+        let tools = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/tools")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(tools.status(), StatusCode::OK);
+        let tools_body = to_bytes(tools.into_body(), 64 * 1024).await.unwrap();
+        let tools_json: serde_json::Value = serde_json::from_slice(&tools_body).unwrap();
+        assert_eq!(tools_json["physician"].as_array().unwrap().len(), 6);
+
+        let agent_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/patients/pt-nadia-kulkarni/agent-chat")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"question":"What is her HbA1c, TIR, and active medications?","audience":"physician"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(agent_resp.status(), StatusCode::OK);
+        assert_eq!(
+            agent_resp.headers()[header::CACHE_CONTROL],
+            "private, no-store, max-age=0"
+        );
+        let agent_body = to_bytes(agent_resp.into_body(), 128 * 1024).await.unwrap();
+        let turn: AgentTurn = serde_json::from_slice(&agent_body).unwrap();
+        assert_eq!(turn.outcome, HarnessOutcome::Finished);
+        assert!(turn.grounded);
+        assert!(turn.steps.len() >= 3);
+        assert!(!turn.cited_values.is_empty());
+
+        let sse_resp = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/patients/pt-nadia-kulkarni/agent-chat/stream")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"question":"What is her potassium?","audience":"physician"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(sse_resp.status(), StatusCode::OK);
+        assert_eq!(
+            sse_resp.headers()[header::CONTENT_TYPE],
+            "text/event-stream; charset=utf-8"
+        );
+        let sse_body = to_bytes(sse_resp.into_body(), 128 * 1024).await.unwrap();
+        let sse_text = String::from_utf8(sse_body.to_vec()).unwrap();
+        assert!(sse_text.contains("event: run_started\n"));
+        assert!(sse_text.contains("event: tool_called\n"));
+        assert!(sse_text.contains("event: tool_completed\n"));
+        assert!(sse_text.contains("event: run_finished\n"));
     }
 }

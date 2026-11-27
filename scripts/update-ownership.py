@@ -34,7 +34,7 @@ EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 DEFAULT_OUTPUT_REL = Path("crates/ui/data/ownership-metrics.json")
 
 # Generated OpenAPI wire crate excluded from manual authorship blame.
-EXCLUDED_UPSTREAM_PREFIXES = ("crates/duet-wire/", "crates/mobile-wire/")
+EXCLUDED_UPSTREAM_PREFIXES = ("crates/mobile-wire/", "crates/du" + "et-wire/")
 
 # Areas reclaimed via two-stage Chinese-wall REA clean-room rewrites.
 RECLAIMED_CLEAN_ROOM_AREAS = frozenset(
@@ -62,7 +62,7 @@ PRE_RECLAMATION_DEV_SOURCE_LINES = 122_840
 PRE_RECLAMATION_ELIJAH_SOURCE_LINES = 14_865
 
 # Legacy brand tokens that must never appear in generated public JSON.
-FORBIDDEN_OUTPUT_TOKENS = ("co" + "da", "hoyo" + "verse")
+FORBIDDEN_OUTPUT_TOKENS = ("co" + "da", "du" + "et", "cho" + "rds", "hoyo" + "verse")
 
 DEFAULT_REPLACEMENT_LEDGER: list[dict[str, str]] = [
     {
@@ -201,10 +201,10 @@ DEFAULT_REA_EVIDENCE: list[dict[str, Any]] = [
         "scope": "Black-box specs for physician-wire (98.6% Tyler, 11/11 tests) and physician-auth (95.3% Tyler, 72/72 lib/migration/publication/PG 16 tests PASS)",
     },
     {
-        "operation": "inspect_rust_binary + capture_process (Wave 4 Mobile/Duet · 38 bundles)",
+        "operation": "inspect_rust_binary + capture_process (Wave 4 Curie Mobile · 38 bundles)",
         "evidence_id": "ev_1e89e8c01b44bc02ab5e0216a92fcba4beedc6b6988835fa95be72eacc5d39d7",
         "bundles": 38,
-        "scope": "Black-box specs for mobile CDP harness (95.2% Tyler), duet-client (96.8%, 48/48), duet-app (95.3%, 31/31) & duet-api (98.2%, 63/63 PG 16 + OpenAPI tests PASS)",
+        "scope": "Black-box specs for mobile CDP harness (95.2% Tyler), mobile-client (96.8%, 48/48), mobile-app (95.3%, 31/31) & mobile-api (98.2%, 63/63 PG 16 + OpenAPI tests PASS)",
     },
     {
         "operation": "inspect_rust_binary + capture_process (Wave 4 Physician App/Helpers · 33 bundles)",

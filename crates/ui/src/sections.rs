@@ -2,14 +2,14 @@ use leptos::prelude::*;
 use leptos_router::components::A;
 use leptos_router::hooks::use_location;
 
-use crate::commissions::CommissionsMenu;
+use crate::commissions::{CommissionsMenu, COMMISSIONS_LINKS};
 use crate::consent::OpenConsentButton;
 use crate::data::{
     ABOUT, ABOUT_PHOTO, EXPERIENCE, EXPERTISE, PROFILE_PHOTO, PROJECTS, SERVICES, SKILLS, SUMMARY,
     TAGLINE,
 };
 use crate::i18n::{t, use_locale, LanguageSwitcher, Msg};
-use crate::tools::ToolsMenu;
+use crate::tools::{ToolsMenu, TOOLS_LINKS};
 use crate::AppShellMode;
 
 /// On WASM builds, attempt to open `url` via the Tauri opener plugin, exposed
@@ -89,6 +89,280 @@ const MOBILE_NAV_LINK: &str =
     "block rounded-lg px-3 py-2.5 text-slate-300 transition hover:bg-white/5 hover:text-white";
 const MOBILE_NAV_SUBLINK: &str =
     "block rounded-lg py-2 ps-6 pe-3 text-sm text-slate-400 transition hover:bg-white/5 hover:text-white";
+const NAV_MENU_ITEM: &str =
+    "block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white focus:bg-white/5 focus:text-white focus:outline-none";
+const NAV_MENU_ITEM_ACCENT: &str =
+    "block px-4 py-2 text-emerald-300 transition hover:bg-white/5 hover:text-emerald-200 focus:bg-white/5 focus:text-emerald-200 focus:outline-none";
+
+/// Which desktop navbar dropdown is open. One signal owns the choice, so
+/// opening one menu closes the other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenNavMenu {
+    None,
+    Commissions,
+    Tools,
+}
+
+impl OpenNavMenu {
+    /// The menu state after clicking `menu`'s button: open it, or close it
+    /// when it is already open.
+    #[must_use]
+    pub const fn toggled(self, menu: Self) -> Self {
+        match (self, menu) {
+            (Self::Commissions, Self::Commissions) | (Self::Tools, Self::Tools) => Self::None,
+            _ => menu,
+        }
+    }
+
+    const fn dom_id(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::Commissions => "nav-menu-commissions",
+            Self::Tools => "nav-menu-tools",
+        }
+    }
+
+    const fn trigger_dom_id(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::Commissions => "nav-trigger-commissions",
+            Self::Tools => "nav-trigger-tools",
+        }
+    }
+}
+
+const MOBILE_NAV_TRIGGER_ID: &str = "mobile-nav-toggle";
+
+/// One in-site page linked from a navbar dropdown and the mobile menu.
+pub struct NavMenuLink {
+    pub href: &'static str,
+    pub label: &'static str,
+    pub msg: Option<Msg>,
+    pub accent: bool,
+}
+
+/// A desktop navbar dropdown whose open state lives in the navbar's shared
+/// [`OpenNavMenu`] signal.
+#[component]
+pub fn NavDropdown(
+    label: &'static str,
+    #[prop(optional)] label_msg: Option<Msg>,
+    menu: OpenNavMenu,
+    open: RwSignal<OpenNavMenu>,
+    links: &'static [NavMenuLink],
+    width: &'static str,
+) -> impl IntoView {
+    let locale = use_locale();
+    let is_open = move || open.get() == menu;
+    let close = move |_| open.set(OpenNavMenu::None);
+    let label_text = move || match label_msg {
+        Some(msg) => t(locale.get(), msg),
+        None => label,
+    };
+
+    view! {
+        <div class="relative" data-nav-menu="">
+            <button
+                id=menu.trigger_dom_id()
+                type="button"
+                class="flex items-center gap-1 transition hover:text-white"
+                aria-expanded=move || is_open().to_string()
+                aria-haspopup="menu"
+                aria-controls=menu.dom_id()
+                on:click=move |_| open.update(|current| *current = current.toggled(menu))
+            >
+                {label_text}
+                <span class="text-[10px] opacity-70" aria-hidden="true">
+                    {move || if is_open() { "▲" } else { "▼" }}
+                </span>
+            </button>
+            <Show when=is_open>
+                <div
+                    id=menu.dom_id()
+                    class=format!(
+                        "absolute end-0 z-50 mt-2 {width} rounded-xl border border-white/10 bg-slate-900 py-2 text-start shadow-xl",
+                    )
+                    role="menu"
+                    aria-label=label_text
+                >
+                    {links
+                        .iter()
+                        .map(|link| {
+                            let item_cls = if link.accent {
+                                NAV_MENU_ITEM_ACCENT
+                            } else {
+                                NAV_MENU_ITEM
+                            };
+                            let text = move || match link.msg {
+                                Some(msg) => t(locale.get(), msg),
+                                None => link.label,
+                            };
+                            view! {
+                                <A href=link.href attr:class=item_cls attr:role="menuitem" on:click=close>
+                                    {text}
+                                </A>
+                            }
+                        })
+                        .collect_view()}
+                </div>
+            </Show>
+        </div>
+    }
+}
+
+/// Mobile menu section listing the same pages as a desktop dropdown.
+#[component]
+fn MobileNavGroup(
+    heading: &'static str,
+    #[prop(optional)] heading_msg: Option<Msg>,
+    links: &'static [NavMenuLink],
+    mobile_open: RwSignal<bool>,
+) -> impl IntoView {
+    let locale = use_locale();
+    let heading_text = move || match heading_msg {
+        Some(msg) => t(locale.get(), msg),
+        None => heading,
+    };
+    view! {
+        <p class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400">
+            {heading_text}
+        </p>
+        {links
+            .iter()
+            .map(|link| {
+                let text = move || match link.msg {
+                    Some(msg) => t(locale.get(), msg),
+                    None => link.label,
+                };
+                view! {
+                    <A href=link.href attr:class=MOBILE_NAV_SUBLINK on:click=move |_| mobile_open.set(false)>
+                        {text}
+                    </A>
+                }
+            })
+            .collect_view()}
+    }
+}
+
+/// Closes navbar menus on Escape, on a click outside any dropdown, and when
+/// the route changes.
+fn close_nav_menus_on_dismiss(open: RwSignal<OpenNavMenu>, mobile_open: RwSignal<bool>) {
+    let location = use_location();
+    Effect::new(move |_| {
+        location.pathname.track();
+        open.set(OpenNavMenu::None);
+        mobile_open.set(false);
+    });
+
+    #[cfg(any(feature = "csr", feature = "hydrate"))]
+    {
+        use wasm_bindgen::JsCast;
+
+        let focus_element_by_id = |id: &str| {
+            if let Some(el) = web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.get_element_by_id(id))
+                .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
+            {
+                let _ = el.focus();
+            }
+        };
+
+        let escape = window_event_listener(leptos::ev::keydown, move |ev| {
+            if ev.key() == "Escape" {
+                let previous_menu = open.get_untracked();
+                let was_mobile_open = mobile_open.get_untracked();
+                open.set(OpenNavMenu::None);
+                mobile_open.set(false);
+                let trigger_id = match previous_menu {
+                    OpenNavMenu::Commissions | OpenNavMenu::Tools => {
+                        Some(previous_menu.trigger_dom_id())
+                    }
+                    OpenNavMenu::None if was_mobile_open => Some(MOBILE_NAV_TRIGGER_ID),
+                    OpenNavMenu::None => None,
+                };
+                if let Some(id) = trigger_id {
+                    focus_element_by_id(id);
+                }
+            }
+        });
+        let outside_click = window_event_listener(leptos::ev::click, move |ev| {
+            if open.get_untracked() == OpenNavMenu::None {
+                return;
+            }
+            let inside_menu = ev
+                .target()
+                .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                .and_then(|element| element.closest("[data-nav-menu]").ok().flatten())
+                .is_some();
+            if !inside_menu {
+                open.set(OpenNavMenu::None);
+            }
+        });
+        on_cleanup(move || {
+            escape.remove();
+            outside_click.remove();
+        });
+    }
+}
+
+/// Canonical path to the crisp 512x512 Dabney.moe minimalist heraldic crest app icon.
+pub const DABNEY_APP_ICON: &str = "/favicon.png";
+
+/// Typed size scale for [`DabneyCrestBadge`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CrestSize {
+    /// Compact `24x24` mark for footers and inline pills.
+    Xs,
+    /// `32x32` squircle for sticky navigation bars.
+    Sm,
+    /// `44x44` squircle for project cards and floating showcase pills.
+    Md,
+    /// `64x64` hero emblem for page headers and 404 states.
+    Lg,
+}
+
+impl CrestSize {
+    const fn frame_class(self) -> &'static str {
+        match self {
+            Self::Xs => "h-6 w-6 rounded-md",
+            Self::Sm => "h-8 w-8 rounded-lg",
+            Self::Md => "h-11 w-11 rounded-xl",
+            Self::Lg => "h-16 w-16 rounded-2xl",
+        }
+    }
+}
+
+/// Framed squircle badge displaying the new Dabney.moe minimalist heraldic crest
+/// app icon on its native `#01081b` midnight field with emerald rim lighting.
+#[component]
+pub fn DabneyCrestBadge(
+    size: CrestSize,
+    #[prop(default = true)] decorative: bool,
+    #[prop(default = DABNEY_APP_ICON)] src: &'static str,
+) -> impl IntoView {
+    let frame_cls = format!(
+        "inline-flex shrink-0 items-center justify-center overflow-hidden border border-emerald-400/40 bg-[#01081b] shadow-sm shadow-emerald-500/20 transition group-hover:border-cyan-300/60 {}",
+        size.frame_class()
+    );
+    let alt = if decorative {
+        ""
+    } else {
+        "Dabney.moe heraldic elephant crest"
+    };
+    let aria_hidden = decorative.then_some("true");
+
+    view! {
+        <span class=frame_cls aria-hidden=aria_hidden>
+            <img
+                src=src
+                alt=alt
+                class="h-full w-full object-cover"
+                decoding="async"
+            />
+        </span>
+    }
+}
 
 #[component]
 pub fn NavBar() -> impl IntoView {
@@ -99,37 +373,47 @@ pub fn NavBar() -> impl IntoView {
 
     let locale = use_locale();
     let mobile_open = RwSignal::new(false);
+    let open_menu = RwSignal::new(OpenNavMenu::None);
     let toggle_mobile = move |_| mobile_open.update(|open| *open = !*open);
     let close_mobile = move |_| mobile_open.set(false);
+    close_nav_menus_on_dismiss(open_menu, mobile_open);
 
     view! {
-        <header class="sticky top-0 z-50 border-b border-white/5 bg-slate-950/70 backdrop-blur">
-            <nav class="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-                <a href="/#top" class="text-lg font-semibold tracking-tight text-white" on:click=close_mobile>
-                    "Tyler Port"
-                    <span class="text-cyan-400">"."</span>
+        <header class="sticky top-0 z-50 border-b border-white/5 bg-slate-950/75 backdrop-blur">
+            <nav class="mx-auto flex max-w-5xl items-center justify-between gap-4 px-6 py-3.5">
+                <a
+                    href="/#top"
+                    class="group inline-flex shrink-0 items-center gap-2.5 whitespace-nowrap text-lg font-semibold tracking-tight text-white"
+                    on:click=close_mobile
+                >
+                    <DabneyCrestBadge size=CrestSize::Sm decorative=true />
+                    <span class="whitespace-nowrap">
+                        "Tyler Port"
+                        <span class="text-cyan-400">"."</span>
+                    </span>
                 </a>
-                <div class="hidden items-center gap-6 text-sm text-slate-300 md:flex">
-                    <a href="/#about" class="transition hover:text-white">{move || t(locale.get(), Msg::NavAbout)}</a>
-                    <a href="/#expertise" class="transition hover:text-white">{move || t(locale.get(), Msg::NavExpertise)}</a>
-                    <a href="/#services" class="transition hover:text-white">{move || t(locale.get(), Msg::NavServices)}</a>
-                    <a href="/#projects" class="transition hover:text-white">{move || t(locale.get(), Msg::NavProjects)}</a>
-                    <a href="/#experience" class="transition hover:text-white">{move || t(locale.get(), Msg::NavExperience)}</a>
-                    <a href="/#skills" class="transition hover:text-white">{move || t(locale.get(), Msg::NavSkills)}</a>
-                    <CommissionsMenu />
-                    <ToolsMenu />
+                <div class="hidden items-center gap-4 text-sm text-slate-300 md:flex lg:gap-6">
+                    <a href="/#about" class="whitespace-nowrap transition hover:text-white">{move || t(locale.get(), Msg::NavAbout)}</a>
+                    <a href="/#expertise" class="whitespace-nowrap transition hover:text-white">{move || t(locale.get(), Msg::NavExpertise)}</a>
+                    <a href="/#services" class="whitespace-nowrap transition hover:text-white">{move || t(locale.get(), Msg::NavServices)}</a>
+                    <a href="/#projects" class="whitespace-nowrap transition hover:text-white">{move || t(locale.get(), Msg::NavProjects)}</a>
+                    <a href="/#experience" class="whitespace-nowrap transition hover:text-white">{move || t(locale.get(), Msg::NavExperience)}</a>
+                    <a href="/#skills" class="whitespace-nowrap transition hover:text-white">{move || t(locale.get(), Msg::NavSkills)}</a>
+                    <CommissionsMenu open=open_menu />
+                    <ToolsMenu open=open_menu />
                     <LanguageSwitcher compact=true />
                     <a
                         href="/#contact"
-                        class="rounded-full bg-cyan-500 px-4 py-1.5 font-medium text-slate-950 transition hover:bg-cyan-400"
+                        class="shrink-0 whitespace-nowrap rounded-full bg-cyan-500 px-4 py-1.5 font-medium text-slate-950 transition hover:bg-cyan-400"
                     >
                         {move || t(locale.get(), Msg::NavHireMe)}
                     </a>
                 </div>
                 <button
+                    id=MOBILE_NAV_TRIGGER_ID
                     type="button"
                     class="rounded-lg p-2 text-slate-300 transition hover:bg-white/5 hover:text-white md:hidden"
-                    aria-expanded=move || mobile_open.get()
+                    aria-expanded=move || mobile_open.get().to_string()
                     aria-controls="mobile-nav"
                     aria-label=move || {
                         if mobile_open.get() {
@@ -186,46 +470,18 @@ pub fn NavBar() -> impl IntoView {
                             {move || t(locale.get(), Msg::NavSkills)}
                         </a>
 
-                        <p class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">
-                            {move || t(locale.get(), Msg::NavCommissions)}
-                        </p>
-                        <A href="/commissions/lapidary" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Lapidary"</span>
-                        </A>
-                        <A href="/commissions/artwork" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Artwork"</span>
-                        </A>
-                        <A href="/commissions/songs" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Songs"</span>
-                        </A>
-
-                        <p class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">
-                            {move || t(locale.get(), Msg::NavTools)}
-                        </p>
-                        <A href="/clinical" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>{move || t(locale.get(), Msg::ToolClinicalSuite)}</span>
-                        </A>
-                        <A href="/clinical/patient" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>{move || t(locale.get(), Msg::ToolPatientDemo)}</span>
-                        </A>
-                        <A href="/clinical/physician" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>{move || t(locale.get(), Msg::ToolPhysicianDemo)}</span>
-                        </A>
-                        <A href="/mental-health" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>{move || t(locale.get(), Msg::ToolMentalHealth)}</span>
-                        </A>
-                        <A href="/tools/recovery" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>{move || t(locale.get(), Msg::ToolRecoveryFinder)}</span>
-                        </A>
-                        <A href="/android" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>{move || t(locale.get(), Msg::ToolAndroidApp)}</span>
-                        </A>
-                        <A href="/tools/investment-account" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>{move || t(locale.get(), Msg::ToolPortfolio)}</span>
-                        </A>
-                        <A href="/ownership" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>{move || t(locale.get(), Msg::ToolOwnership)}</span>
-                        </A>
+                        <MobileNavGroup
+                            heading="Commissions"
+                            heading_msg=Msg::NavCommissions
+                            links=COMMISSIONS_LINKS
+                            mobile_open=mobile_open
+                        />
+                        <MobileNavGroup
+                            heading="Tools"
+                            heading_msg=Msg::NavTools
+                            links=TOOLS_LINKS
+                            mobile_open=mobile_open
+                        />
 
                         <a
                             href="/#contact"
@@ -312,7 +568,7 @@ pub fn Hero() -> impl IntoView {
             id="top"
             class="scroll-mt-20 relative overflow-hidden border-b border-white/5 px-6 py-24 sm:py-32"
         >
-            <div class="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60%_50%_at_50%_0%,rgba(34,211,238,0.18),transparent)]"></div>
+            <div class="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60%_50%_at_50%_0%,rgba(34,211,238,0.16),transparent),radial-gradient(45%_40%_at_82%_60%,rgba(16,185,129,0.12),transparent)]"></div>
             <div class="mx-auto grid max-w-5xl items-center gap-12 lg:grid-cols-[1fr_auto] lg:gap-16">
                 <div>
                     <p class="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium uppercase tracking-widest text-cyan-300">
@@ -353,13 +609,30 @@ pub fn Hero() -> impl IntoView {
                     </div>
                 </div>
                 <div class="relative mx-auto w-full max-w-sm lg:max-w-none lg:w-80 xl:w-96">
-                    <div class="absolute -inset-4 rounded-3xl bg-gradient-to-br from-cyan-400/20 to-transparent blur-2xl"></div>
+                    <div class="absolute -inset-4 rounded-3xl bg-gradient-to-br from-emerald-400/20 via-cyan-400/20 to-transparent blur-2xl"></div>
                     <img
                         src=PROFILE_PHOTO
                         alt="Tyler Port standing on sand dunes"
                         class="relative aspect-[3/4] w-full rounded-2xl border border-white/10 object-cover shadow-2xl shadow-cyan-500/10"
                         loading="eager"
                     />
+                    <a
+                        href="/clinical"
+                        class="group relative -mt-8 mx-3 flex items-center gap-3 rounded-2xl border border-emerald-400/35 bg-[#01081b]/95 px-3.5 py-2.5 shadow-xl shadow-black/50 backdrop-blur transition hover:border-cyan-300/60"
+                    >
+                        <DabneyCrestBadge size=CrestSize::Md decorative=true />
+                        <div class="min-w-0 flex-1">
+                            <p class="text-xs font-semibold tracking-tight text-white">
+                                "Dabney.moe"
+                            </p>
+                            <p class="truncate text-[11px] text-slate-300">
+                                "Clinical Workspace & Agentic Demo"
+                            </p>
+                        </div>
+                        <span class="text-xs font-semibold text-emerald-300 transition group-hover:translate-x-0.5 group-hover:text-cyan-300">
+                            "Explore →"
+                        </span>
+                    </a>
                 </div>
             </div>
         </section>
@@ -469,9 +742,14 @@ pub fn Projects() -> impl IntoView {
                     .iter()
                     .map(|p| {
                         view! {
-                            <article class="rounded-2xl border border-white/10 bg-white/[0.02] p-6 transition hover:border-cyan-400/40 hover:bg-white/[0.04]">
-                                <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
-                                    <h3 class="text-lg font-semibold text-white">{p.name}</h3>
+                            <article class="group rounded-2xl border border-white/10 bg-white/[0.02] p-6 transition hover:border-cyan-400/40 hover:bg-white/[0.04]">
+                                <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                                    <div class="flex items-center gap-3">
+                                        {p.icon.map(|icon_src| view! {
+                                            <DabneyCrestBadge size=CrestSize::Md src=icon_src decorative=true />
+                                        })}
+                                        <h3 class="text-lg font-semibold text-white">{p.name}</h3>
+                                    </div>
                                     <div class="flex flex-wrap items-baseline gap-4">
                                         {p.demo_href.map(|demo| {
                                             view! {
@@ -657,9 +935,12 @@ pub fn Footer() -> impl IntoView {
 
     view! {
         <footer class="border-t border-white/5 px-6 py-10">
-            <div class="mx-auto flex max-w-5xl flex-col items-center gap-2 text-center text-sm text-slate-500">
+            <div class="mx-auto flex max-w-5xl flex-col items-center gap-2 text-center text-sm text-slate-400">
                 <div class="flex flex-col items-center gap-2 sm:flex-row sm:justify-between sm:gap-4 w-full">
-                    <span>"© 2026 Tyler Port · dabney.moe"</span>
+                    <span class="inline-flex shrink-0 items-center gap-2 whitespace-nowrap">
+                        <DabneyCrestBadge size=CrestSize::Xs decorative=true />
+                        <span>"© 2026 Tyler Port · dabney.moe"</span>
+                    </span>
                     <span class="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
                         <A href="/privacy" attr:class="hover:text-slate-300">
                             {move || t(locale.get(), Msg::FooterPrivacy)}
@@ -677,15 +958,18 @@ pub fn Footer() -> impl IntoView {
                             {move || t(locale.get(), Msg::FooterCreators)}
                         </A>
                         <span class="text-slate-700">"·"</span>
+                        <A href="/clinical" attr:class="hover:text-slate-300">
+                            {move || t(locale.get(), Msg::ToolClinicalSuite)}
+                        </A>
+                        <span class="text-slate-700">"·"</span>
                         <A href="/ownership" attr:class="hover:text-slate-300">
                             {move || t(locale.get(), Msg::FooterCodeOwnership)}
                         </A>
                         <span class="text-slate-700">"·"</span>
                         <OpenConsentButton />
-                        <span class="text-slate-700">"·"</span>
-                        <span>{move || t(locale.get(), Msg::FooterBuiltWith)}</span>
                     </span>
                 </div>
+                <p class="text-xs text-slate-400">{move || t(locale.get(), Msg::FooterBuiltWith)}</p>
             </div>
         </footer>
     }
@@ -1000,5 +1284,91 @@ fn Section(
                 {children()}
             </div>
         </section>
+    }
+}
+
+#[cfg(test)]
+mod nav_menu_tests {
+    use super::OpenNavMenu;
+
+    #[test]
+    fn opening_one_menu_closes_the_other() {
+        let open = OpenNavMenu::None.toggled(OpenNavMenu::Commissions);
+        assert_eq!(open, OpenNavMenu::Commissions);
+        let open = open.toggled(OpenNavMenu::Tools);
+        assert_eq!(open, OpenNavMenu::Tools);
+        assert_eq!(open.toggled(OpenNavMenu::Tools), OpenNavMenu::None);
+    }
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod nav_render_tests {
+    use super::*;
+    use leptos_router::components::Router;
+    use leptos_router::location::RequestUrl;
+
+    #[test]
+    fn open_dropdown_exposes_links_as_menuitems_and_keeps_the_other_closed() {
+        let owner = Owner::new();
+        let html = owner.with(|| {
+            provide_context(RequestUrl::new("/"));
+            let open = RwSignal::new(OpenNavMenu::Tools);
+            view! {
+                <Router>
+                    <CommissionsMenu open=open />
+                    <ToolsMenu open=open />
+                </Router>
+            }
+            .to_html()
+        });
+        drop(owner);
+        assert_eq!(html.matches(r#"role="menu""#).count(), 1);
+        assert_eq!(
+            html.matches(r#"role="menuitem""#).count(),
+            crate::tools::TOOLS_LINKS.len()
+        );
+        // The role sits on the link itself, never on an inner element.
+        for link in crate::tools::TOOLS_LINKS {
+            let anchor = html
+                .split("<a ")
+                .find(|tag| tag.contains(&format!(r#"href="{}""#, link.href)))
+                .unwrap_or_else(|| panic!("missing link {}", link.href));
+            let open_tag = anchor.split('>').next().unwrap();
+            assert!(open_tag.contains(r#"role="menuitem""#), "{open_tag}");
+        }
+        assert!(!html.contains("<span role=\"menuitem\""));
+        assert!(!html.contains("/commissions/lapidary"));
+        assert!(html.contains(r#"aria-expanded="true""#));
+        assert!(html.contains(r#"aria-expanded="false""#));
+        assert!(html.contains(r#"id="nav-trigger-commissions""#));
+        assert!(html.contains(r#"id="nav-trigger-tools""#));
+    }
+
+    #[test]
+    fn app_icon_crest_renders_in_navbar_hero_projects_and_footer() {
+        let owner = Owner::new();
+        let html = owner.with(|| {
+            provide_context(RequestUrl::new("/"));
+            crate::consent::provide_consent_context();
+            view! {
+                <Router>
+                    <NavBar />
+                    <Hero />
+                    <Projects />
+                    <Footer />
+                </Router>
+            }
+            .to_html()
+        });
+        drop(owner);
+        // Crest app icon appears in NavBar, Hero showcase pill, Dabney.moe project card, and Footer.
+        assert!(
+            html.matches(DABNEY_APP_ICON).count() >= 4,
+            "expected app icon in NavBar, Hero, Projects, and Footer"
+        );
+        assert!(
+            html.contains("Clinical Workspace &amp; Agentic Demo")
+                || html.contains("Clinical Workspace & Agentic Demo")
+        );
     }
 }

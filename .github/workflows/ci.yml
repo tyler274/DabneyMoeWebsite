@@ -317,6 +317,10 @@ jobs:
         run: nix develop -c cargo clippy -p dabney-app --features health-connect -- -D warnings
       - name: "clippy: icon-gen"
         run: nix develop -c cargo clippy -p icon-gen -- -D warnings
+      - name: "clippy: forge-linear-sync"
+        run: nix develop -c cargo clippy -p forge-linear-sync --all-targets -- -D warnings
+      - name: "clippy: forge"
+        run: nix develop -c cargo clippy -p forge --all-targets -- -D warnings
       - name: Prepare Rust cache payload
         id: cache-payload
         if: ${{ !env.ACT && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.rust-cache.outputs.cache-hit != 'true' }}
@@ -556,6 +560,10 @@ jobs:
         run: nix develop -c cargo test -p dabney-app
       - name: "test: dabney-app (health-connect)"
         run: nix develop -c cargo test -p dabney-app --features health-connect
+      - name: "test: forge-linear-sync"
+        run: nix develop -c cargo test -p forge-linear-sync
+      - name: "test: forge"
+        run: nix develop -c cargo test -p forge
       - name: Prepare Rust cache payload
         id: cache-payload
         if: ${{ !env.ACT && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.rust-cache.outputs.cache-hit != 'true' }}

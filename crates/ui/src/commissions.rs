@@ -1,57 +1,47 @@
 //! Commission showcase pages: lapidary, artwork, and songs.
 
 use leptos::prelude::*;
-use leptos_router::components::A;
 
 use crate::commissions_data::{
     GalleryItem, LapidaryItem, ARTWORK_INTRO, ARTWORK_ITEMS, EILI_YOUTUBE, LAPIDARY_INTRO,
     LAPIDARY_ITEMS, SONGS, SONGS_INTRO,
 };
-use crate::i18n::{t, use_locale, Msg};
-use crate::sections::{Footer, NavBar};
+use crate::i18n::Msg;
+use crate::sections::{Footer, NavBar, NavDropdown, NavMenuLink, OpenNavMenu};
+
+/// Commission pages, shared by the desktop dropdown and the mobile menu.
+pub const COMMISSIONS_LINKS: &[NavMenuLink] = &[
+    NavMenuLink {
+        href: "/commissions/lapidary",
+        label: "Lapidary",
+        msg: None,
+        accent: false,
+    },
+    NavMenuLink {
+        href: "/commissions/artwork",
+        label: "Artwork",
+        msg: None,
+        accent: false,
+    },
+    NavMenuLink {
+        href: "/commissions/songs",
+        label: "Songs",
+        msg: None,
+        accent: false,
+    },
+];
 
 #[component]
-pub fn CommissionsMenu() -> impl IntoView {
-    let locale = use_locale();
-    let open = RwSignal::new(false);
-    let toggle = move |_| open.update(|value| *value = !*value);
-    let close = move |_| open.set(false);
-
+pub fn CommissionsMenu(open: RwSignal<OpenNavMenu>) -> impl IntoView {
     view! {
-        <div class="relative">
-            <button
-                type="button"
-                class="flex items-center gap-1 transition hover:text-white"
-                aria-expanded=move || open.get().to_string()
-                aria-haspopup="true"
-                on:click=toggle
-            >
-                {move || t(locale.get(), Msg::NavCommissions)}
-                <span class="text-[10px] opacity-70">{move || if open.get() { "▲" } else { "▼" }}</span>
-            </button>
-            <Show when=move || open.get()>
-                <div
-                    class="absolute end-0 z-50 mt-2 min-w-44 rounded-xl border border-white/10 bg-slate-900 py-2 shadow-xl"
-                    role="menu"
-                >
-                    <A href="/commissions/lapidary" on:click=close>
-                        <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            "Lapidary"
-                        </span>
-                    </A>
-                    <A href="/commissions/artwork" on:click=close>
-                        <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            "Artwork"
-                        </span>
-                    </A>
-                    <A href="/commissions/songs" on:click=close>
-                        <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            "Songs"
-                        </span>
-                    </A>
-                </div>
-            </Show>
-        </div>
+        <NavDropdown
+            label="Commissions"
+            label_msg=Msg::NavCommissions
+            menu=OpenNavMenu::Commissions
+            open=open
+            links=COMMISSIONS_LINKS
+            width="min-w-44"
+        />
     }
 }
 

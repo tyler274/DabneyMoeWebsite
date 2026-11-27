@@ -1,0 +1,86 @@
+# Tier 1 multi-site Caddyfile for one EU VPS. Caddy obtains and renews a Let's
+# Encrypt certificate per name, redirects HTTP to HTTPS, and proxies to the
+# compose services over the internal network. Names whose DNS does not point
+# at this host simply fail ACME without affecting the others.
+{
+	email {$ACME_EMAIL}
+}
+
+(common) {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=5184000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
+# Apex: the Leptos SSR site.
+{$SITE_DOMAIN:dabney.moe} {
+	import common
+	reverse_proxy dabney-web:8080 {
+		flush_interval -1
+	}
+}
+
+www.{$SITE_DOMAIN:dabney.moe} {
+	redir https://{$SITE_DOMAIN:dabney.moe}{uri} permanent
+}
+
+# Rust Git forge: large pushes and long-running clone/fetch streams.
+git.{$SITE_DOMAIN:dabney.moe} {
+	import common
+	request_body {
+		max_size 512MB
+	}
+	reverse_proxy {$FORGE_UPSTREAM:dabney-forge:8080} {
+		flush_interval -1
+		transport http {
+			read_timeout 30m
+			write_timeout 30m
+			response_header_timeout 30m
+		}
+	}
+}
+
+# Curie's static site and book, when served from this host instead of
+# Codeberg git-pages (terraform/eu curie_on_vps = true).
+curie.{$SITE_DOMAIN:dabney.moe} {
+	import common
+	root * /srv/curie-site
+	file_server
+}
+
+# Attic Nix binary cache: NARs can be large.
+cache.{$SITE_DOMAIN:dabney.moe} {
+	import common
+	request_body {
+		max_size 4GB
+	}
+	reverse_proxy attic:8080 {
+		transport http {
+			read_timeout 30m
+			write_timeout 30m
+		}
+	}
+}
+
+# Pocket ID (OIDC with passkeys).
+auth.{$SITE_DOMAIN:dabney.moe} {
+	import common
+	reverse_proxy pocket-id:1411
+}
+
+# Curie demo services (compose profile "curie"); DNS from dabney-moe infra/eu.
+app.{$SITE_DOMAIN:dabney.moe} {
+	import common
+	reverse_proxy physician-sample:8080 {
+		flush_interval -1
+	}
+}
+
+api.{$SITE_DOMAIN:dabney.moe} {
+	import common
+	reverse_proxy mobile-api:8080
+}

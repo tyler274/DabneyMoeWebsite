@@ -11,7 +11,7 @@
 }:
 pkgs.writeShellApplication {
   name = "ci";
-  runtimeInputs = [ rustToolchain ] ++ baseTools ++ tauriDeps;
+  runtimeInputs = [ rustToolchain pkgs.git ] ++ baseTools ++ tauriDeps;
   text = ''
     export PKG_CONFIG_PATH="${pkgConfigPath}"
     export LD_LIBRARY_PATH="${ldLibraryPath}"
@@ -41,6 +41,10 @@ pkgs.writeShellApplication {
     cargo clippy -p dabney-app -- -D warnings
     echo "==> clippy: icon-gen"
     cargo clippy -p icon-gen -- -D warnings
+    echo "==> clippy: forge-linear-sync"
+    cargo clippy -p forge-linear-sync --all-targets -- -D warnings
+    echo "==> clippy: forge"
+    cargo clippy -p forge --all-targets -- -D warnings
 
     echo "==> test: clinical-workspace (ssr)"
     cargo test -p clinical-workspace --features ssr
@@ -52,6 +56,10 @@ pkgs.writeShellApplication {
     cargo test -p web --features ssr
     echo "==> test: dabney-app (tauri context)"
     cargo test -p dabney-app
+    echo "==> test: forge-linear-sync"
+    cargo test -p forge-linear-sync
+    echo "==> test: forge"
+    cargo test -p forge
 
     echo "==> CI checks passed"
   '';

@@ -4,18 +4,22 @@
 //! rendering identically in native SSR and browser WebAssembly. All displayed patient
 //! charts are fictional synthetic examples containing zero real patient data.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
+#[cfg(any(feature = "csr", feature = "hydrate"))]
+use clinical_workspace::build_harness_llm_prompt;
 use clinical_workspace::{
-    answer_chart_question, synthetic_panel, today_overview, ChartRecord, ChatAnswer,
-    FollowUpStanding, PatientChart, RecordKind, ReplyDraft, Urgency,
+    run_agent_turn, synthetic_panel, today_overview, AgentAudience, AgentRunOptions, AgentThread,
+    ChartRecord, FollowUpStanding, PatientChart, RecordKind, ReplyDraft, RunBudget, Urgency,
 };
 use leptos::prelude::*;
 use leptos_meta::{Link, Meta, Title};
 use leptos_router::components::A;
+use serde::{Deserialize, Serialize};
 
+use crate::agent_chat::{AgentToolCatalogBar, AgenticThreadView};
 use crate::chart_citations::{
-    record_anchor_id, scroll_to_record_anchor, CitationAccent, CitationBadgeLink, CitationCardLink,
+    record_anchor_id, scroll_to_record_anchor, CitationAccent, CitationBadgeLink,
     CitationLinkedText,
 };
 #[cfg(any(feature = "csr", feature = "hydrate"))]
@@ -26,14 +30,23 @@ use crate::dashboard_layout::{
 };
 use crate::health_bridge::LocalLlmStatusUi;
 #[cfg(any(feature = "csr", feature = "hydrate"))]
-use crate::health_bridge::{
-    build_chart_chat_prompt, generate_local_llm, prepare_local_llm, probe_local_llm,
-};
+use crate::health_bridge::{generate_local_llm, prepare_local_llm, probe_local_llm};
 use crate::i18n::{t, use_locale, Locale, Msg};
 use crate::local_ai_chat::LocalLlmStatusBanner;
 use crate::patient_demo::ClinicalSuiteSwitcher;
-use crate::sections::{Footer, NavBar};
+use crate::sections::{CrestSize, DabneyCrestBadge, Footer, NavBar};
 use crate::AppShellMode;
+
+/// `localStorage` key holding each patient's reply-draft decision.
+#[cfg(any(feature = "csr", feature = "hydrate"))]
+const DRAFT_STORAGE_KEY: &str = "dabney_clinical_draft_decisions";
+
+/// DOM id of the selected patient's chart header, the scroll and focus
+/// target after choosing a patient on a small screen.
+const PATIENT_CHART_HEADER_ID: &str = "chart-summary";
+
+const EMPTY_QUESTION_MESSAGE: &str =
+    "Type a question about this patient's records, or pick a suggested question below.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PanelFilter {
@@ -56,8 +69,10 @@ impl PanelFilter {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 enum DraftReviewState {
+    #[default]
     PendingReview,
     ApprovedLocal,
     HeldForVisit,
@@ -79,6 +94,127 @@ impl DraftReviewState {
             Self::HeldForVisit => "border-cyan-400/30 bg-cyan-500/15 text-cyan-300",
         }
     }
+}
+
+/// Each patient's reply-draft decision, kept per patient so switching charts
+/// never carries one patient's decision over to another. Patients without an
+/// entry are awaiting review.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+struct DraftDecisions(HashMap<String, DraftReviewState>);
+
+impl DraftDecisions {
+    fn get(&self, patient_id: &str) -> DraftReviewState {
+        self.0.get(patient_id).copied().unwrap_or_default()
+    }
+
+    fn set(&mut self, patient_id: &str, state: DraftReviewState) {
+        match state {
+            DraftReviewState::PendingReview => {
+                self.0.remove(patient_id);
+            }
+            DraftReviewState::ApprovedLocal | DraftReviewState::HeldForVisit => {
+                self.0.insert(patient_id.to_string(), state);
+            }
+        }
+    }
+
+    #[cfg(any(feature = "csr", feature = "hydrate", test))]
+    fn to_json(&self) -> serde_json::Result<String> {
+        serde_json::to_string(self)
+    }
+
+    #[cfg(any(feature = "csr", feature = "hydrate", test))]
+    fn from_json(raw: &str) -> serde_json::Result<Self> {
+        serde_json::from_str(raw)
+    }
+}
+
+/// Reads saved draft decisions. A missing entry reads as `None`; an
+/// unreadable one is reported and also ignored, so a corrupt entry from an
+/// older build cannot break the page.
+#[cfg(any(feature = "csr", feature = "hydrate"))]
+fn load_draft_decisions() -> Option<DraftDecisions> {
+    let storage = web_sys::window()?.local_storage().ok()??;
+    let raw = storage.get_item(DRAFT_STORAGE_KEY).ok()??;
+    match DraftDecisions::from_json(&raw) {
+        Ok(decisions) => Some(decisions),
+        Err(err) => {
+            leptos::logging::warn!("clinical: ignoring unreadable saved draft decisions: {err}");
+            None
+        }
+    }
+}
+
+#[cfg(any(feature = "csr", feature = "hydrate"))]
+fn store_draft_decisions(decisions: &DraftDecisions) {
+    let json = match decisions.to_json() {
+        Ok(json) => json,
+        Err(err) => {
+            leptos::logging::warn!("clinical: could not encode draft decisions: {err}");
+            return;
+        }
+    };
+    let stored = web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .map(|storage| storage.set_item(DRAFT_STORAGE_KEY, &json));
+    if !matches!(stored, Some(Ok(()))) {
+        leptos::logging::warn!("clinical: draft decision was not saved to localStorage");
+    }
+}
+
+/// Scrolls to and focuses the chart header after a patient is chosen on a
+/// screen too narrow to show the chart beside the selector (below Tailwind's
+/// `lg` breakpoint).
+#[cfg(any(feature = "csr", feature = "hydrate"))]
+fn reveal_chart_on_small_screens() {
+    use wasm_bindgen::closure::Closure;
+    use wasm_bindgen::JsCast;
+
+    const LG_BREAKPOINT_PX: f64 = 1024.0;
+
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let narrow = window
+        .inner_width()
+        .ok()
+        .and_then(|w| w.as_f64())
+        .is_some_and(|w| w < LG_BREAKPOINT_PX);
+    if !narrow {
+        return;
+    }
+    // Wait a frame so the newly selected chart has rendered.
+    let reveal = Closure::once(Box::new(|| {
+        let Some(header) = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.get_element_by_id(PATIENT_CHART_HEADER_ID))
+        else {
+            return;
+        };
+        // `scroll-smooth` on <html> makes this a smooth scroll.
+        header.scroll_into_view();
+        if let Ok(header) = header.dyn_into::<web_sys::HtmlElement>() {
+            let options = web_sys::FocusOptions::new();
+            options.set_prevent_scroll(true);
+            let _ = header.focus_with_options(&options);
+        }
+    }) as Box<dyn FnMut()>);
+    let _ = window.request_animation_frame(reveal.as_ref().unchecked_ref());
+    reveal.forget();
+}
+
+/// "1 open follow-up", "2 open follow-ups".
+fn count_label(count: usize, singular: &str, plural: &str) -> String {
+    if count == 1 {
+        format!("1 {singular}")
+    } else {
+        format!("{count} {plural}")
+    }
+}
+
+fn open_follow_ups_label(count: usize) -> String {
+    count_label(count, "open follow-up", "open follow-ups")
 }
 
 const fn urgency_badge_class(urgency: Urgency) -> &'static str {
@@ -174,9 +310,10 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
                             {move || format!("Curie {}", t(locale.get(), Msg::ToolClinicalSuite))}
                         </h1>
                         <p class="text-base leading-relaxed text-slate-300">
-                            "A local-first clinical and patient companion showcase built from scratch: "
-                            "structured longitudinal patient charts, strict per-patient record citations, "
-                            "patient-controlled visit packets, and private on-device glucose & mood analytics."
+                            "A local-first Rust and WebAssembly clinical systems showcase engineered from scratch: "
+                            "typed longitudinal patient charts, strict per-patient citation boundaries, patient-controlled visit packets, and browser-native CGM & mood analytics. "
+                            "The physician demo runs its chart search entirely in your browser via WebAssembly and sends no chart data over the network; "
+                            "the same crate also serves a read-only JSON API at /clinical/api for scripted access."
                         </p>
                         <div class="flex flex-wrap gap-3 pt-2">
                             <A
@@ -205,6 +342,17 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
                                     {move || t(locale.get(), Msg::ToolAndroidApp)}
                                 </A>
                             })}
+                        </div>
+                    </div>
+                    <div class="hidden shrink-0 sm:flex sm:flex-col sm:items-center sm:gap-2.5 sm:rounded-2xl sm:border sm:border-emerald-400/25 sm:bg-[#01081b]/90 sm:p-4 sm:shadow-xl sm:shadow-emerald-500/10">
+                        <DabneyCrestBadge size=CrestSize::Lg decorative=false />
+                        <div class="text-center">
+                            <p class="font-mono text-[10px] font-semibold uppercase tracking-widest text-emerald-300">
+                                "dabney.moe"
+                            </p>
+                            <p class="text-[11px] text-slate-300">
+                                "Pure Rust · Zero PHI"
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -252,8 +400,8 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
                             "Identical Web & On-Device Experience"
                         </h3>
                         <p class="mt-2 text-sm leading-relaxed text-slate-400">
-                            "A single shared clinical core models longitudinal charts, follow-ups, reviewable draft replies, "
-                            "and grounded chart search—running directly on your device without external cloud dependencies."
+                            "A single dependency-light Rust crate models longitudinal charts, follow-ups, reviewable draft replies, "
+                            "and deterministic whole-word chart search. This site runs it in your browser via WebAssembly without external cloud dependencies; the server exposes the same functions as a JSON API."
                         </p>
                     </article>
                     <article class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
@@ -363,8 +511,8 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
                                     <p class="mt-3 text-sm text-slate-300">{patient.primary_focus}</p>
                                     <div class="mt-4 flex flex-wrap items-center gap-3 text-xs text-slate-400">
                                         <span class="rounded-md bg-white/5 px-2 py-0.5 text-cyan-300">{visit_label}</span>
-                                        <span>{format!("{} source records", patient.record_count)}</span>
-                                        <span>{format!("{} open follow-ups", patient.open_follow_ups)}</span>
+                                        <span>{count_label(patient.record_count, "source record", "source records")}</span>
+                                        <span>{open_follow_ups_label(patient.open_follow_ups)}</span>
                                     </div>
                                 </div>
                             }
@@ -409,26 +557,35 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
         }
     };
 
-    let (initial_id, initial_question, initial_answer, initial_draft_states, initial_draft_texts) =
+    let (initial_id, initial_question, initial_threads, initial_draft_texts) =
         panel.with_value(|charts| {
-            let mut states = HashMap::new();
             let mut texts = HashMap::new();
             for chart in charts {
                 if let Some(draft) = chart.reply_draft.as_ref() {
-                    states.insert(chart.id.clone(), DraftReviewState::PendingReview);
                     texts.insert(chart.id.clone(), draft.proposed_reply.clone());
                 }
             }
+            let mut map = HashMap::new();
             if let Some(first) = charts.first() {
                 let q = preset_questions_for_patient(&first.id)
                     .first()
                     .copied()
                     .unwrap_or("Summarize recent records")
                     .to_string();
-                let ans = answer_chart_question(first, &q);
-                (first.id.clone(), q, Some(ans), states, texts)
+                let mut thread = AgentThread::new(&first.id, AgentAudience::Physician);
+                let turn = run_agent_turn(
+                    first,
+                    &q,
+                    AgentAudience::Physician,
+                    thread.next_turn_index(),
+                    &thread.working_notes,
+                    AgentRunOptions::default(),
+                );
+                thread.record_turn(turn);
+                map.insert(first.id.clone(), thread);
+                (first.id.clone(), q, map, texts)
             } else {
-                (String::new(), String::new(), None, states, texts)
+                (String::new(), String::new(), map, texts)
             }
         });
 
@@ -437,9 +594,29 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
     let panel_filter = RwSignal::new(PanelFilter::All);
     let panel_search = RwSignal::new(String::new());
     let question_input = RwSignal::new(initial_question);
-    let latest_answer = RwSignal::new(initial_answer);
-    let draft_states = RwSignal::new(initial_draft_states);
+    let question_error = RwSignal::new(false);
+    let step_budget = RwSignal::new(6usize);
+    let threads = RwSignal::new(initial_threads);
+    // Server render and first hydration pass start with every draft pending,
+    // so the markup matches; saved decisions are applied once mounted.
+    let draft_decisions = RwSignal::new(DraftDecisions::default());
     let draft_texts = RwSignal::new(initial_draft_texts);
+
+    #[cfg(any(feature = "csr", feature = "hydrate"))]
+    Effect::new(move |_| {
+        if let Some(saved) = load_draft_decisions() {
+            draft_decisions.set(saved);
+        }
+    });
+
+    let cited_ids = Memo::new(move |_| {
+        let active_id = selected_id.get();
+        threads.with(|map| {
+            map.get(&active_id)
+                .map(AgentThread::latest_cited_ids)
+                .unwrap_or_default()
+        })
+    });
 
     // Optional on-device Gemini Nano (AICore) synthesis inside `moe.dabney.personal`.
     let llm_status = RwSignal::new(Option::<LocalLlmStatusUi>::None);
@@ -484,20 +661,50 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
         llm_thinking.set(false);
         llm_error.set(None);
         focused_record_id.set(None);
-        selected_id.set(patient_id.clone());
         let default_q = preset_questions_for_patient(&patient_id)
             .first()
             .copied()
             .unwrap_or("Summarize recent records")
             .to_string();
-        question_input.set(default_q.clone());
-        let next_answer = panel.with_value(|charts| {
-            charts
-                .iter()
-                .find(|p| p.id == patient_id)
-                .map(|p| answer_chart_question(p, &default_q))
+        let has_existing = threads.with_untracked(|map| {
+            map.get(&patient_id)
+                .is_some_and(|thread| !thread.turns.is_empty())
         });
-        latest_answer.set(next_answer);
+        if !has_existing {
+            let max_steps = step_budget.get_untracked();
+            let seeded = panel.with_value(|charts| {
+                charts.iter().find(|p| p.id == patient_id).map(|chart| {
+                    let mut thread = AgentThread::new(&chart.id, AgentAudience::Physician);
+                    let turn = run_agent_turn(
+                        chart,
+                        &default_q,
+                        AgentAudience::Physician,
+                        thread.next_turn_index(),
+                        &thread.working_notes,
+                        AgentRunOptions {
+                            budget: RunBudget {
+                                max_steps,
+                                max_tool_calls: max_steps,
+                                max_citations: 4,
+                            },
+                            stop_after_step: None,
+                        },
+                    );
+                    thread.record_turn(turn);
+                    thread
+                })
+            });
+            if let Some(thread) = seeded {
+                threads.update(|map| {
+                    map.insert(patient_id.clone(), thread);
+                });
+            }
+        }
+        question_input.set(default_q);
+        question_error.set(false);
+        selected_id.set(patient_id);
+        #[cfg(any(feature = "csr", feature = "hydrate"))]
+        reveal_chart_on_small_screens();
     };
 
     let jump_to_record = Callback::new(move |record_id: String| {
@@ -518,52 +725,89 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
     });
 
     let ask_question = move |raw_q: String| {
-        let trimmed = raw_q.trim().to_string();
+        let trimmed = raw_q.trim();
         if trimmed.is_empty() {
+            question_error.set(true);
             return;
         }
-        let active_id = selected_id.get();
-        let next_pair = panel.with_value(|charts| {
-            charts
-                .iter()
-                .find(|p| p.id == active_id)
-                .map(|p| (p.display_name.clone(), answer_chart_question(p, &trimmed)))
+        question_error.set(false);
+        focused_record_id.set(None);
+        let active_id = selected_id.get_untracked();
+        let max_steps = step_budget.get_untracked();
+        let (turn_index, prior_notes) = threads.with_untracked(|map| {
+            map.get(&active_id)
+                .map(|t| (t.next_turn_index(), t.working_notes.clone()))
+                .unwrap_or_else(|| (1, Vec::new()))
         });
-        let Some((patient_name, grounded)) = next_pair else {
+        let next_pair = panel.with_value(|charts| {
+            charts.iter().find(|p| p.id == active_id).map(|p| {
+                let turn = run_agent_turn(
+                    p,
+                    trimmed,
+                    AgentAudience::Physician,
+                    turn_index,
+                    &prior_notes,
+                    AgentRunOptions {
+                        budget: RunBudget {
+                            max_steps,
+                            max_tool_calls: max_steps,
+                            max_citations: 4,
+                        },
+                        stop_after_step: None,
+                    },
+                );
+                (p.clone(), turn)
+            })
+        });
+        let Some((patient_chart, turn)) = next_pair else {
             return;
         };
-        latest_answer.set(Some(grounded.clone()));
+        threads.update(|map| {
+            map.entry(active_id.clone())
+                .or_insert_with(|| AgentThread::new(&active_id, AgentAudience::Physician))
+                .record_turn(turn.clone());
+        });
         llm_error.set(None);
 
         let req_id = llm_req_seq.get_untracked() + 1;
         llm_req_seq.set(req_id);
 
         let should_run_llm = use_local_llm.get_untracked()
-            && !grounded.citations.is_empty()
+            && turn.grounded
             && llm_status
                 .get_untracked()
                 .is_some_and(|s| s.enabled && s.availability == "available");
 
         #[cfg(any(feature = "csr", feature = "hydrate"))]
         if should_run_llm {
-            let prompt = build_chart_chat_prompt("physician", &patient_name, &trimmed, &grounded);
+            let prompt = build_harness_llm_prompt(&patient_chart, &turn);
+            let pid_for_cb = active_id.clone();
             llm_thinking.set(true);
-            generate_local_llm(&prompt, Some(340), move |res| {
+            generate_local_llm(&prompt, Some(360), move |res| {
                 if llm_req_seq.get_untracked() != req_id {
                     return;
                 }
                 llm_thinking.set(false);
                 match res {
                     Ok(gen) => {
-                        let mut enhanced = grounded.clone();
+                        let mut enhanced = turn.clone();
                         enhanced.answer = gen.text;
+                        enhanced.engine_label = format!(
+                            "Agentic Harness + {} ({} ms)",
+                            gen.model_name, gen.latency_ms
+                        );
                         enhanced.basis = format!(
-                            "{} (on-device · {} ms) grounded strictly in {} verbatim single-patient citation(s).",
+                            "{} (on-device · {} ms) synthesized strictly from {} verified harness step(s) and {} citation(s).",
                             gen.model_name,
                             gen.latency_ms,
+                            enhanced.steps.len(),
                             enhanced.citations.len()
                         );
-                        latest_answer.set(Some(enhanced));
+                        threads.update(|map| {
+                            if let Some(thread) = map.get_mut(&pid_for_cb) {
+                                thread.replace_turn(enhanced);
+                            }
+                        });
                     }
                     Err(_) => {
                         llm_error.set(Some(
@@ -575,12 +819,24 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
             });
         }
         #[cfg(not(any(feature = "csr", feature = "hydrate")))]
-        let _ = (patient_name, should_run_llm);
+        let _ = (patient_chart, should_run_llm);
+    };
+
+    let clear_active_thread = move |_| {
+        let active_id = selected_id.get_untracked();
+        llm_req_seq.update(|n| *n += 1);
+        llm_thinking.set(false);
+        focused_record_id.set(None);
+        threads.update(|map| {
+            if let Some(thread) = map.get_mut(&active_id) {
+                thread.clear();
+            }
+        });
     };
 
     let on_submit_question = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
-        ask_question(question_input.get());
+        ask_question(question_input.get_untracked());
     };
 
     let (total_patients, high_count, moderate_count, routine_count, draft_count) = panel
@@ -661,14 +917,14 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
             // Synthetic-data banner
             <div
                 class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-5 py-3.5"
-                role="status"
+                role="note"
             >
                 <p class="text-xs leading-relaxed text-emerald-100 sm:text-sm">
                     <span class="font-semibold text-emerald-300">
                         {move || format!("{}: ", t(locale.get(), Msg::ZeroPhiBannerBadge))}
                     </span>
                     {overview.synthetic_notice.clone()}
-                    " Runs locally on your device with zero external services."
+                    " Chart search runs deterministically in Rust/WASM on your device, with zero external services."
                 </p>
                 <span class="rounded-full border border-emerald-400/40 bg-slate-950/60 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-emerald-300">
                     {move || t(locale.get(), Msg::OfflineReadyBadge)}
@@ -701,7 +957,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                         view! {
                             <button
                                 type="button"
-                                aria-pressed=move || panel_filter.get() == f
+                                aria-pressed=move || (panel_filter.get() == f).to_string()
                                 on:click=move |_| panel_filter.set(f)
                                 class=move || {
                                     if panel_filter.get() == f {
@@ -796,7 +1052,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                         view! {
                                             <button
                                                 type="button"
-                                                aria-pressed=move || selected_id.get() == pid_active
+                                                aria-pressed=move || (selected_id.get() == pid_active).to_string()
                                                 on:click=move |_| select_patient(pid_click.clone())
                                                 class=move || {
                                                     if selected_id.get() == pid_cls {
@@ -834,7 +1090,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                             <h2 class="text-xs font-semibold uppercase tracking-widest text-slate-400">
                                 {move || t(locale.get(), Msg::PhysicianPatientPanel)}
                             </h2>
-                            <span class="text-[11px] text-slate-500">{format!("{total_patients} total")}</span>
+                            <span class="text-[11px] text-slate-400">{format!("{total_patients} total")}</span>
                         </div>
                         <div class="mb-3">
                             <label for="physician-panel-search" class="sr-only">
@@ -846,14 +1102,14 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                 placeholder=move || t(locale.get(), Msg::PhysicianSearchPlaceholder)
                                 prop:value=move || panel_search.get()
                                 on:input=move |ev| panel_search.set(event_target_value(&ev))
-                                class="min-h-[38px] w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-cyan-400 focus:outline-none"
+                                class="min-h-[38px] w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-1.5 text-xs text-white placeholder-slate-400 focus:border-cyan-400 focus:outline-none"
                             />
                         </div>
                         <div class="space-y-2.5">
                             {move || {
                                 let active_filter = panel_filter.get();
                                 let search_q = panel_search.get().trim().to_lowercase();
-                                let states_map = draft_states.get();
+                                let decisions_map = draft_decisions.get();
                                 panel.with_value(|charts| {
                                     let visible: Vec<&PatientChart> = charts
                                         .iter()
@@ -888,10 +1144,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                                 .map(|v| format!("{} · {}", v.starts_at, v.modality))
                                                 .unwrap_or_else(|| "Asynchronous review".to_string());
                                             let draft_badge = patient.reply_draft.as_ref().map(|_| {
-                                                let st = states_map
-                                                    .get(&patient.id)
-                                                    .copied()
-                                                    .unwrap_or(DraftReviewState::PendingReview);
+                                                let st = decisions_map.get(&patient.id);
                                                 match st {
                                                     DraftReviewState::PendingReview => (
                                                         "Draft reply",
@@ -980,15 +1233,9 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                             .into_any();
                         };
 
-                        let active_answer = latest_answer
-                            .get()
-                            .filter(|ans| ans.patient_id == patient.id);
-                        let cited_ids: HashSet<String> = active_answer
-                            .as_ref()
-                            .map(|ans| ans.citations.iter().map(|c| c.record_id.clone()).collect())
-                            .unwrap_or_default();
                         let presets = preset_questions_for_patient(&patient.id);
                         let urgency_cls = urgency_badge_class(patient.urgency);
+                        let answer_patient_id = patient.id.clone();
 
                         let has_reply_draft = patient.reply_draft.is_some();
                         let rec_total = patient.records.len();
@@ -1036,7 +1283,13 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                 </nav>
 
                                 // Selected patient header
-                                <div id="chart-summary" class="order-2 scroll-mt-32 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
+                                <div
+                                    id=PATIENT_CHART_HEADER_ID
+                                    role="region"
+                                    tabindex="-1"
+                                    aria-label=format!("Chart for {}", patient.display_name)
+                                    class="order-2 scroll-mt-32 rounded-2xl border border-white/10 bg-white/[0.02] p-6 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60"
+                                >
                                     <div class="flex flex-wrap items-start justify-between gap-4">
                                         <div>
                                             <div class="flex flex-wrap items-center gap-2.5">
@@ -1066,7 +1319,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                     </p>
                                 </div>
 
-                                // Interactive Chart-Grounded Q&A
+                                // Interactive Bounded Agentic Chat Harness
                                 <div
                                     id="chart-qa"
                                     class=move || {
@@ -1079,19 +1332,49 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                         format!("{vis}{ord} scroll-mt-32 rounded-2xl border border-cyan-400/25 bg-slate-900/50 p-6 space-y-4")
                                     }
                                 >
-                                    <div>
-                                        <p class="text-xs font-semibold uppercase tracking-widest text-cyan-400">
-                                            {move || t(locale.get(), Msg::PhysicianQaEyebrow)}
-                                        </p>
-                                        <h3 class="mt-1 text-lg font-semibold text-white">
-                                            {move || t(locale.get(), Msg::PhysicianQaHeading)}
-                                        </h3>
-                                        <p class="mt-1 text-xs text-slate-400">
-                                            "Scoped strictly to "
-                                            <span class="font-mono text-slate-200">{patient.mrn.clone()}</span>
-                                            " — cited source record IDs are highlighted below."
-                                        </p>
+                                    <div class="flex flex-wrap items-start justify-between gap-3">
+                                        <div>
+                                            <p class="text-xs font-semibold uppercase tracking-widest text-cyan-400">
+                                                "Bounded Agentic Chat Harness"
+                                            </p>
+                                            <h3 class="mt-1 text-lg font-semibold text-white">
+                                                {move || t(locale.get(), Msg::PhysicianQaHeading)}
+                                            </h3>
+                                            <p class="mt-1 text-xs text-slate-400">
+                                                "Multi-step tool-calling retrieval with working notes scoped strictly to "
+                                                <span class="font-mono text-slate-200">{patient.mrn.clone()}</span>
+                                                " — cited source record IDs are highlighted below."
+                                            </p>
+                                        </div>
+                                        <div class="flex flex-wrap items-center gap-2 text-xs">
+                                            <label class="inline-flex items-center gap-1.5 text-slate-300">
+                                                <span class="text-[11px] text-slate-400">"Step budget"</span>
+                                                <select
+                                                    aria-label="Agent step budget"
+                                                    class="rounded-lg border border-white/15 bg-slate-950 px-2 py-1 font-mono text-[11px] text-slate-200 focus:border-cyan-400/60 focus:outline-none"
+                                                    prop:value=move || step_budget.get().to_string()
+                                                    on:change=move |ev| {
+                                                        if let Ok(parsed) = event_target_value(&ev).parse::<usize>() {
+                                                            step_budget.set(parsed.clamp(2, 6));
+                                                        }
+                                                    }
+                                                >
+                                                    <option value="2">"2 steps"</option>
+                                                    <option value="4">"4 steps"</option>
+                                                    <option value="6">"6 steps"</option>
+                                                </select>
+                                            </label>
+                                            <button
+                                                type="button"
+                                                on:click=clear_active_thread
+                                                class="rounded-full border border-white/15 px-3 py-1 text-[11px] text-slate-300 transition hover:border-cyan-400/40 hover:text-white"
+                                            >
+                                                "Clear thread"
+                                            </button>
+                                        </div>
                                     </div>
+
+                                    <AgentToolCatalogBar audience=AgentAudience::Physician />
 
                                     {move || {
                                         llm_status.get().filter(|s| s.enabled).map(|status| {
@@ -1107,35 +1390,57 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                         })
                                     }}
 
-                                    <form on:submit=on_submit_question class="flex flex-col gap-2.5 sm:flex-row">
-                                        <input
-                                            type="text"
-                                            aria-label="Ask a clinical question about the selected chart"
-                                            placeholder=move || t(locale.get(), Msg::PhysicianAskPlaceholder)
-                                            prop:value=move || question_input.get()
-                                            on:input=move |ev| question_input.set(event_target_value(&ev))
-                                            class="flex-1 rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-cyan-400/60 focus:outline-none focus:ring-1 focus:ring-cyan-400/50"
-                                        />
-                                        <button
-                                            type="submit"
-                                            disabled=move || llm_thinking.get()
-                                            class="rounded-full bg-cyan-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50"
-                                        >
-                                            {move || {
-                                                let loc = locale.get();
-                                                if llm_thinking.get() {
-                                                    t(loc, Msg::PhysicianSynthesizing)
-                                                } else {
-                                                    t(loc, Msg::PhysicianAskButton)
+                                    <form on:submit=on_submit_question class="space-y-2" novalidate>
+                                        <div class="flex flex-col gap-2.5 sm:flex-row">
+                                            <input
+                                                type="text"
+                                                aria-label="Ask a clinical question about the selected chart"
+                                                aria-invalid=move || question_error.get().to_string()
+                                                aria-describedby="chart-question-error"
+                                                placeholder=move || t(locale.get(), Msg::PhysicianAskPlaceholder)
+                                                prop:value=move || question_input.get()
+                                                on:input=move |ev| {
+                                                    question_input.set(event_target_value(&ev));
+                                                    question_error.set(false);
                                                 }
-                                            }}
-                                        </button>
+                                                class=move || {
+                                                    let border = if question_error.get() {
+                                                        "border-rose-400/70"
+                                                    } else {
+                                                        "border-white/15"
+                                                    };
+                                                    format!("flex-1 rounded-xl border {border} bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder:text-slate-400 focus:border-cyan-400/60 focus:outline-none focus:ring-1 focus:ring-cyan-400/50")
+                                                }
+                                            />
+                                            <button
+                                                type="submit"
+                                                disabled=move || llm_thinking.get()
+                                                class="rounded-full bg-cyan-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50"
+                                            >
+                                                {move || {
+                                                    let loc = locale.get();
+                                                    if llm_thinking.get() {
+                                                        t(loc, Msg::PhysicianSynthesizing)
+                                                    } else {
+                                                        t(loc, Msg::PhysicianAskButton)
+                                                    }
+                                                }}
+                                            </button>
+                                        </div>
+                                        <p id="chart-question-error" class="min-h-[1rem] text-xs text-rose-300" role="alert">
+                                            {move || question_error.get().then_some(EMPTY_QUESTION_MESSAGE)}
+                                        </p>
                                     </form>
 
                                     <div class="flex flex-wrap gap-2">
                                         {presets
                                             .iter()
-                                            .map(|&preset| {
+                                            .copied()
+                                            .chain([
+                                                "Review active medications and follow-up plan",
+                                                "Recap earlier working notes",
+                                            ])
+                                            .map(|preset| {
                                                 view! {
                                                     <button
                                                         type="button"
@@ -1174,17 +1479,27 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                         </p>
                                     })}
 
-                                    <div aria-live="polite">
-                                        {active_answer.map(|ans| {
-                                            let records = patient.records.clone();
-                                            view! {
-                                                <GroundedAnswerView
-                                                    answer=ans
-                                                    records=records
-                                                    on_select_record=jump_to_record
-                                                />
+                                    <div aria-live="polite" aria-label="Chart answer">
+                                        {
+                                            let thread_records = patient.records.clone();
+                                            move || {
+                                                let recs = thread_records.clone();
+                                                threads
+                                                    .get()
+                                                    .get(&answer_patient_id)
+                                                    .filter(|t| !t.turns.is_empty())
+                                                    .cloned()
+                                                    .map(|thread| view! {
+                                                        <AgenticThreadView
+                                                            thread=thread
+                                                            active_record=focused_record_id
+                                                            records=Some(recs)
+                                                            anchor_prefix="chart-record"
+                                                            on_select_record=Some(jump_to_record)
+                                                        />
+                                                    })
                                             }
-                                        })}
+                                        }
                                     </div>
                                 </div>
 
@@ -1247,7 +1562,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                                             <p class="mt-0.5 text-[11px] text-slate-300">
                                                                 {med.schedule.clone()}
                                                             </p>
-                                                            <p class="mt-1 text-[11px] text-slate-500">
+                                                            <p class="mt-1 text-[11px] text-slate-400">
                                                                 {med.indication.clone()}
                                                             </p>
                                                         </li>
@@ -1308,7 +1623,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                                 draft=draft
                                                 records=records
                                                 on_select_record=jump_to_record
-                                                states=draft_states
+                                                decisions=draft_decisions
                                                 texts=draft_texts
                                             />
                                         </div>
@@ -1336,7 +1651,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                             </p>
                                         </div>
                                         <span class="rounded-full border border-white/10 bg-slate-950 px-3 py-1 font-mono text-xs text-slate-300">
-                                            {format!("{} records", patient.records.len())}
+                                            {count_label(patient.records.len(), "record", "records")}
                                         </span>
                                     </div>
                                     {move || {
@@ -1355,19 +1670,22 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                             .records
                                             .into_iter()
                                             .map(|rec| {
-                                                let is_cited = cited_ids.contains(&rec.id);
                                                 let rec_id = rec.id.clone();
+                                                let rec_id_for_cite = rec.id.clone();
                                                 let is_focused = Memo::new(move |_| {
                                                     focused_record_id.with(|f| {
                                                         f.as_deref() == Some(rec_id.as_str())
                                                     })
+                                                });
+                                                let is_cited = Memo::new(move |_| {
+                                                    cited_ids.with(|ids| ids.contains(&rec_id_for_cite))
                                                 });
                                                 view! {
                                                     {move || {
                                                         view! {
                                                             <SourceRecordCard
                                                                 record=rec.clone()
-                                                                is_cited=is_cited
+                                                                is_cited=is_cited.get()
                                                                 is_focused=is_focused.get()
                                                                 on_clear_focus=clear_focused_record
                                                             />
@@ -1391,93 +1709,12 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
 }
 
 #[component]
-fn GroundedAnswerView(
-    answer: ChatAnswer,
-    records: Vec<ChartRecord>,
-    on_select_record: Callback<String>,
-) -> impl IntoView {
-    let locale = use_locale();
-    let record_map: HashMap<String, ChartRecord> = records
-        .iter()
-        .cloned()
-        .map(|rec| (rec.id.clone(), rec))
-        .collect();
-    let records_for_basis = records.clone();
-
-    view! {
-        <div class="rounded-xl border border-white/10 bg-slate-950/80 p-4 space-y-4">
-            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-3">
-                <p class="text-xs font-medium text-cyan-300">
-                    {format!("Q: {}", answer.question)}
-                </p>
-                <span class="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-300">
-                    {format!("{} cited record(s)", answer.citations.len())}
-                </span>
-            </div>
-
-            <CitationLinkedText
-                text=answer.answer
-                records=records
-                anchor_prefix="chart-record"
-                accent=CitationAccent::Cyan
-                on_select=on_select_record
-                class="text-sm leading-relaxed text-slate-200"
-            />
-
-            <div class="space-y-2.5">
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                    <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                        {move || t(locale.get(), Msg::CitationCitedRecordsHeading)}
-                    </p>
-                    {move || {
-                        let loc = locale.get();
-                        (loc != Locale::En).then(|| view! {
-                            <span class="text-[11px] text-cyan-200/85">
-                                {t(loc, Msg::CitationSourceLanguageNote)}
-                            </span>
-                        })
-                    }}
-                </div>
-                <div class="grid gap-2.5 sm:grid-cols-2">
-                    {answer
-                        .citations
-                        .into_iter()
-                        .map(|cite| {
-                            let matching_record = record_map.get(&cite.record_id).cloned();
-                            view! {
-                                <CitationCardLink
-                                    citation=cite
-                                    record=matching_record
-                                    anchor_prefix="chart-record"
-                                    accent=CitationAccent::Cyan
-                                    on_select=on_select_record
-                                />
-                            }
-                        })
-                        .collect_view()}
-                </div>
-            </div>
-
-            <div class="border-t border-white/5 pt-2.5 font-mono text-[11px] text-slate-400">
-                <CitationLinkedText
-                    text=answer.basis
-                    records=records_for_basis
-                    anchor_prefix="chart-record"
-                    accent=CitationAccent::Cyan
-                    on_select=on_select_record
-                />
-            </div>
-        </div>
-    }
-}
-
-#[component]
 fn ReplyDraftCard(
     patient_id: String,
     draft: ReplyDraft,
     records: Vec<ChartRecord>,
     on_select_record: Callback<String>,
-    states: RwSignal<HashMap<String, DraftReviewState>>,
+    decisions: RwSignal<DraftDecisions>,
     texts: RwSignal<HashMap<String, String>>,
 ) -> impl IntoView {
     let original_reply = draft.proposed_reply.clone();
@@ -1485,24 +1722,21 @@ fn ReplyDraftCard(
         .iter()
         .find(|rec| rec.id == draft.message_record_id)
         .cloned();
-    let pid_state = patient_id.clone();
+    let patient_id_stored = StoredValue::new(patient_id.clone());
     let pid_text = patient_id.clone();
     let pid_edited = patient_id.clone();
     let pid_input = patient_id.clone();
-    let pid_approve = patient_id.clone();
-    let pid_hold = patient_id.clone();
-    let pid_reset = patient_id.clone();
+    let pid_reset = patient_id;
     let orig_for_edited = original_reply.clone();
     let orig_for_reset = original_reply.clone();
 
-    let current_state = move || {
-        states.with(|map| {
-            map.get(&pid_state)
-                .copied()
-                .unwrap_or(DraftReviewState::PendingReview)
-        })
+    let state =
+        Memo::new(move |_| decisions.with(|d| patient_id_stored.with_value(|id| d.get(id))));
+    let decide = move |next: DraftReviewState| {
+        decisions.update(|d| patient_id_stored.with_value(|id| d.set(id, next)));
+        #[cfg(any(feature = "csr", feature = "hydrate"))]
+        decisions.with_untracked(store_draft_decisions);
     };
-    let current_state_cls = current_state.clone();
 
     let current_text = move || {
         texts.with(|map| {
@@ -1558,11 +1792,11 @@ fn ReplyDraftCard(
                         class=move || {
                             format!(
                                 "rounded-full border px-3 py-1 text-xs font-semibold {}",
-                                current_state_cls().badge_class()
+                                state.get().badge_class()
                             )
                         }
                     >
-                        {move || current_state().label()}
+                        {move || state.get().label()}
                     </span>
                 </div>
             </div>
@@ -1584,11 +1818,9 @@ fn ReplyDraftCard(
                         let val = event_target_value(&ev);
                         let pid = pid_input.clone();
                         texts.update(|map| {
-                            map.insert(pid.clone(), val);
+                            map.insert(pid, val);
                         });
-                        states.update(|map| {
-                            map.insert(pid, DraftReviewState::PendingReview);
-                        });
+                        decide(DraftReviewState::PendingReview);
                     }
                     class="w-full rounded-xl border border-white/15 bg-slate-950/85 p-3.5 text-sm leading-relaxed text-slate-100 focus:border-amber-400/60 focus:outline-none focus:ring-1 focus:ring-amber-400/50"
                 />
@@ -1606,24 +1838,16 @@ fn ReplyDraftCard(
             <div class="flex flex-wrap gap-2 pt-1">
                 <button
                     type="button"
-                    on:click=move |_| {
-                        let pid = pid_approve.clone();
-                        states.update(|map| {
-                            map.insert(pid, DraftReviewState::ApprovedLocal);
-                        });
-                    }
+                    aria-pressed=move || (state.get() == DraftReviewState::ApprovedLocal).to_string()
+                    on:click=move |_| decide(DraftReviewState::ApprovedLocal)
                     class="min-h-[38px] rounded-full bg-emerald-500 px-4 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-400"
                 >
                     "Approve draft (demo)"
                 </button>
                 <button
                     type="button"
-                    on:click=move |_| {
-                        let pid = pid_hold.clone();
-                        states.update(|map| {
-                            map.insert(pid, DraftReviewState::HeldForVisit);
-                        });
-                    }
+                    aria-pressed=move || (state.get() == DraftReviewState::HeldForVisit).to_string()
+                    on:click=move |_| decide(DraftReviewState::HeldForVisit)
                     class="min-h-[38px] rounded-full border border-cyan-400/30 bg-cyan-500/10 px-4 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
                 >
                     "Hold for visit"
@@ -1633,9 +1857,7 @@ fn ReplyDraftCard(
                     on:click=move |_| {
                         let pid = pid_reset.clone();
                         let orig = orig_for_reset.clone();
-                        states.update(|map| {
-                            map.insert(pid.clone(), DraftReviewState::PendingReview);
-                        });
+                        decide(DraftReviewState::PendingReview);
                         texts.update(|map| {
                             map.insert(pid, orig);
                         });
@@ -1781,6 +2003,7 @@ mod tests {
         assert!(html.contains("Curie Clinic"));
         assert!(html.contains("Curie Mobile"));
         assert!(html.contains("/dabney-elephant.svg"));
+        assert!(html.contains("/favicon.png"));
         assert!(html.contains("/clinical/patient"));
         assert!(html.contains("/clinical/physician"));
         assert!(html.contains("/mental-health"));
@@ -1822,6 +2045,11 @@ mod tests {
         assert!(html.contains("nk-lab-02"));
         assert!(html.contains("Metformin ER"));
         assert!(html.contains("Cited in answer"));
+        assert!(html.contains("Bounded Agentic Chat Harness"));
+        assert!(html.contains("chart_search"));
+        assert!(html.contains("chart_read"));
+        assert!(html.contains("working_note_save"));
+        assert!(html.contains("Cited values:"));
         assert!(html.contains("Reviewable Patient Reply Draft"));
         assert!(html.contains("href=\"#chart-record-nk-cgm-01\""));
         assert!(html.contains("href=\"#chart-record-nk-lab-02\""));
@@ -1891,5 +2119,90 @@ mod tests {
         assert!(unfocused_html.contains("id=\"chart-record-nk-cgm-01\""));
         assert!(!unfocused_html.contains("Focused from citation"));
         assert!(!unfocused_html.contains("Back to Q&A ↑"));
+    }
+
+    #[test]
+    fn physician_workspace_is_accessible_and_linkable() {
+        let html = render_in_app_context("/clinical/physician", || {
+            view! { <PhysicianWorkspacePage /> }.into_any()
+        });
+        // Live regions for the answer and the draft decision.
+        assert!(html.contains(r#"aria-live="polite" aria-label="Chart answer""#));
+        assert!(html.contains(r#"role="status" aria-live="polite""#));
+        // Citation chips link to their source records, which carry the anchor.
+        assert!(html.contains(r##"href="#chart-record-nk-cgm-01""##));
+        assert!(html.contains(r#"id="chart-record-nk-cgm-01""#));
+        assert!(html.contains("scroll-mt-32 rounded-xl"));
+        // Empty-question guidance target and mobile chart focus target.
+        assert!(html.contains(r#"aria-describedby="chart-question-error""#));
+        assert!(html.contains(r#"id="chart-summary" role="region" tabindex="-1""#));
+        // Sticky sidebar panel selector and AA-contrast metadata.
+        assert!(html.contains("lg:col-span-4 space-y-3 lg:sticky"));
+        assert!(!html.contains("1 open follow-ups"));
+        assert!(!html.contains("text-slate-500"));
+    }
+
+    #[test]
+    fn clinical_overview_copy_matches_the_in_browser_workspace() {
+        let html = render_in_app_context("/clinical", || {
+            view! { <ClinicalOverviewPage /> }.into_any()
+        });
+        assert!(!html.contains("reverse proxy"));
+        assert!(html.contains("entirely in your browser via WebAssembly"));
+        assert!(html.contains("1 open follow-up<"));
+        assert!(!html.contains("1 open follow-ups"));
+        assert!(!html.contains("text-slate-500"));
+    }
+}
+
+#[cfg(test)]
+mod logic_tests {
+    use super::*;
+
+    #[test]
+    fn draft_decisions_are_kept_per_patient() {
+        let mut decisions = DraftDecisions::default();
+        decisions.set("pt-nadia-kulkarni", DraftReviewState::ApprovedLocal);
+        decisions.set("pt-carlos-mendez", DraftReviewState::HeldForVisit);
+        assert_eq!(
+            decisions.get("pt-nadia-kulkarni"),
+            DraftReviewState::ApprovedLocal
+        );
+        assert_eq!(
+            decisions.get("pt-carlos-mendez"),
+            DraftReviewState::HeldForVisit
+        );
+        assert_eq!(
+            decisions.get("pt-priya-nair"),
+            DraftReviewState::PendingReview
+        );
+        decisions.set("pt-carlos-mendez", DraftReviewState::PendingReview);
+        assert_eq!(
+            decisions.get("pt-carlos-mendez"),
+            DraftReviewState::PendingReview
+        );
+        assert_eq!(
+            decisions.get("pt-nadia-kulkarni"),
+            DraftReviewState::ApprovedLocal
+        );
+    }
+
+    #[test]
+    fn draft_decisions_survive_a_storage_round_trip() {
+        let mut decisions = DraftDecisions::default();
+        decisions.set("pt-nadia-kulkarni", DraftReviewState::HeldForVisit);
+        let json = decisions.to_json().expect("encode");
+        assert_eq!(json, r#"{"pt-nadia-kulkarni":"held_for_visit"}"#);
+        assert_eq!(DraftDecisions::from_json(&json).expect("decode"), decisions);
+        assert!(DraftDecisions::from_json(r#"{"pt-nadia-kulkarni":"sent"}"#).is_err());
+        assert!(DraftDecisions::from_json("not json").is_err());
+    }
+
+    #[test]
+    fn counts_are_singularized() {
+        assert_eq!(open_follow_ups_label(0), "0 open follow-ups");
+        assert_eq!(open_follow_ups_label(1), "1 open follow-up");
+        assert_eq!(open_follow_ups_label(2), "2 open follow-ups");
+        assert_eq!(count_label(1, "record", "records"), "1 record");
     }
 }

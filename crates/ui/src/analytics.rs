@@ -22,11 +22,36 @@ pub fn ga4_measurement_id() -> Option<String> {
     }
 }
 
-/// Consent Mode v2 defaults and deferred gtag loader injected in the document head.
+/// Name of the `<meta>` tag that carries the GA4 measurement ID to the client.
+/// The tag itself makes no request; the client loads Google's tag only after
+/// the visitor opts in to analytics.
+pub const GA4_META_NAME: &str = "ga4-measurement-id";
+
+/// Whether `id` has the shape of a GA4 measurement ID (`G-` followed by
+/// uppercase letters and digits). Anything else is never sent to Google.
+pub fn is_valid_measurement_id(id: &str) -> bool {
+    id.strip_prefix("G-").is_some_and(|rest| {
+        !rest.is_empty()
+            && rest
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    })
+}
+
+/// Consent Mode v2 defaults injected in the document head.
+///
+/// The head never loads Google's tag: with no opt-in there must be zero
+/// requests to Google. It only defines a local `gtag` queue with everything
+/// denied and publishes the measurement ID for the client-side loader
+/// (`sync_ga4_with_consent`).
 #[component]
 pub fn AnalyticsHead() -> impl IntoView {
-    let measurement_id = ga4_measurement_id().unwrap_or_default();
-    let has_ga4 = !measurement_id.is_empty();
+    view! { <AnalyticsHeadFor measurement_id=ga4_measurement_id() /> }
+}
+
+#[component]
+fn AnalyticsHeadFor(measurement_id: Option<String>) -> impl IntoView {
+    let measurement_id = measurement_id.filter(|id| is_valid_measurement_id(id));
 
     view! {
         <script>
@@ -43,24 +68,7 @@ gtag('consent', 'default', {
 "#
             .to_string()}
         </script>
-        <Show when=move || has_ga4>
-            <script async src=format!(
-                "https://www.googletagmanager.com/gtag/js?id={}",
-                measurement_id
-            )></script>
-            <script>
-                {format!(
-                    r#"
-gtag('js', new Date());
-gtag('config', '{measurement_id}', {{
-  anonymize_ip: true,
-  allow_google_signals: false,
-  allow_ad_personalization_signals: false
-}});
-"#
-                )}
-            </script>
-        </Show>
+        {measurement_id.map(|id| view! { <meta name=GA4_META_NAME content=id /> })}
     }
 }
 
@@ -99,6 +107,181 @@ pub fn AnalyticsRuntime() -> impl IntoView {
 
     // Invisible anchor so the component has a stable view tree (no empty `view! {}` / `()`).
     view! { <span class="hidden" aria-hidden="true"></span> }
+}
+
+#[cfg(any(feature = "csr", feature = "hydrate"))]
+const GA4_SCRIPT_ID: &str = "ga4-gtag-loader";
+
+/// Ordered operations executed when reconciling GA4 with a visitor's consent.
+#[cfg(any(feature = "csr", feature = "hydrate", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Ga4SyncStep {
+    /// Sets `window["ga-disable-<ID>"] = true` before any consent update so
+    /// Google's tag cannot dispatch a cookieless revocation ping.
+    DisableTracking,
+    /// Clears `window["ga-disable-<ID>"] = false` before granting consent.
+    EnableTracking,
+    /// Calls `gtag('consent', 'update', ...)`.
+    UpdateConsent { granted: bool },
+    /// Queues `gtag('js')` + `gtag('config', ..., { send_page_view: false })`
+    /// and injects the `gtag.js` script element once.
+    LoadAndConfigureTag,
+}
+
+#[cfg(any(feature = "csr", feature = "hydrate", test))]
+fn ga4_sync_plan(analytics: bool, already_loaded: bool) -> Vec<Ga4SyncStep> {
+    if analytics {
+        let mut steps = vec![
+            Ga4SyncStep::EnableTracking,
+            Ga4SyncStep::UpdateConsent { granted: true },
+        ];
+        if !already_loaded {
+            steps.push(Ga4SyncStep::LoadAndConfigureTag);
+        }
+        steps
+    } else {
+        vec![
+            Ga4SyncStep::DisableTracking,
+            Ga4SyncStep::UpdateConsent { granted: false },
+        ]
+    }
+}
+
+/// Brings Google's tag in line with the visitor's analytics choice.
+///
+/// Opting in enables tracking, grants Consent Mode storage, and loads `gtag.js`
+/// once. Opting out sets Google's documented `ga-disable-<ID>` switch *before*
+/// calling `gtag('consent', 'update', ...)` so Consent Mode cannot emit a
+/// cookieless revocation ping.
+#[cfg(any(feature = "csr", feature = "hydrate"))]
+pub(crate) fn sync_ga4_with_consent(analytics: bool) {
+    use js_sys::{Function, Reflect};
+    use wasm_bindgen::{JsCast, JsValue};
+
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Some(document) = window.document() else {
+        return;
+    };
+    let measurement_id = document
+        .query_selector(&format!("meta[name=\"{GA4_META_NAME}\"]"))
+        .ok()
+        .flatten()
+        .and_then(|meta| meta.get_attribute("content"))
+        .filter(|id| is_valid_measurement_id(id));
+
+    let already_loaded = document.get_element_by_id(GA4_SCRIPT_ID).is_some();
+    for step in ga4_sync_plan(analytics, already_loaded) {
+        match step {
+            Ga4SyncStep::DisableTracking => {
+                if let Some(id) = measurement_id.as_deref() {
+                    let _ = Reflect::set(
+                        window.as_ref(),
+                        &JsValue::from_str(&format!("ga-disable-{id}")),
+                        &JsValue::from_bool(true),
+                    );
+                }
+            }
+            Ga4SyncStep::EnableTracking => {
+                if let Some(id) = measurement_id.as_deref() {
+                    let _ = Reflect::set(
+                        window.as_ref(),
+                        &JsValue::from_str(&format!("ga-disable-{id}")),
+                        &JsValue::from_bool(false),
+                    );
+                }
+            }
+            Ga4SyncStep::UpdateConsent { granted } => {
+                update_gtag_consent(&window, granted);
+            }
+            Ga4SyncStep::LoadAndConfigureTag => {
+                let Some(id) = measurement_id.as_deref() else {
+                    continue;
+                };
+                let Some(gtag) = Reflect::get(window.as_ref(), &JsValue::from_str("gtag"))
+                    .ok()
+                    .and_then(|f| f.dyn_into::<Function>().ok())
+                else {
+                    continue;
+                };
+                let config = js_sys::Object::new();
+                for (key, value) in [
+                    ("anonymize_ip", true),
+                    ("allow_google_signals", false),
+                    ("allow_ad_personalization_signals", false),
+                    // AnalyticsRuntime sends page views itself, once per route.
+                    ("send_page_view", false),
+                ] {
+                    let _ =
+                        Reflect::set(&config, &JsValue::from_str(key), &JsValue::from_bool(value));
+                }
+                let _ = gtag.call2(
+                    &JsValue::NULL,
+                    &JsValue::from_str("js"),
+                    &js_sys::Date::new_0(),
+                );
+                let _ = gtag.call3(
+                    &JsValue::NULL,
+                    &JsValue::from_str("config"),
+                    &JsValue::from_str(id),
+                    &config,
+                );
+
+                let Ok(script) = document.create_element("script") else {
+                    continue;
+                };
+                script.set_id(GA4_SCRIPT_ID);
+                let _ = script.set_attribute("async", "");
+                let _ = script.set_attribute(
+                    "src",
+                    &format!("https://www.googletagmanager.com/gtag/js?id={id}"),
+                );
+                if let Some(head) = document.query_selector("head").ok().flatten() {
+                    let _ = head.append_child(&script);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(any(feature = "csr", feature = "hydrate"))]
+fn update_gtag_consent(window: &web_sys::Window, analytics: bool) {
+    use js_sys::{Function, Reflect};
+    use wasm_bindgen::{JsCast, JsValue};
+
+    let gtag = Reflect::get(window.as_ref(), &JsValue::from_str("gtag")).ok();
+    let Some(gtag) = gtag.and_then(|f| f.dyn_into::<Function>().ok()) else {
+        return;
+    };
+    let granted = if analytics { "granted" } else { "denied" };
+    let params = js_sys::Object::new();
+    let _ = Reflect::set(
+        &params,
+        &JsValue::from_str("analytics_storage"),
+        &JsValue::from_str(granted),
+    );
+    let _ = Reflect::set(
+        &params,
+        &JsValue::from_str("ad_storage"),
+        &JsValue::from_str("denied"),
+    );
+    let _ = Reflect::set(
+        &params,
+        &JsValue::from_str("ad_user_data"),
+        &JsValue::from_str("denied"),
+    );
+    let _ = Reflect::set(
+        &params,
+        &JsValue::from_str("ad_personalization"),
+        &JsValue::from_str("denied"),
+    );
+    let _ = gtag.call3(
+        &JsValue::NULL,
+        &JsValue::from_str("consent"),
+        &JsValue::from_str("update"),
+        &params,
+    );
 }
 
 #[cfg(any(feature = "csr", feature = "hydrate"))]
@@ -237,4 +420,95 @@ fn scrub_client_text(input: &str) -> String {
         out.push('…');
     }
     out
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod tests {
+    use super::*;
+
+    fn render_head(measurement_id: Option<&str>) -> String {
+        let owner = Owner::new();
+        let id = measurement_id.map(str::to_string);
+        let html = owner.with(|| view! { <AnalyticsHeadFor measurement_id=id /> }.to_html());
+        drop(owner);
+        html
+    }
+
+    #[test]
+    fn head_never_loads_google_before_opt_in() {
+        let html = render_head(Some("G-TEST123"));
+        for forbidden in [
+            "googletagmanager.com",
+            "google-analytics.com",
+            "gtag('config'",
+            "gtag('js'",
+            "<script async",
+            "src=",
+        ] {
+            assert!(
+                !html.contains(forbidden),
+                "consent-less head must not contain {forbidden:?}: {html}"
+            );
+        }
+        assert!(html.contains("analytics_storage: 'denied'"));
+        assert!(html.contains(r#"<meta name="ga4-measurement-id" content="G-TEST123""#));
+    }
+
+    #[test]
+    fn head_omits_invalid_or_missing_measurement_ids() {
+        for id in [
+            None,
+            Some(""),
+            Some("G-"),
+            Some("UA-1234"),
+            Some("G-abc\"><script>"),
+        ] {
+            let html = render_head(id);
+            assert!(!html.contains(GA4_META_NAME), "{id:?}: {html}");
+        }
+    }
+
+    #[test]
+    fn measurement_id_shape_is_checked() {
+        assert!(is_valid_measurement_id("G-AB12CD34EF"));
+        assert!(!is_valid_measurement_id("G-ab12"));
+        assert!(!is_valid_measurement_id("AW-123"));
+        assert!(!is_valid_measurement_id("G-12 34"));
+    }
+
+    #[test]
+    fn ga4_sync_disables_tracking_before_revoking_consent_and_loads_only_on_opt_in() {
+        assert_eq!(
+            ga4_sync_plan(false, false),
+            vec![
+                Ga4SyncStep::DisableTracking,
+                Ga4SyncStep::UpdateConsent { granted: false },
+            ]
+        );
+        // Mid-session revocation must set `ga-disable-<ID> = true` before
+        // updating gtag consent so no cookieless revocation ping can fire.
+        assert_eq!(
+            ga4_sync_plan(false, true),
+            vec![
+                Ga4SyncStep::DisableTracking,
+                Ga4SyncStep::UpdateConsent { granted: false },
+            ]
+        );
+        assert_eq!(
+            ga4_sync_plan(true, false),
+            vec![
+                Ga4SyncStep::EnableTracking,
+                Ga4SyncStep::UpdateConsent { granted: true },
+                Ga4SyncStep::LoadAndConfigureTag,
+            ]
+        );
+        // Once injected, re-enabling does not inject a second script tag.
+        assert_eq!(
+            ga4_sync_plan(true, true),
+            vec![
+                Ga4SyncStep::EnableTracking,
+                Ga4SyncStep::UpdateConsent { granted: true },
+            ]
+        );
+    }
 }

@@ -235,10 +235,10 @@
       "scope": "Black-box specs for physician-wire (98.6% Tyler, 11/11 tests) and physician-auth (95.3% Tyler, 72/72 lib/migration/publication/PG 16 tests PASS)"
     },
     {
-      "operation": "inspect_rust_binary + capture_process (Wave 4 Mobile/Duet · 38 bundles)",
+      "operation": "inspect_rust_binary + capture_process (Wave 4 Curie Mobile · 38 bundles)",
       "evidence_id": "ev_1e89e8c01b44bc02ab5e0216a92fcba4beedc6b6988835fa95be72eacc5d39d7",
       "bundles": 38,
-      "scope": "Black-box specs for mobile CDP harness (95.2% Tyler), duet-client (96.8%, 48/48), duet-app (95.3%, 31/31) & duet-api (98.2%, 63/63 PG 16 + OpenAPI tests PASS)"
+      "scope": "Black-box specs for mobile CDP harness (95.2% Tyler), mobile-client (96.8%, 48/48), mobile-app (95.3%, 31/31) & mobile-api (98.2%, 63/63 PG 16 + OpenAPI tests PASS)"
     },
     {
       "operation": "inspect_rust_binary + capture_process (Wave 4 Physician App/Helpers · 33 bundles)",
