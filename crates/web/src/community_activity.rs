@@ -27,10 +27,10 @@ mod tests {
     #[tokio::test]
     async fn dashboard_ssr_is_honest_and_not_indexed() {
         use leptos::prelude::LeptosOptions;
-        use leptos_axum::{generate_route_list, LeptosRoutes};
+        use leptos_axum::LeptosRoutes;
         let options = LeptosOptions::builder().output_name("dabney").build();
         let app = Router::new()
-            .leptos_routes(&options, generate_route_list(ui::App), {
+            .leptos_routes(&options, crate::test_route_list(), {
                 let options = options.clone();
                 move || ui::shell(options.clone())
             })

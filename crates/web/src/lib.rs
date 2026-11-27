@@ -122,6 +122,21 @@ where
     }
 }
 
+/// Computes the Leptos Axum route list once per test process.
+///
+/// `leptos_axum::generate_route_list` constructs `leptos_server::SuppressResourceLoad`,
+/// which toggles a process-global `AtomicBool` (`IS_SUPPRESSING_RESOURCE_LOAD`) while
+/// walking routes. Calling `generate_route_list` concurrently from parallel tests races
+/// with SSR `<Suspense>`/`Resource` loads on other threads and can stall them forever.
+#[cfg(all(test, feature = "ssr"))]
+pub(crate) fn test_route_list() -> Vec<leptos_axum::AxumRouteListing> {
+    static ROUTES: std::sync::OnceLock<Vec<leptos_axum::AxumRouteListing>> =
+        std::sync::OnceLock::new();
+    ROUTES
+        .get_or_init(|| leptos_axum::generate_route_list(ui::App))
+        .clone()
+}
+
 #[cfg(all(test, feature = "ssr"))]
 mod tests {
     use axum::body::{to_bytes, Body};
@@ -131,17 +146,15 @@ mod tests {
     use axum::routing::{get, post};
     use axum::{Json, Router};
     use futures_util::stream;
-    use leptos_axum::generate_route_list;
     use std::convert::Infallible;
     use tower::ServiceExt;
-    use ui::App;
 
     use super::clinical_proxy::ClinicalApiProxyConfig;
     use super::mount_clinical_api_routes;
 
     #[test]
     fn app_exposes_at_least_one_route() {
-        let routes = generate_route_list(App);
+        let routes = crate::test_route_list();
         assert!(
             !routes.is_empty(),
             "expected the router to expose at least one route"
@@ -155,7 +168,7 @@ mod tests {
 
         let options = LeptosOptions::builder().output_name("dabney").build();
         let app = super::mount_legacy_redirects(Router::new())
-            .leptos_routes(&options, generate_route_list(App), {
+            .leptos_routes(&options, crate::test_route_list(), {
                 let options = options.clone();
                 move || ui::shell(options.clone())
             })
@@ -217,7 +230,7 @@ mod tests {
             .site_root("target/site-test-does-not-exist")
             .build();
         let app = Router::new()
-            .leptos_routes(&options, generate_route_list(App), {
+            .leptos_routes(&options, crate::test_route_list(), {
                 let options = options.clone();
                 move || ui::shell(options.clone())
             })
@@ -251,7 +264,7 @@ mod tests {
 
         let options = LeptosOptions::builder().output_name("dabney").build();
         let app = Router::new()
-            .leptos_routes(&options, generate_route_list(App), {
+            .leptos_routes(&options, crate::test_route_list(), {
                 let options = options.clone();
                 move || ui::shell(options.clone())
             })
@@ -281,7 +294,7 @@ mod tests {
 
         let options = LeptosOptions::builder().output_name("dabney").build();
         let app = super::mount_removed_pages(Router::new())
-            .leptos_routes(&options, generate_route_list(App), {
+            .leptos_routes(&options, crate::test_route_list(), {
                 let options = options.clone();
                 move || ui::shell(options.clone())
             })
@@ -332,7 +345,7 @@ mod tests {
 
         let options = LeptosOptions::builder().output_name("dabney").build();
         let app = Router::new()
-            .leptos_routes(&options, generate_route_list(App), {
+            .leptos_routes(&options, crate::test_route_list(), {
                 let options = options.clone();
                 move || ui::shell(options.clone())
             })
@@ -415,7 +428,7 @@ mod tests {
 
         let options = LeptosOptions::builder().output_name("dabney").build();
         let app = Router::new()
-            .leptos_routes(&options, generate_route_list(App), {
+            .leptos_routes(&options, crate::test_route_list(), {
                 let options = options.clone();
                 move || ui::shell(options.clone())
             })
@@ -979,7 +992,7 @@ mod tests {
 
         let options = LeptosOptions::builder().output_name("dabney").build();
         let app = mount_clinical_api_routes(Router::new(), None)
-            .leptos_routes(&options, generate_route_list(App), {
+            .leptos_routes(&options, crate::test_route_list(), {
                 let options = options.clone();
                 move || ui::shell(options.clone())
             })
@@ -1052,7 +1065,7 @@ mod tests {
 
         let options = LeptosOptions::builder().output_name("dabney").build();
         let app = super::mount_ownership_json(Router::new())
-            .leptos_routes(&options, generate_route_list(App), {
+            .leptos_routes(&options, crate::test_route_list(), {
                 let options = options.clone();
                 move || ui::shell(options.clone())
             })
