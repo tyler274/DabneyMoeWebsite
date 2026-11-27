@@ -66,8 +66,8 @@ use crate::mental_health_exports::{
 use crate::mental_health_lingo::{
     build_assessment_series, classify_gad7, classify_phq9, correlate_glucose_and_mood,
     csv_data_uri, export_correlations_csv, sample_assessment_history, sample_checkins,
-    sample_lingo_14d_checkins, AssessmentPoint, LingoReading, MentalHealthCheckIn,
-    SAMPLE_LINGO_14D_CSV,
+    sample_lingo_6mo_checkins, AssessmentPoint, LingoReading, MentalHealthCheckIn,
+    SAMPLE_LINGO_6MO_CSV,
 };
 use crate::mental_health_support::{PersonalSupportCard, SupportAndClinicianBriefSection};
 use crate::patient_demo::ClinicalSuiteSwitcher;
@@ -87,7 +87,6 @@ const ROSE: &str = "#fb7185";
 const VIOLET: &str = "#a78bfa";
 const SLATE_LIGHT: &str = "#94a3b8";
 
-#[cfg(any(feature = "hydrate", feature = "csr"))]
 fn compact_textarea_preview(raw: &str) -> String {
     if raw.len() <= 24_576 {
         return raw.to_string();
@@ -189,8 +188,11 @@ fn parse_optional_scale_score(raw: &str, max_val: u8, name: &str) -> Result<Opti
 #[component]
 pub fn MentalHealthPage() -> impl IntoView {
     let locale = use_locale();
-    let initial_import = parse_commercial_glucose_input(SAMPLE_LINGO_14D_CSV, None).ok();
-    let csv_input = RwSignal::new(SAMPLE_LINGO_14D_CSV.to_string());
+    let initial_import = parse_commercial_glucose_input(SAMPLE_LINGO_6MO_CSV, None).ok();
+    let csv_input = RwSignal::new(compact_textarea_preview(SAMPLE_LINGO_6MO_CSV));
+    // The built-in sample behind a truncated textarea preview, so the page never carries a
+    // megabyte of CSV and Parse & Validate still reads the whole sample.
+    let sample_full_payload = RwSignal::new(Some(SAMPLE_LINGO_6MO_CSV));
     let monitor_hint = RwSignal::new(Option::<GlucoseMonitor>::None);
     let detected_monitor = RwSignal::new(
         initial_import
@@ -213,8 +215,8 @@ pub fn MentalHealthPage() -> impl IntoView {
     let import_diagnostics = RwSignal::new(initial_import.as_ref().map(|i| i.diagnostics.clone()));
     let initial_readings = initial_import.map(|i| i.readings).unwrap_or_default();
     let initial_checkin_dt = default_checkin_datetime_for_readings(&initial_readings);
+    let window = RwSignal::new(GlucoseWindow::default_for_trace(&initial_readings));
     let readings = RwSignal::new(initial_readings);
-    let window = RwSignal::new(GlucoseWindow::All);
     let loaded_file_label = RwSignal::new(Option::<String>::None);
     // Keep full uploaded/synced payload separately from the 20-line preview textarea so
     // "Parse & Validate Export" never truncates >99% of readings on large exports.
@@ -301,7 +303,7 @@ pub fn MentalHealthPage() -> impl IntoView {
         })
     });
 
-    let checkins = RwSignal::new(sample_lingo_14d_checkins());
+    let checkins = RwSignal::new(sample_lingo_6mo_checkins());
     let user_added_checkins = RwSignal::new(false);
     let windowed_checkins = Memo::new(move |_| {
         readings.with(|r| checkins.with(|c| slice_checkins_window(c, r, window.get())))
@@ -399,13 +401,13 @@ pub fn MentalHealthPage() -> impl IntoView {
 
     let apply_parsed_glucose = move |parsed: CommercialGlucoseImport,
                                      source_label: Option<String>| {
-        let span_h = parsed.diagnostics.span_hours;
         let is_personal_import = source_label.is_some();
         let next_dt = default_checkin_datetime_for_readings(&parsed.readings);
         detected_monitor.set(parsed.monitor);
         source_unit.set(parsed.source_unit);
         measurement_method.set(parsed.method);
         import_diagnostics.set(Some(parsed.diagnostics));
+        window.set(GlucoseWindow::default_for_trace(&parsed.readings));
         readings.set(parsed.readings);
         loaded_file_label.set(source_label);
         checkin_datetime.set(next_dt);
@@ -415,12 +417,6 @@ pub fn MentalHealthPage() -> impl IntoView {
         if is_personal_import && !user_added_checkins.get_untracked() {
             checkins.set(Vec::new());
         }
-        // Default multi-week personal exports to the ATTD 14-day view so charts & AGP stay crisp.
-        window.set(if span_h > 360.0 {
-            GlucoseWindow::Days14
-        } else {
-            GlucoseWindow::All
-        });
         csv_error.set(None);
     };
 
@@ -437,6 +433,8 @@ pub fn MentalHealthPage() -> impl IntoView {
     let apply_csv = move |_| {
         if let Some((full_raw, label)) = uploaded_full_payload.get_untracked() {
             apply_glucose_text(&full_raw, monitor_hint.get(), Some(label));
+        } else if let Some(sample) = sample_full_payload.get_untracked() {
+            apply_glucose_text(sample, monitor_hint.get(), None);
         } else {
             let raw = csv_input.get();
             apply_glucose_text(&raw, monitor_hint.get(), None);
@@ -479,6 +477,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                         if let Some(text) = val.as_string() {
                             let label = format!("{file_name} ({file_kb:.1} KB · on-device)");
                             uploaded_full_payload.set(Some((text.clone(), label.clone())));
+                            sample_full_payload.set(None);
                             csv_input.set(compact_textarea_preview(&text));
                             match parse_commercial_glucose_input(&text, inferred_hint) {
                                 Ok(parsed) => {
@@ -532,8 +531,9 @@ pub fn MentalHealthPage() -> impl IntoView {
     // their own, so one sample's check-ins never stretch another's axis.
     let load_sample = move |sample: &'static str, sample_checkins: Vec<MentalHealthCheckIn>| {
         uploaded_full_payload.set(None);
+        sample_full_payload.set(Some(sample));
         monitor_hint.set(None);
-        csv_input.set(sample.to_string());
+        csv_input.set(compact_textarea_preview(sample));
         if !user_added_checkins.get_untracked() {
             checkins.set(sample_checkins);
         }
@@ -718,6 +718,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                                 let restored_label = format!("{label} · restored from local vault");
                                 uploaded_full_payload
                                     .set(Some((cgm_json.clone(), restored_label.clone())));
+                                sample_full_payload.set(None);
                                 csv_input.set(compact_textarea_preview(&cgm_json));
                                 apply_glucose_text(&cgm_json, None, Some(restored_label));
                             }
@@ -1299,6 +1300,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                             );
                             uploaded_full_payload
                                 .set(Some((resp.bridge_json.clone(), banner_label.clone())));
+                            sample_full_payload.set(None);
                             csv_input.set(compact_textarea_preview(&resp.bridge_json));
                             apply_glucose_text(&resp.bridge_json, None, Some(banner_label.clone()));
                             persist_vault_update(
@@ -2452,6 +2454,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                         prop:value=move || csv_input.get()
                         on:input=move |ev| {
                             uploaded_full_payload.set(None);
+                            sample_full_payload.set(None);
                             csv_input.set(event_target_value(&ev));
                         }
                         class="w-full rounded-xl border border-white/10 bg-slate-950 p-3 font-mono text-xs text-slate-200"
@@ -3600,7 +3603,7 @@ mod tests {
 
         // The form's local time is the wall clock of the export's own zone, so a check-in at the
         // last reading's local time lands on that reading.
-        let lingo = parse_commercial_glucose_input(SAMPLE_LINGO_14D_CSV, None).unwrap();
+        let lingo = parse_commercial_glucose_input(SAMPLE_LINGO_6MO_CSV, None).unwrap();
         let last = lingo.readings.last().unwrap();
         let (_, offset) = resolve_checkin_datetime_offset(
             &default_checkin_datetime_for_readings(&lingo.readings),

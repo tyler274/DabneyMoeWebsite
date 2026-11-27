@@ -15,8 +15,8 @@ use serde_json::Value;
 
 pub use crate::mental_health_lingo::GlucoseReadingBound;
 use crate::mental_health_lingo::{
-    sample_checkins, sample_lingo_14d_checkins, split_delimited_row, LingoReading,
-    MentalHealthCheckIn, SAMPLE_LINGO_14D_CSV, SAMPLE_LINGO_CSV,
+    sample_checkins, sample_lingo_6mo_checkins, split_delimited_row, LingoReading,
+    MentalHealthCheckIn, SAMPLE_LINGO_6MO_CSV, SAMPLE_LINGO_CSV,
 };
 
 const MMOL_TO_MG_DL: f64 = 18.0182;
@@ -300,6 +300,20 @@ impl GlucoseWindow {
             Self::Days30 => "30d",
             Self::Days90 => "90d",
             Self::All => "All",
+        }
+    }
+
+    /// The window a freshly loaded trace opens in: the ATTD 14-day view for a trace longer than
+    /// 15 days, so the charts and AGP stay readable, and the whole trace otherwise.
+    pub fn default_for_trace(readings: &[LingoReading]) -> Self {
+        let span_h = readings
+            .first()
+            .zip(readings.last())
+            .map_or(0.0, |(first, last)| last.hour_offset - first.hour_offset);
+        if span_h > 360.0 {
+            Self::Days14
+        } else {
+            Self::All
         }
     }
 
@@ -3100,7 +3114,7 @@ pub fn sample_csv_for_monitor(monitor: GlucoseMonitor) -> &'static str {
         GlucoseMonitor::AbbottFreeStyleLibre => SAMPLE_LIBREVIEW_MMOL_CSV,
         GlucoseMonitor::MedtronicCareLink => SAMPLE_MEDTRONIC_CARELINK_CSV,
         GlucoseMonitor::FingerstickBgm => SAMPLE_BGM_FINGERSTICK_CSV,
-        GlucoseMonitor::AbbottLingo => SAMPLE_LINGO_14D_CSV,
+        GlucoseMonitor::AbbottLingo => SAMPLE_LINGO_6MO_CSV,
         GlucoseMonitor::SenseonicsEversense
         | GlucoseMonitor::TandemSource
         | GlucoseMonitor::GlookoTidepool
@@ -3111,7 +3125,7 @@ pub fn sample_csv_for_monitor(monitor: GlucoseMonitor) -> &'static str {
 /// The synthetic check-ins that belong on the timeline of [`sample_csv_for_monitor`]'s sample.
 pub fn sample_checkins_for_monitor(monitor: GlucoseMonitor) -> Vec<MentalHealthCheckIn> {
     match monitor {
-        GlucoseMonitor::AbbottLingo => sample_lingo_14d_checkins(),
+        GlucoseMonitor::AbbottLingo => sample_lingo_6mo_checkins(),
         GlucoseMonitor::DexcomClarity
         | GlucoseMonitor::DexcomStelo
         | GlucoseMonitor::AbbottFreeStyleLibre
@@ -3846,6 +3860,61 @@ Time of Glucose Reading [T=(local time) +/- (time zone offset)], Measurement(mg/
         assert_eq!(
             reparsed.readings[2].bound,
             GlucoseReadingBound::AboveSensorCeiling
+        );
+    }
+
+    #[test]
+    fn every_window_slices_the_six_month_sample_and_its_checkins_onto_one_timeline() {
+        let readings = parse_commercial_glucose_input(SAMPLE_LINGO_6MO_CSV, None)
+            .unwrap()
+            .readings;
+        let checkins = sample_lingo_6mo_checkins();
+        let trace_h = readings.last().unwrap().hour_offset - readings[0].hour_offset;
+        assert!(trace_h > 180.0 * 24.0, "sample spans about six months");
+        assert_eq!(
+            GlucoseWindow::default_for_trace(&readings),
+            GlucoseWindow::Days14
+        );
+
+        let mut previous_len = 0;
+        for window in GlucoseWindow::ALL {
+            let sliced = slice_readings_window(&readings, window);
+            let sliced_checkins = slice_checkins_window(&checkins, &readings, window);
+            let label = window.label();
+            assert!(
+                sliced.len() > previous_len,
+                "{label}: wider window adds readings"
+            );
+            previous_len = sliced.len();
+
+            let end_h = sliced.last().unwrap().hour_offset;
+            let window_h = window.max_hours().unwrap_or(trace_h);
+            assert!(sliced[0].hour_offset >= 0.0, "{label}: rebased to zero");
+            assert!(end_h <= window_h + 1e-6, "{label}: ends within window");
+            assert!(
+                (end_h - window_h).abs() < 1e-6,
+                "{label}: last reading sits at the window's end"
+            );
+            assert!(
+                sliced
+                    .windows(2)
+                    .all(|p| p[0].hour_offset <= p[1].hour_offset),
+                "{label}: stays in time order"
+            );
+            assert!(
+                sliced_checkins
+                    .iter()
+                    .all(|c| (0.0..=end_h + 24.0).contains(&c.hour_offset)),
+                "{label}: check-ins share the readings' timeline"
+            );
+            if window.max_hours().is_some_and(|h| h >= 24.0 * 7.0) {
+                assert!(!sliced_checkins.is_empty(), "{label}: has check-ins");
+            }
+        }
+        assert_eq!(previous_len, readings.len());
+        assert_eq!(
+            slice_checkins_window(&checkins, &readings, GlucoseWindow::All).len(),
+            checkins.len()
         );
     }
 
