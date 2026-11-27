@@ -3037,47 +3037,92 @@ pub fn sample_csv_for_monitor(monitor: GlucoseMonitor) -> &'static str {
 /// ADA/ATTD 5-Band Time-in-Range stacked bar + target compliance strip.
 #[component]
 pub fn AdaTimeInRangeBar(summary: ClinicalGlucoseSummary) -> impl IntoView {
+    use crate::info_tip::InfoTip;
+
     let vlow = summary.tbr_very_low_lt_54_pct;
     let low = summary.tbr_low_54_69_pct;
     let tight = summary.titr_70_140_pct;
     let upper_in_range = (summary.tir_70_180_pct - summary.titr_70_140_pct).max(0.0);
     let high = summary.tar_high_181_250_pct;
     let vhigh = summary.tar_very_high_gt_250_pct;
+    let bar_aria_label = format!(
+        "5-band glucose distribution: Very Low under 54 is {vlow:.1}%, Low 54 to 69 is {low:.1}%, Tight 70 to 140 is {tight:.1}%, Upper in-range 141 to 180 is {upper_in_range:.1}%, High 181 to 250 is {high:.1}%, Very High over 250 is {vhigh:.1}%."
+    );
 
     view! {
         <div class="space-y-3">
-            <div class="flex h-6 w-full overflow-hidden rounded-full border border-white/10 bg-slate-900">
-                <div style=format!("width: {vlow:.2}%") class="bg-red-500" title=format!("<54 mg/dL: {vlow:.1}%")></div>
-                <div style=format!("width: {low:.2}%") class="bg-rose-400" title=format!("54–69 mg/dL: {low:.1}%")></div>
-                <div style=format!("width: {tight:.2}%") class="bg-emerald-400" title=format!("70–140 tight: {tight:.1}%")></div>
-                <div style=format!("width: {upper_in_range:.2}%") class="bg-teal-500/80" title=format!("141–180 in-range: {upper_in_range:.1}%")></div>
-                <div style=format!("width: {high:.2}%") class="bg-amber-400" title=format!("181–250 high: {high:.1}%")></div>
-                <div style=format!("width: {vhigh:.2}%") class="bg-orange-500" title=format!(">250 very high: {vhigh:.1}%")></div>
+            <div
+                role="img"
+                aria-label=bar_aria_label
+                class="flex h-6 w-full overflow-hidden rounded-full border border-white/10 bg-slate-900"
+            >
+                <div style=format!("width: {vlow:.2}%") class="bg-red-500 transition-[width] duration-300" title=format!("<54 mg/dL: {vlow:.1}%")></div>
+                <div style=format!("width: {low:.2}%") class="bg-rose-400 transition-[width] duration-300" title=format!("54–69 mg/dL: {low:.1}%")></div>
+                <div style=format!("width: {tight:.2}%") class="bg-emerald-400 transition-[width] duration-300" title=format!("70–140 tight: {tight:.1}%")></div>
+                <div style=format!("width: {upper_in_range:.2}%") class="bg-teal-500/80 transition-[width] duration-300" title=format!("141–180 in-range: {upper_in_range:.1}%")></div>
+                <div style=format!("width: {high:.2}%") class="bg-amber-400 transition-[width] duration-300" title=format!("181–250 high: {high:.1}%")></div>
+                <div style=format!("width: {vhigh:.2}%") class="bg-orange-500 transition-[width] duration-300" title=format!(">250 very high: {vhigh:.1}%")></div>
             </div>
             <div class="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 lg:grid-cols-6">
                 <div class="rounded-lg border border-white/5 bg-slate-950/60 px-2.5 py-1.5">
                     <span class="font-semibold text-red-400">{format!("{vlow:.1}%")}</span>
-                    <p class="text-[11px] text-slate-400">"<54 (target <1%)"</p>
+                    <p class="mt-0.5 flex items-center text-[11px] text-slate-400">
+                        <span>"<54 (target <1%)"</span>
+                        <InfoTip
+                            term="TBR <54"
+                            text="Time Below Range Level 2 (<54 mg/dL): clinically significant low glucose. International consensus recommends staying under 1% (<15 min/day)."
+                        />
+                    </p>
                 </div>
                 <div class="rounded-lg border border-white/5 bg-slate-950/60 px-2.5 py-1.5">
                     <span class="font-semibold text-rose-300">{format!("{low:.1}%")}</span>
-                    <p class="text-[11px] text-slate-400">"54–69 (<70 <4%)"</p>
+                    <p class="mt-0.5 flex items-center text-[11px] text-slate-400">
+                        <span>"54–69 (<70 <4%)"</span>
+                        <InfoTip
+                            term="TBR 54–69"
+                            text="Time Below Range Level 1 (54–69 mg/dL): mild low glucose. Combined time below 70 mg/dL should stay under 4% (<1 hr/day)."
+                        />
+                    </p>
                 </div>
                 <div class="rounded-lg border border-white/5 bg-slate-950/60 px-2.5 py-1.5">
                     <span class="font-semibold text-emerald-300">{format!("{tight:.1}%")}</span>
-                    <p class="text-[11px] text-slate-400">"70–140 Tight"</p>
+                    <p class="mt-0.5 flex items-center text-[11px] text-slate-400">
+                        <span>"70–140 Tight"</span>
+                        <InfoTip
+                            term="TITR"
+                            text="Time in Tight Range (70–140 mg/dL): narrower physiologic target band often used for metabolic stability and wellness tracking."
+                        />
+                    </p>
                 </div>
                 <div class="rounded-lg border border-white/5 bg-slate-950/60 px-2.5 py-1.5">
                     <span class="font-semibold text-teal-300">{format!("{:.1}%", summary.tir_70_180_pct)}</span>
-                    <p class="text-[11px] text-slate-400">"70–180 (≥70%)"</p>
+                    <p class="mt-0.5 flex items-center text-[11px] text-slate-400">
+                        <span>"70–180 (≥70%)"</span>
+                        <InfoTip
+                            term="TIR"
+                            text="Time in Range (70–180 mg/dL): standard ADA/ATTD clinical target band. Most adults aim for at least 70% (>16.8 hrs/day)."
+                        />
+                    </p>
                 </div>
                 <div class="rounded-lg border border-white/5 bg-slate-950/60 px-2.5 py-1.5">
                     <span class="font-semibold text-amber-300">{format!("{high:.1}%")}</span>
-                    <p class="text-[11px] text-slate-400">"181–250 (<25%)"</p>
+                    <p class="mt-0.5 flex items-center text-[11px] text-slate-400">
+                        <span>"181–250 (<25%)"</span>
+                        <InfoTip
+                            term="TAR 181–250"
+                            text="Time Above Range Level 1 (181–250 mg/dL): elevated glucose. Combined time above 180 mg/dL is typically targeted under 25%."
+                        />
+                    </p>
                 </div>
                 <div class="rounded-lg border border-white/5 bg-slate-950/60 px-2.5 py-1.5">
                     <span class="font-semibold text-orange-400">{format!("{vhigh:.1}%")}</span>
-                    <p class="text-[11px] text-slate-400">">250 (target <5%)"</p>
+                    <p class="mt-0.5 flex items-center text-[11px] text-slate-400">
+                        <span>">250 (target <5%)"</span>
+                        <InfoTip
+                            term="TAR >250"
+                            text="Time Above Range Level 2 (>250 mg/dL): marked hyperglycemia. International consensus recommends keeping this under 5%."
+                        />
+                    </p>
                 </div>
             </div>
         </div>
@@ -3096,7 +3141,7 @@ pub fn AgpPercentileChart(bins: Vec<AgpHourBin>) -> impl IntoView {
     let plot_w = width - pad_l - pad_r;
     let plot_h = height - pad_t - pad_b;
 
-    let populated: Vec<&AgpHourBin> = bins.iter().filter(|b| b.count > 0).collect();
+    let populated: Vec<AgpHourBin> = bins.into_iter().filter(|b| b.count > 0).collect();
     let max_g = populated
         .iter()
         .map(|b| b.p95)
@@ -3136,53 +3181,148 @@ pub fn AgpPercentileChart(bins: Vec<AgpHourBin>) -> impl IntoView {
     let y70 = y_for(70.0);
     let y140 = y_for(140.0);
     let y180 = y_for(180.0);
+    let strip_w = (plot_w / 24.0).max(12.0);
+    let selected_hour = RwSignal::new(Option::<u8>::None);
+    let stored_bins = StoredValue::new(populated.clone());
 
     view! {
-        <svg
-            viewBox="0 0 760 210"
-            class="w-full"
-            role="img"
-            aria-label="24-hour Ambulatory Glucose Profile showing 5th-95th and 25th-75th percentile ribbons and median"
-        >
-            // 70-180 clinical target band + 70-140 tight sub-band
-            <rect x=pad_l y=y180 width=plot_w height=(y70 - y180).max(1.0) fill="rgba(45, 212, 191, 0.06)" />
-            <rect x=pad_l y=y140 width=plot_w height=(y70 - y140).max(1.0) fill="rgba(52, 211, 153, 0.09)" />
-            <line x1=pad_l y1=y180 x2=width - pad_r y2=y180 stroke="rgba(251, 191, 36, 0.35)" stroke-dasharray="4 4" />
-            <line x1=pad_l y1=y140 x2=width - pad_r y2=y140 stroke="rgba(52, 211, 153, 0.35)" stroke-dasharray="3 3" />
-            <line x1=pad_l y1=y70 x2=width - pad_r y2=y70 stroke="rgba(251, 113, 133, 0.40)" stroke-dasharray="4 4" />
+        <div class="space-y-2.5">
+            <svg
+                viewBox="0 0 760 210"
+                class="w-full"
+                role="img"
+                aria-label="24-hour Ambulatory Glucose Profile showing 5th-95th and 25th-75th percentile ribbons and median"
+            >
+                // 70-180 clinical target band + 70-140 tight sub-band
+                <rect x=pad_l y=y180 width=plot_w height=(y70 - y180).max(1.0) fill="rgba(45, 212, 191, 0.06)" />
+                <rect x=pad_l y=y140 width=plot_w height=(y70 - y140).max(1.0) fill="rgba(52, 211, 153, 0.09)" />
+                <line x1=pad_l y1=y180 x2=width - pad_r y2=y180 stroke="rgba(251, 191, 36, 0.35)" stroke-dasharray="4 4" />
+                <line x1=pad_l y1=y140 x2=width - pad_r y2=y140 stroke="rgba(52, 211, 153, 0.35)" stroke-dasharray="3 3" />
+                <line x1=pad_l y1=y70 x2=width - pad_r y2=y70 stroke="rgba(251, 113, 133, 0.40)" stroke-dasharray="4 4" />
 
-            // Outer 5th-95th ribbon
-            {(!outer_poly.is_empty()).then(|| view! {
-                <polygon points=outer_poly fill="rgba(34, 211, 238, 0.14)" />
-            })}
-            // Inner 25th-75th IQR ribbon
-            {(!iqr_poly.is_empty()).then(|| view! {
-                <polygon points=iqr_poly fill="rgba(34, 211, 238, 0.30)" />
-            })}
-            // 50th percentile median curve
-            {(!median_line.is_empty()).then(|| view! {
-                <polyline
-                    fill="none"
-                    stroke="#22d3ee"
-                    stroke-width="2.5"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    points=median_line
-                />
-            })}
+                // Outer 5th-95th ribbon
+                {(!outer_poly.is_empty()).then(|| view! {
+                    <polygon points=outer_poly fill="rgba(34, 211, 238, 0.14)" />
+                })}
+                // Inner 25th-75th IQR ribbon
+                {(!iqr_poly.is_empty()).then(|| view! {
+                    <polygon points=iqr_poly fill="rgba(34, 211, 238, 0.30)" />
+                })}
+                // 50th percentile median curve
+                {(!median_line.is_empty()).then(|| view! {
+                    <polyline
+                        fill="none"
+                        stroke="#22d3ee"
+                        stroke-width="2.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        points=median_line
+                    />
+                })}
 
-            // Y-axis labels
-            <text x="6" y=y180 + 4.0 fill="#fbbf24" font-size="10">"180"</text>
-            <text x="6" y=y140 + 4.0 fill="#34d399" font-size="10">"140"</text>
-            <text x="6" y=y70 + 4.0 fill="#fb7185" font-size="10">"70"</text>
+                // Interactive hover / focus / tap hour inspection strips
+                {populated.into_iter().map(|bin| {
+                    let h = bin.hour;
+                    let cx = x_for(h);
+                    let cy = y_for(bin.p50);
+                    let rx = (cx - strip_w / 2.0).max(pad_l);
+                    let tip = format!(
+                        "{h:02}:00 — Median {:.0} mg/dL · IQR (p25–p75) {:.0}–{:.0} · Outer (p5–p95) {:.0}–{:.0} (n={})",
+                        bin.p50, bin.p25, bin.p75, bin.p5, bin.p95, bin.count
+                    );
+                    let aria_tip = tip.clone();
+                    view! {
+                        <g
+                            tabindex="0"
+                            role="button"
+                            aria-label=aria_tip
+                            class="cursor-pointer focus:outline-none"
+                            on:mouseenter=move |_| selected_hour.set(Some(h))
+                            on:focus=move |_| selected_hour.set(Some(h))
+                            on:click=move |_| selected_hour.set(Some(h))
+                        >
+                            <title>{tip}</title>
+                            <rect
+                                x=rx
+                                y=pad_t
+                                width=strip_w
+                                height=plot_h
+                                fill="transparent"
+                            />
+                            {move || (selected_hour.get() == Some(h)).then(|| view! {
+                                <g>
+                                    <line
+                                        x1=cx
+                                        y1=pad_t
+                                        x2=cx
+                                        y2=pad_t + plot_h
+                                        stroke="rgba(34, 211, 238, 0.55)"
+                                        stroke-width="1.2"
+                                        stroke-dasharray="3 3"
+                                    />
+                                    <circle
+                                        cx=cx
+                                        cy=cy
+                                        r="5"
+                                        fill="#22d3ee"
+                                        stroke="#0f172a"
+                                        stroke-width="2"
+                                    />
+                                </g>
+                            })}
+                        </g>
+                    }
+                }).collect_view()}
 
-            // X-axis clock hour labels
-            <text x=pad_l y=height - 6.0 fill="#94a3b8" font-size="10">"00:00"</text>
-            <text x=pad_l + plot_w * (6.0 / 23.0) y=height - 6.0 text-anchor="middle" fill="#94a3b8" font-size="10">"06:00"</text>
-            <text x=pad_l + plot_w * (12.0 / 23.0) y=height - 6.0 text-anchor="middle" fill="#94a3b8" font-size="10">"12:00"</text>
-            <text x=pad_l + plot_w * (18.0 / 23.0) y=height - 6.0 text-anchor="middle" fill="#94a3b8" font-size="10">"18:00"</text>
-            <text x=width - pad_r y=height - 6.0 text-anchor="end" fill="#94a3b8" font-size="10">"23:00"</text>
-        </svg>
+                // Y-axis labels
+                <text x="6" y=y180 + 4.0 fill="#fbbf24" font-size="10">"180"</text>
+                <text x="6" y=y140 + 4.0 fill="#34d399" font-size="10">"140"</text>
+                <text x="6" y=y70 + 4.0 fill="#fb7185" font-size="10">"70"</text>
+
+                // X-axis clock hour labels
+                <text x=pad_l y=height - 6.0 fill="#94a3b8" font-size="10">"00:00"</text>
+                <text x=pad_l + plot_w * (6.0 / 23.0) y=height - 6.0 text-anchor="middle" fill="#94a3b8" font-size="10">"06:00"</text>
+                <text x=pad_l + plot_w * (12.0 / 23.0) y=height - 6.0 text-anchor="middle" fill="#94a3b8" font-size="10">"12:00"</text>
+                <text x=pad_l + plot_w * (18.0 / 23.0) y=height - 6.0 text-anchor="middle" fill="#94a3b8" font-size="10">"18:00"</text>
+                <text x=width - pad_r y=height - 6.0 text-anchor="end" fill="#94a3b8" font-size="10">"23:00"</text>
+            </svg>
+            <div class="flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-2 text-[11px]">
+                <p role="status" aria-live="polite" class="font-mono text-cyan-200">
+                    {move || {
+                        selected_hour
+                            .get()
+                            .and_then(|h| {
+                                stored_bins.with_value(|list| {
+                                    list.iter().find(|b| b.hour == h).map(|b| {
+                                        format!(
+                                            "{:02}:00 · Median {:.0} mg/dL · IQR {:.0}–{:.0} · p5–p95 {:.0}–{:.0} · {} readings",
+                                            b.hour, b.p50, b.p25, b.p75, b.p5, b.p95, b.count
+                                        )
+                                    })
+                                })
+                            })
+                            .unwrap_or_else(|| {
+                                "Hover, focus, or tap any hour to inspect median & percentile glucose values."
+                                    .to_string()
+                            })
+                    }}
+                </p>
+                <div class="flex flex-wrap items-center gap-3 text-[10px] text-slate-400">
+                    <span class="inline-flex items-center gap-1">
+                        <span class="inline-block h-2 w-3 rounded-sm bg-cyan-400"></span>
+                        "Median (p50)"
+                    </span>
+                    <span class="inline-flex items-center gap-1">
+                        <span class="inline-block h-2 w-3 rounded-sm bg-cyan-400/35"></span>
+                        "IQR (p25–p75)"
+                    </span>
+                    <span class="inline-flex items-center gap-1">
+                        <span class="inline-block h-2 w-3 rounded-sm bg-cyan-400/15"></span>
+                        "Outer (p5–p95)"
+                    </span>
+                </div>
+            </div>
+        </div>
     }
 }
 

@@ -79,13 +79,13 @@ pub fn ClinicalSuiteSwitcher() -> impl IntoView {
     view! {
         <nav
             aria-label="Clinical demo suite"
-            class="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.02] p-2"
+            class="print-hide print:hidden flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.02] p-2"
         >
             <A href=patient_href attr:class=move || tab_class("/clinical/patient")>
-                "Patient Demo"
+                "Curie Mobile (Patient)"
             </A>
             <A href="/clinical/physician" attr:class=move || tab_class("/clinical/physician")>
-                "Physician Demo"
+                "Curie Clinic (Physician)"
             </A>
             <A href="/mental-health" attr:class=move || tab_class("/mental-health")>
                 "Mental Health & CGM"
@@ -138,6 +138,7 @@ pub fn PatientDemoPage() -> impl IntoView {
     let llm_preparing = RwSignal::new(false);
     let llm_prepare_notice = RwSignal::new(Option::<String>::None);
     let llm_thinking = RwSignal::new(false);
+    let llm_error = RwSignal::new(Option::<String>::None);
     let llm_req_seq = RwSignal::new(0usize);
     let vault_enabled = RwSignal::new(false);
 
@@ -199,6 +200,7 @@ pub fn PatientDemoPage() -> impl IntoView {
     let select_profile = move |patient_id: String| {
         llm_req_seq.update(|n| *n += 1);
         llm_thinking.set(false);
+        llm_error.set(None);
         selected_id.set(patient_id.clone());
         let default_q = default_patient_questions(&patient_id)
             .first()
@@ -231,6 +233,7 @@ pub fn PatientDemoPage() -> impl IntoView {
             return;
         };
         latest_answer.set(Some(grounded.clone()));
+        llm_error.set(None);
 
         let req_id = llm_req_seq.get_untracked() + 1;
         llm_req_seq.set(req_id);
@@ -250,16 +253,24 @@ pub fn PatientDemoPage() -> impl IntoView {
                     return;
                 }
                 llm_thinking.set(false);
-                if let Ok(gen) = res {
-                    let mut enhanced = grounded.clone();
-                    enhanced.answer = gen.text;
-                    enhanced.basis = format!(
-                        "{} (on-device · {} ms) grounded strictly in {} verbatim citation(s) from this profile.",
-                        gen.model_name,
-                        gen.latency_ms,
-                        enhanced.citations.len()
-                    );
-                    latest_answer.set(Some(enhanced));
+                match res {
+                    Ok(gen) => {
+                        let mut enhanced = grounded.clone();
+                        enhanced.answer = gen.text;
+                        enhanced.basis = format!(
+                            "{} (on-device · {} ms) grounded strictly in {} verbatim citation(s) from this profile.",
+                            gen.model_name,
+                            gen.latency_ms,
+                            enhanced.citations.len()
+                        );
+                        latest_answer.set(Some(enhanced));
+                    }
+                    Err(_) => {
+                        llm_error.set(Some(
+                            "On-device AI explanation was unavailable for this turn; showing record-cited summary."
+                                .to_string(),
+                        ));
+                    }
                 }
             });
         }
@@ -317,6 +328,28 @@ pub fn PatientDemoPage() -> impl IntoView {
         ask_patient_question(question_input.get());
     };
 
+    let persist_private_notes = move |patient_id: &str| {
+        #[cfg(any(feature = "csr", feature = "hydrate"))]
+        if vault_enabled.get_untracked() {
+            let notes_snapshot = demo_states
+                .get_untracked()
+                .get(patient_id)
+                .map(|st| st.personal_notes.clone())
+                .unwrap_or_default();
+            if let Ok(encoded) = serde_json::to_string(&notes_snapshot) {
+                save_personal_vault(
+                    &PersonalVaultSaveUi {
+                        notes_json: Some(encoded),
+                        ..Default::default()
+                    },
+                    |_| {},
+                );
+            }
+        }
+        #[cfg(not(any(feature = "csr", feature = "hydrate")))]
+        let _ = patient_id;
+    };
+
     let on_add_private_note = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
         let body = new_private_note.get().trim().to_string();
@@ -339,23 +372,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                 });
             }
         });
-        #[cfg(any(feature = "csr", feature = "hydrate"))]
-        if vault_enabled.get_untracked() {
-            let notes_snapshot = demo_states
-                .get_untracked()
-                .get(&active_id)
-                .map(|st| st.personal_notes.clone())
-                .unwrap_or_default();
-            if let Ok(encoded) = serde_json::to_string(&notes_snapshot) {
-                save_personal_vault(
-                    &PersonalVaultSaveUi {
-                        notes_json: Some(encoded),
-                        ..Default::default()
-                    },
-                    |_| {},
-                );
-            }
-        }
+        persist_private_notes(&active_id);
         new_private_note.set(String::new());
     };
 
@@ -389,10 +406,10 @@ pub fn PatientDemoPage() -> impl IntoView {
     };
 
     view! {
-        <Title text="Patient Demo (Zero PHI) — Dabney.moe Clinical Workspace | dabney.moe" />
+        <Title text="Curie Mobile — Patient Experience Demo (Zero PHI) | dabney.moe" />
         <Meta
             name="description"
-            content="Interactive zero-PHI patient health companion demo in pure Rust and WebAssembly: explore fictional records, medications, record-cited questions, and explicit For My Doctor sharing controls with zero data leaving your device."
+            content="Interactive zero-PHI Curie Mobile patient health companion demo: explore fictional records, medications, record-cited questions, and explicit For My Doctor sharing controls with zero data leaving your device."
         />
         <Link rel="canonical" href="https://dabney.moe/clinical/patient" />
 
@@ -405,13 +422,13 @@ pub fn PatientDemoPage() -> impl IntoView {
                     <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/40 bg-[#01081b] p-1 shadow-sm">
                         <img
                             src="/dabney-elephant.svg"
-                            alt="Dabney.moe elephant emblem"
+                            alt="Curie Mobile emblem"
                             class="h-full w-full object-contain"
                         />
                     </div>
                     <div>
                         <p class="text-[11px] font-semibold uppercase tracking-widest text-emerald-300">
-                            "Dabney.moe · Patient Companion Demo"
+                            "Curie Mobile · Patient Companion Demo"
                         </p>
                         <h1 class="text-2xl font-bold tracking-tight text-white sm:text-3xl">
                             "Patient Experience Demo"
@@ -452,7 +469,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                         </p>
                         <p class="text-xs leading-relaxed text-emerald-50/90 sm:text-sm">
                             "Every name, lab value, medication, and message here is fictional sample data running "
-                            "locally in Rust/WebAssembly. Nothing is uploaded, stored on servers, or shared with "
+                            "locally on your device. Nothing is uploaded, stored on servers, or shared with "
                             "third parties. Educational software demonstration only—not medical advice or a diagnostic tool."
                         </p>
                     </div>
@@ -548,8 +565,10 @@ pub fn PatientDemoPage() -> impl IntoView {
                             class="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-slate-900/70 p-1.5"
                         >
                             <button
+                                id="patient-tab-you"
                                 type="button"
                                 role="tab"
+                                aria-controls="patient-panel-you"
                                 aria-selected=move || active_tab.get() == PatientTab::You
                                 on:click=move |_| active_tab.set(PatientTab::You)
                                 class=move || {
@@ -563,8 +582,10 @@ pub fn PatientDemoPage() -> impl IntoView {
                                 "Your Health (You)"
                             </button>
                             <button
+                                id="patient-tab-shared"
                                 type="button"
                                 role="tab"
+                                aria-controls="patient-panel-shared"
                                 aria-selected=move || active_tab.get() == PatientTab::Shared
                                 on:click=move |_| active_tab.set(PatientTab::Shared)
                                 class=move || {
@@ -592,7 +613,12 @@ pub fn PatientDemoPage() -> impl IntoView {
                             let presets = default_patient_questions(&patient.id);
 
                             view! {
-                                <div class="space-y-6">
+                                <div
+                                    id="patient-panel-you"
+                                    role="tabpanel"
+                                    aria-labelledby="patient-tab-you"
+                                    class="space-y-6"
+                                >
                                     // Summary & Next Visit Card
                                     <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4">
                                         <div class="flex flex-wrap items-start justify-between gap-3">
@@ -751,12 +777,13 @@ pub fn PatientDemoPage() -> impl IntoView {
                                                     view! {
                                                         <button
                                                             type="button"
+                                                            disabled=move || llm_thinking.get()
                                                             on:click=move |_| {
                                                                 let q = preset.to_string();
                                                                 question_input.set(q.clone());
                                                                 ask_patient_question(q);
                                                             }
-                                                            class="min-h-[36px] rounded-full border border-white/15 bg-slate-950/70 px-3 py-1.5 text-xs text-slate-200 transition hover:border-emerald-400/45 hover:text-white"
+                                                            class="min-h-[36px] rounded-full border border-white/15 bg-slate-950/70 px-3 py-1.5 text-xs text-slate-200 transition hover:border-emerald-400/45 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                                                         >
                                                             {preset}
                                                         </button>
@@ -764,6 +791,26 @@ pub fn PatientDemoPage() -> impl IntoView {
                                                 })
                                                 .collect_view()}
                                         </div>
+
+                                        {move || llm_thinking.get().then(|| view! {
+                                            <div
+                                                role="status"
+                                                aria-live="polite"
+                                                class="flex items-center gap-2 rounded-xl border border-emerald-400/25 bg-emerald-500/10 px-3.5 py-2.5 text-xs text-emerald-100"
+                                            >
+                                                <span
+                                                    aria-hidden="true"
+                                                    class="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-emerald-300/30 border-t-emerald-300"
+                                                />
+                                                <span>"Synthesizing record-cited explanation on-device…"</span>
+                                            </div>
+                                        })}
+
+                                        {move || llm_error.get().map(|msg| view! {
+                                            <p role="status" aria-live="polite" class="text-xs text-amber-200">
+                                                {msg}
+                                            </p>
+                                        })}
 
                                         <div aria-live="polite">
                                             {active_answer.map(|ans| view! { <PatientGroundedAnswer answer=ans /> })}
@@ -816,7 +863,11 @@ pub fn PatientDemoPage() -> impl IntoView {
                                                     "Private Notes (Never Shared)"
                                                 </h3>
                                                 <p class="text-xs text-slate-300">
-                                                    "Private notes stay strictly on this screen in demo memory and are automatically excluded from doctor packets."
+                                                    {move || if vault_enabled.get() {
+                                                        "Private notes are stored encrypted on this device only and are automatically excluded from doctor packets."
+                                                    } else {
+                                                        "Private notes stay strictly on this screen in browser demo memory and are automatically excluded from doctor packets."
+                                                    }}
                                                 </p>
                                             </div>
                                             <span class="rounded-full border border-slate-600/50 bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-slate-300">
@@ -849,8 +900,9 @@ pub fn PatientDemoPage() -> impl IntoView {
                                                                             st.personal_notes.retain(|n| n.id != note_id);
                                                                         }
                                                                     });
+                                                                    persist_private_notes(&active_pid);
                                                                 }
-                                                                class="shrink-0 rounded-lg border border-white/15 px-2.5 py-1 text-[11px] text-slate-300 transition hover:border-rose-400/40 hover:text-rose-200"
+                                                                class="min-h-[36px] shrink-0 rounded-lg border border-white/15 px-3 py-1 text-[11px] text-slate-300 transition hover:border-rose-400/40 hover:text-rose-200"
                                                             >
                                                                 "Remove"
                                                             </button>
@@ -897,8 +949,25 @@ pub fn PatientDemoPage() -> impl IntoView {
                             let sent_records_count = preview.shared_records.len();
                             let sent_questions_count = preview.visit_questions.len();
 
+                            let connection_mode_help = match &state.connection {
+                                DemoConnectionState::Connected { .. } => {
+                                    "Connected: Your clinic link is active, and you choose when to prepare and send each visit packet — nothing is sent automatically."
+                                }
+                                DemoConnectionState::Paused { .. } => {
+                                    "Pause sharing: Keeps your clinic link saved, but temporarily locks sending new packets until you switch back to Connected."
+                                }
+                                DemoConnectionState::Standalone => {
+                                    "Standalone (no clinic): Completely unlinked from any clinic — use Curie Mobile solely for your own personal tracking."
+                                }
+                            };
+
                             view! {
-                                <div class="space-y-6">
+                                <div
+                                    id="patient-panel-shared"
+                                    role="tabpanel"
+                                    aria-labelledby="patient-tab-shared"
+                                    class="space-y-6"
+                                >
                                     // Practice Connection Control
                                     <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4">
                                         <div class="flex flex-wrap items-start justify-between gap-3">
@@ -924,6 +993,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         <div class="flex flex-wrap gap-2">
                                             <button
                                                 type="button"
+                                                aria-pressed=matches!(state.connection, DemoConnectionState::Connected { .. })
                                                 on:click=move |_| set_connection_mode(default_conn.clone())
                                                 class=if matches!(state.connection, DemoConnectionState::Connected { .. }) {
                                                     "min-h-[40px] rounded-full bg-emerald-500 px-4 py-2 text-xs font-semibold text-slate-950"
@@ -935,6 +1005,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                             </button>
                                             <button
                                                 type="button"
+                                                aria-pressed=matches!(state.connection, DemoConnectionState::Paused { .. })
                                                 on:click=move |_| set_connection_mode(paused_conn.clone())
                                                 class=if matches!(state.connection, DemoConnectionState::Paused { .. }) {
                                                     "min-h-[40px] rounded-full bg-amber-400 px-4 py-2 text-xs font-semibold text-slate-950"
@@ -946,6 +1017,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                             </button>
                                             <button
                                                 type="button"
+                                                aria-pressed=matches!(state.connection, DemoConnectionState::Standalone)
                                                 on:click=move |_| set_connection_mode(DemoConnectionState::Standalone)
                                                 class=if matches!(state.connection, DemoConnectionState::Standalone) {
                                                     "min-h-[40px] rounded-full bg-cyan-400 px-4 py-2 text-xs font-semibold text-slate-950"
@@ -956,6 +1028,13 @@ pub fn PatientDemoPage() -> impl IntoView {
                                                 "Standalone (no clinic)"
                                             </button>
                                         </div>
+                                        <p
+                                            role="status"
+                                            aria-live="polite"
+                                            class="rounded-xl border border-white/10 bg-slate-950/60 px-3.5 py-2.5 text-xs text-slate-200"
+                                        >
+                                            {connection_mode_help}
+                                        </p>
                                     </section>
 
                                     // Visit Note & Questions Editor
@@ -1456,9 +1535,12 @@ mod tests {
     #[test]
     fn patient_demo_page_renders_zero_phi_notice_and_synthetic_profiles() {
         let html = render_with_mode("/clinical/patient", AppShellMode::Website);
+        assert!(html.contains("Curie Mobile"));
         assert!(html.contains("Patient Experience Demo"));
         assert!(html.contains("100% Synthetic Demo"));
         assert!(html.contains("Zero PHI"));
+        assert!(html.contains("aria-controls=\"patient-panel-you\""));
+        assert!(html.contains("role=\"tabpanel\""));
         assert!(html.contains("/dabney-elephant.svg"));
         assert!(html.contains("Nadia Kulkarni"));
         assert!(html.contains("Carlos Mendez"));

@@ -20,6 +20,7 @@ pub mod consent;
 pub mod creators;
 pub mod data;
 pub mod health_bridge;
+pub mod info_tip;
 pub mod local_ai_chat;
 pub mod mental_health;
 pub mod mental_health_3d;

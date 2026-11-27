@@ -16,6 +16,7 @@ use crate::health_bridge::{
     collect_cgm_grounding_facts_with_analytics, synthesize_grounded_cgm_answer_with_analytics,
     AppAlertStatusUi, HealthBridgeStatusUi, LocalChatTurn, LocalLlmStatusUi, PersonalVaultStatusUi,
 };
+use crate::info_tip::InfoTip;
 use crate::local_ai_chat::{PersonalCgmAiChatSection, PersonalVaultBar};
 use crate::mental_health_3d::LingoMood3DChart;
 #[cfg(any(feature = "hydrate", feature = "csr"))]
@@ -80,9 +81,88 @@ fn compact_textarea_preview(raw: &str) -> String {
     }
     let head: String = raw.lines().take(20).collect::<Vec<_>>().join("\n");
     format!(
-        "{head}\n# … preview truncated ({:.1} KB total; full file parsed locally in memory)",
+        "{head}\n# … preview truncated ({:.1} KB total; full file kept intact in memory)",
         raw.len() as f64 / 1024.0
     )
+}
+
+/// Extract local clock minute (`0..60`) from an ISO/space timestamp, falling back to `utc_minutes`.
+fn extract_local_minute(ts: &str, utc_minutes: f64) -> u8 {
+    let bytes = ts.trim().as_bytes();
+    if let Some(colon_pos) = bytes.iter().position(|&b| b == b':') {
+        if let Some(min_bytes) = bytes.get(colon_pos + 1..colon_pos + 3) {
+            if let Ok(min_str) = std::str::from_utf8(min_bytes) {
+                if let Ok(m) = min_str.parse::<u8>() {
+                    if m < 60 {
+                        return m;
+                    }
+                }
+            }
+        }
+    }
+    (utc_minutes.rem_euclid(60.0).round() as u32 % 60) as u8
+}
+
+/// Format a reading timestamp as `YYYY-MM-DDTHH:MM` for `<input type="datetime-local">`.
+fn default_checkin_datetime_for_readings(readings: &[LingoReading]) -> String {
+    readings
+        .last()
+        .and_then(|r| {
+            let p = parse_timestamp(&r.timestamp, None)?;
+            let minute = extract_local_minute(&r.timestamp, p.utc_minutes);
+            Some(format!(
+                "{}T{:02}:{:02}",
+                p.local_date, p.local_hour, minute
+            ))
+        })
+        .unwrap_or_else(|| "2026-11-21T18:00".to_string())
+}
+
+/// Resolve a user-entered `YYYY-MM-DDTHH:MM` local date/time into a readable `recorded_at`
+/// label and a timeline `hour_offset` relative to the first loaded glucose reading.
+fn resolve_checkin_datetime_offset(
+    datetime_local: &str,
+    readings: &[LingoReading],
+    max_hour_bound: f64,
+) -> Result<(String, f64), String> {
+    let trimmed = datetime_local.trim();
+    if trimmed.is_empty() {
+        return Err("Please pick a check-in date and time.".to_string());
+    }
+    let parsed = parse_timestamp(trimmed, None)
+        .ok_or_else(|| "Enter a valid date and time (YYYY-MM-DD HH:MM).".to_string())?;
+    let local_minute = extract_local_minute(trimmed, parsed.utc_minutes);
+    let recorded_at = format!(
+        "{} {:02}:{:02}",
+        parsed.local_date, parsed.local_hour, local_minute
+    );
+    let hour_offset = if let Some(first_parsed) = readings
+        .first()
+        .and_then(|r| parse_timestamp(&r.timestamp, None))
+    {
+        let raw_hours = (parsed.utc_minutes - first_parsed.utc_minutes) / 60.0;
+        raw_hours.clamp(0.0, max_hour_bound.max(raw_hours.max(0.0)))
+    } else {
+        (f64::from(parsed.local_hour) + f64::from(local_minute) / 60.0).clamp(0.0, max_hour_bound)
+    };
+    Ok((recorded_at, hour_offset))
+}
+
+/// Validate an optional PHQ-9 (0–27) or GAD-7 (0–21) numeric text field with explicit errors.
+fn parse_optional_scale_score(raw: &str, max_val: u8, name: &str) -> Result<Option<u8>, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let val = trimmed
+        .parse::<u16>()
+        .map_err(|_| format!("{name} must be a whole number between 0 and {max_val}."))?;
+    if val > u16::from(max_val) {
+        return Err(format!(
+            "{name} score must be between 0 and {max_val} (you entered {val})."
+        ));
+    }
+    Ok(Some(val as u8))
 }
 
 #[component]
@@ -109,10 +189,18 @@ pub fn MentalHealthPage() -> impl IntoView {
             .unwrap_or(MeasurementMethod::InterstitialCgm),
     );
     let import_diagnostics = RwSignal::new(initial_import.as_ref().map(|i| i.diagnostics.clone()));
-    let readings = RwSignal::new(initial_import.map(|i| i.readings).unwrap_or_default());
+    let initial_readings = initial_import.map(|i| i.readings).unwrap_or_default();
+    let initial_checkin_dt = default_checkin_datetime_for_readings(&initial_readings);
+    let readings = RwSignal::new(initial_readings);
     let window = RwSignal::new(GlucoseWindow::All);
     let loaded_file_label = RwSignal::new(Option::<String>::None);
+    // Keep full uploaded/synced payload separately from the 20-line preview textarea so
+    // "Parse & Validate Export" never truncates >99% of readings on large exports.
+    let uploaded_full_payload = RwSignal::new(Option::<(String, String)>::None);
+    let parsing_file = RwSignal::new(false);
     let csv_error = RwSignal::new(Option::<String>::None);
+    let confirm_reset_hero = RwSignal::new(false);
+    let confirm_reset_banner = RwSignal::new(false);
 
     // Native Android Health Connect / iOS Apple HealthKit state (active ONLY inside
     // `moe.dabney.personal` built with `--features health-connect`; stays `None` on
@@ -226,19 +314,22 @@ pub fn MentalHealthPage() -> impl IntoView {
     let phq9_input = RwSignal::new(String::new());
     let gad7_input = RwSignal::new(String::new());
     let note_input = RwSignal::new(String::new());
-    let hour_input = RwSignal::new("18.0".to_string());
+    let checkin_datetime = RwSignal::new(initial_checkin_dt);
     let form_status = RwSignal::new(Option::<String>::None);
+    let form_error = RwSignal::new(Option::<String>::None);
 
     let apply_parsed_glucose = move |parsed: CommercialGlucoseImport,
                                      source_label: Option<String>| {
         let span_h = parsed.diagnostics.span_hours;
         let is_personal_import = source_label.is_some();
+        let next_dt = default_checkin_datetime_for_readings(&parsed.readings);
         detected_monitor.set(parsed.monitor);
         source_unit.set(parsed.source_unit);
         measurement_method.set(parsed.method);
         import_diagnostics.set(Some(parsed.diagnostics));
         readings.set(parsed.readings);
         loaded_file_label.set(source_label);
+        checkin_datetime.set(next_dt);
         // Clear synthetic sample check-ins when loading a personal trace unless the user has
         // already logged/restored personal check-ins, avoiding synthetic notes squashed onto
         // the left edge of a multi-month real export.
@@ -265,8 +356,12 @@ pub fn MentalHealthPage() -> impl IntoView {
         };
 
     let apply_csv = move |_| {
-        let raw = csv_input.get();
-        apply_glucose_text(&raw, monitor_hint.get(), None);
+        if let Some((full_raw, label)) = uploaded_full_payload.get_untracked() {
+            apply_glucose_text(&full_raw, monitor_hint.get(), Some(label));
+        } else {
+            let raw = csv_input.get();
+            apply_glucose_text(&raw, monitor_hint.get(), None);
+        }
     };
 
     let on_cgm_file_change = move |ev: leptos::ev::Event| {
@@ -292,16 +387,20 @@ pub fn MentalHealthPage() -> impl IntoView {
                 csv_error.set(Some("Could not initialize browser FileReader.".into()));
                 return;
             };
+            parsing_file.set(true);
+            csv_error.set(None);
             let onload = Closure::<dyn FnMut(web_sys::ProgressEvent)>::new(
                 move |pe: web_sys::ProgressEvent| {
+                    parsing_file.set(false);
                     let Some(t) = pe.target() else { return };
                     let Ok(r) = t.dyn_into::<web_sys::FileReader>() else {
                         return;
                     };
                     if let Ok(val) = r.result() {
                         if let Some(text) = val.as_string() {
-                            csv_input.set(compact_textarea_preview(&text));
                             let label = format!("{file_name} ({file_kb:.1} KB · on-device)");
+                            uploaded_full_payload.set(Some((text.clone(), label.clone())));
+                            csv_input.set(compact_textarea_preview(&text));
                             match parse_commercial_glucose_input(&text, inferred_hint) {
                                 Ok(parsed) => {
                                     if vault_status.get_untracked().is_some_and(|v| v.enabled) {
@@ -322,7 +421,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                                                 if let Ok(updated) = res {
                                                     vault_status.set(Some(updated));
                                                     vault_notice.set(Some(
-                                                        "Encrypted & cached imported CGM file in local vault."
+                                                        "Encrypted & cached imported glucose file in local vault."
                                                             .to_string(),
                                                     ));
                                                 }
@@ -342,6 +441,7 @@ pub fn MentalHealthPage() -> impl IntoView {
             reader.set_onload(Some(onload.as_ref().unchecked_ref()));
             onload.forget();
             if reader.read_as_text(&file).is_err() {
+                parsing_file.set(false);
                 csv_error.set(Some("Could not read selected glucose file.".into()));
             }
         }
@@ -351,22 +451,27 @@ pub fn MentalHealthPage() -> impl IntoView {
 
     let load_monitor_preset = move |monitor: GlucoseMonitor| {
         let sample = sample_csv_for_monitor(monitor);
+        uploaded_full_payload.set(None);
         monitor_hint.set(None);
         csv_input.set(sample.to_string());
         apply_glucose_text(sample, None, None);
     };
 
     let load_raw_preset = move |sample: &'static str| {
+        uploaded_full_payload.set(None);
         monitor_hint.set(None);
         csv_input.set(sample.to_string());
         apply_glucose_text(sample, None, None);
     };
 
     let reset_sample = move |_| {
+        confirm_reset_hero.set(false);
+        confirm_reset_banner.set(false);
         load_monitor_preset(GlucoseMonitor::AbbottLingo);
         user_added_checkins.set(false);
         checkins.set(sample_checkins());
         form_status.set(None);
+        form_error.set(None);
         hc_message.set(None);
         hc_error.set(None);
         alert_dispatch_state.set(AlertDispatchState::default());
@@ -528,12 +633,11 @@ pub fn MentalHealthPage() -> impl IntoView {
                                 let label = snap
                                     .cgm_source_label
                                     .unwrap_or_else(|| "Encrypted Local Vault".to_string());
+                                let restored_label = format!("{label} · restored from local vault");
+                                uploaded_full_payload
+                                    .set(Some((cgm_json.clone(), restored_label.clone())));
                                 csv_input.set(compact_textarea_preview(&cgm_json));
-                                apply_glucose_text(
-                                    &cgm_json,
-                                    None,
-                                    Some(format!("{label} · restored from AES-256-GCM vault")),
-                                );
+                                apply_glucose_text(&cgm_json, None, Some(restored_label));
                             }
                             if let Some(checkins_raw) = snap.checkins_json {
                                 if let Ok(restored) =
@@ -1089,11 +1193,13 @@ pub fn MentalHealthPage() -> impl IntoView {
                             } else {
                                 resp.sources.join(", ")
                             };
-                            csv_input.set(compact_textarea_preview(&resp.bridge_json));
                             let banner_label = format!(
                                 "{platform_name} ({} readings · {} · last {days}d · on-device)",
                                 resp.record_count, sources_label
                             );
+                            uploaded_full_payload
+                                .set(Some((resp.bridge_json.clone(), banner_label.clone())));
+                            csv_input.set(compact_textarea_preview(&resp.bridge_json));
                             apply_glucose_text(&resp.bridge_json, None, Some(banner_label.clone()));
                             persist_vault_update(
                                 PersonalVaultSaveUi {
@@ -1122,37 +1228,50 @@ pub fn MentalHealthPage() -> impl IntoView {
 
     let submit_checkin = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
+        form_error.set(None);
+        form_status.set(None);
+
         let max_hour_bound = max_checkin_hour.get_untracked();
-        let sleep_hours = parsed_sleep_hours.get_untracked();
-        let hour_offset = hour_input
-            .get()
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|v| v.is_finite() && (0.0..=max_hour_bound).contains(v))
-            .unwrap_or_else(|| 12.0_f64.min(max_hour_bound));
-        let phq9 = phq9_input
-            .get()
-            .trim()
-            .parse::<u8>()
-            .ok()
-            .filter(|v| *v <= 27);
-        let gad7 = gad7_input
-            .get()
-            .trim()
-            .parse::<u8>()
-            .ok()
-            .filter(|v| *v <= 21);
+        let sleep_raw = sleep_input.get();
+        let sleep_hours = match sleep_raw.trim().parse::<f32>() {
+            Ok(v) if v.is_finite() && (0.0..=24.0).contains(&v) => v,
+            _ => {
+                form_error.set(Some(
+                    "Sleep hours must be a number between 0 and 24.".to_string(),
+                ));
+                return;
+            }
+        };
+        let phq9 = match parse_optional_scale_score(&phq9_input.get(), 27, "PHQ-9") {
+            Ok(v) => v,
+            Err(err) => {
+                form_error.set(Some(err));
+                return;
+            }
+        };
+        let gad7 = match parse_optional_scale_score(&gad7_input.get(), 21, "GAD-7") {
+            Ok(v) => v,
+            Err(err) => {
+                form_error.set(Some(err));
+                return;
+            }
+        };
+        let (recorded_at, hour_offset) = match readings.with_untracked(|r| {
+            resolve_checkin_datetime_offset(&checkin_datetime.get(), r, max_hour_bound)
+        }) {
+            Ok(pair) => pair,
+            Err(err) => {
+                form_error.set(Some(err));
+                return;
+            }
+        };
+
         let note_text = note_input.get().trim().to_string();
         let note = if note_text.is_empty() {
             "Logged check-in".to_string()
         } else {
             note_text
         };
-
-        let hour_whole = hour_offset.floor() as u32;
-        let minute = ((hour_offset - hour_offset.floor()) * 60.0).round() as u32;
-        let recorded_at = format!("+{hour_whole:02}h {minute:02}m");
 
         let entry = MentalHealthCheckIn {
             recorded_at,
@@ -1181,59 +1300,86 @@ pub fn MentalHealthPage() -> impl IntoView {
             );
         }
         note_input.set(String::new());
-        form_status.set(Some(
-            "Check-in added and correlated against the Lingo CGM timeline.".to_string(),
-        ));
+        let monitor_label = detected_monitor.get_untracked().display_name();
+        form_status.set(Some(format!(
+            "Check-in added and correlated against your {monitor_label} timeline."
+        )));
     };
 
     view! {
-        <Title text="Dabney.moe — Mental Health & Comprehensive Commercial CGM Tracking | dabney.moe" />
+        <Title text="Curie Mobile — Mental Health & Comprehensive Glucose Tracking | dabney.moe" />
         <Meta
             name="description"
-            content="Local-first mental health and comprehensive glucose tracking for all major commercial CGMs & BGMs (Abbott Lingo, FreeStyle Libre, Dexcom Clarity/Stelo, Medtronic CareLink, Eversense, Tandem, Omnipod/Glooko/Tidepool) with ADA 5-band TIR, AGP, GMI, GRI, and WebGL2 3D charts."
+            content="Local-first mental health and comprehensive glucose tracking for all major commercial CGMs & BGMs (Abbott Lingo, FreeStyle Libre, Dexcom Clarity/Stelo, Medtronic CareLink, Eversense, Tandem, Omnipod/Glooko/Tidepool) with ADA 5-band TIR, AGP, GMI, GRI, and interactive 3D/2D charts."
         />
         <Link rel="canonical" href="https://dabney.moe/mental-health" />
 
         <NavBar />
 
-        <div class="mx-auto max-w-5xl px-6 py-12">
+        <div class="print-brief-page mx-auto max-w-5xl px-6 py-12">
             // Hero
-            <div class="mb-10 flex flex-col gap-6 border-b border-white/10 pb-8 md:flex-row md:items-end md:justify-between">
+            <div class="print-hide print:hidden mb-10 flex flex-col gap-6 border-b border-white/10 pb-8 md:flex-row md:items-end md:justify-between">
                 <div class="max-w-2xl">
                     <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-cyan-400">
-                        "Dabney.moe · Metabolic Psychiatry & All Commercial CGMs"
+                        "Curie Mobile · Metabolic Health & All Commercial CGMs"
                     </p>
                     <h1 class="text-3xl font-bold tracking-tight text-white sm:text-4xl">
                         "Mental Health & Comprehensive Glucose Tracking"
                     </h1>
                     <p class="mt-3 text-base leading-relaxed text-slate-300">
-                        "Auto-detect and analyze exports from Abbott Lingo, FreeStyle Libre (LibreView), Dexcom G6/G7/Stelo (Clarity), Medtronic CareLink, Senseonics Eversense, Tandem, Omnipod/Glooko/Tidepool, and fingerstick BGMs in mg/dL or mmol/L—paired with mood, anxiety, PHQ-9, GAD-7, and ASRM locally in pure Rust."
+                        "Auto-detect and analyze exports from Abbott Lingo, FreeStyle Libre (LibreView), Dexcom G6/G7/Stelo (Clarity), Medtronic CareLink, Senseonics Eversense, Tandem, Omnipod/Glooko/Tidepool, and fingerstick meters in mg/dL or mmol/L—paired privately with mood, anxiety, PHQ-9, GAD-7, and ASRM on your device."
                     </p>
                 </div>
-                <div class="flex flex-wrap gap-3">
+                <div class="flex flex-wrap items-center gap-3">
                     <A
                         href="/clinical/patient"
                         attr:class="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
                     >
-                        "Open Patient Demo →"
+                        "Open Curie Mobile →"
                     </A>
                     <A
                         href="/clinical/physician"
                         attr:class="inline-flex items-center gap-2 rounded-full bg-cyan-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
                     >
-                        "Open Physician Demo →"
+                        "Open Curie Clinic →"
                     </A>
-                    <button
-                        type="button"
-                        on:click=reset_sample
-                        class="rounded-full border border-white/15 px-4 py-2.5 text-sm font-medium text-slate-200 transition hover:bg-white/5"
-                    >
-                        "Reset sample"
-                    </button>
+                    {move || if confirm_reset_hero.get() {
+                        view! {
+                            <div class="flex flex-wrap items-center gap-1.5 rounded-full border border-rose-400/40 bg-rose-950/60 px-3 py-1">
+                                <span class="text-xs text-rose-100">"Reset to sample?"</span>
+                                <button
+                                    type="button"
+                                    on:click=reset_sample
+                                    class="min-h-[34px] rounded-full bg-rose-500 px-3 py-1 text-xs font-semibold text-white transition hover:bg-rose-400"
+                                >
+                                    "Confirm wipe"
+                                </button>
+                                <button
+                                    type="button"
+                                    on:click=move |_| confirm_reset_hero.set(false)
+                                    class="min-h-[34px] rounded-full border border-white/20 px-3 py-1 text-xs text-slate-200 transition hover:bg-white/10"
+                                >
+                                    "Cancel"
+                                </button>
+                            </div>
+                        }
+                        .into_any()
+                    } else {
+                        view! {
+                            <button
+                                type="button"
+                                on:click=move |_| confirm_reset_hero.set(true)
+                                class="min-h-[40px] rounded-full border border-white/15 px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/5"
+                            >
+                                "Reset sample"
+                            </button>
+                        }
+                        .into_any()
+                    }}
                 </div>
             </div>
 
-            <div class="mb-6">
+            <div class="print-hide print:hidden mb-6">
                 <ClinicalSuiteSwitcher />
             </div>
 
@@ -1271,35 +1417,89 @@ pub fn MentalHealthPage() -> impl IntoView {
             }}
 
             // Top-of-page calm Cool-Down banner when activation signals stack up
-            <TopCoolDownBanner
-                events=synthesized_events.into()
-                asrm_score=asrm_score.into()
-                sleep_hours=parsed_sleep_hours.into()
-            />
+            <div class="print-hide print:hidden">
+                <TopCoolDownBanner
+                    events=synthesized_events.into()
+                    asrm_score=asrm_score.into()
+                    sleep_hours=parsed_sleep_hours.into()
+                />
+            </div>
 
-            // Local personal file indicator banner (shown only when the user imports a local file)
+            // Sample-data vs. Local personal trace banner
             {move || {
-                loaded_file_label.get().map(|label| {
+                if let Some(label) = loaded_file_label.get() {
                     view! {
-                        <div class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-100">
+                        <div class="print-hide print:hidden mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-100">
                             <div class="flex items-center gap-2">
                                 <span class="inline-block h-2 w-2 rounded-full bg-emerald-400"></span>
                                 <span>
                                     <strong>"Local personal trace loaded: "</strong>
                                     {label}
-                                    " — never uploaded or stored on any server."
+                                    " — stays strictly on this device."
                                 </span>
                             </div>
-                            <button
-                                type="button"
-                                on:click=reset_sample
-                                class="rounded-full border border-emerald-300/40 bg-slate-950/60 px-3 py-1 font-semibold text-emerald-200 transition hover:bg-emerald-500/20"
-                            >
-                                "Wipe & restore synthetic sample"
-                            </button>
+                            {move || if confirm_reset_banner.get() {
+                                view! {
+                                    <div class="flex flex-wrap items-center gap-1.5 rounded-full border border-rose-400/40 bg-rose-950/60 px-2.5 py-1">
+                                        <span class="text-[11px] text-rose-100">"Clear personal trace?"</span>
+                                        <button
+                                            type="button"
+                                            on:click=reset_sample
+                                            class="min-h-[34px] rounded-full bg-rose-500 px-3 py-1 text-xs font-semibold text-white transition hover:bg-rose-400"
+                                        >
+                                            "Confirm wipe"
+                                        </button>
+                                        <button
+                                            type="button"
+                                            on:click=move |_| confirm_reset_banner.set(false)
+                                            class="min-h-[34px] rounded-full border border-white/20 px-3 py-1 text-xs text-slate-200 transition hover:bg-white/10"
+                                        >
+                                            "Cancel"
+                                        </button>
+                                    </div>
+                                }
+                                .into_any()
+                            } else {
+                                view! {
+                                    <button
+                                        type="button"
+                                        on:click=move |_| confirm_reset_banner.set(true)
+                                        class="min-h-[36px] rounded-full border border-emerald-300/40 bg-slate-950/60 px-3 py-1 font-semibold text-emerald-200 transition hover:bg-emerald-500/20"
+                                    >
+                                        "Wipe & restore synthetic sample"
+                                    </button>
+                                }
+                                .into_any()
+                            }}
                         </div>
                     }
-                })
+                    .into_any()
+                } else {
+                    let monitor_name = detected_monitor.get().display_name();
+                    view! {
+                        <div
+                            data-sample-mode-banner="true"
+                            role="status"
+                            class="print-hide print:hidden mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-3.5 text-xs text-cyan-100"
+                        >
+                            <div class="space-y-1">
+                                <p class="font-semibold text-white">
+                                    {format!("Viewing sample {monitor_name} data — Upload your CGM file ↓")}
+                                </p>
+                                <p class="text-[11px] text-cyan-100/85">
+                                    "1. Upload or sync your glucose export · 2. Review trends, episodes & range alerts · 3. Print your 1-page clinician visit brief."
+                                </p>
+                            </div>
+                            <a
+                                href="#cgm-import"
+                                class="inline-flex min-h-[38px] shrink-0 items-center rounded-full bg-cyan-400 px-4 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-300"
+                            >
+                                "Upload your CGM file ↓"
+                            </a>
+                        </div>
+                    }
+                    .into_any()
+                }
             }}
 
             // KPI summary strip (ADA/ATTD clinical metrics across all commercial monitors)
@@ -1369,30 +1569,38 @@ pub fn MentalHealthPage() -> impl IntoView {
                     .unwrap_or_default();
 
                 view! {
-                    <div class="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+                    <div class="print-hide print:hidden mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
                         <MetricCard
                             label="Mean / GMI (est. A1C)"
                             value=mean_value
                             detail=mean_detail
                             accent="text-cyan-300"
+                            tip_term="GMI"
+                            tip_text="Glucose Management Indicator estimates lab A1C from average sensor glucose over the active window. Most non-pregnant adults aim for GMI under 7.0%."
                         />
                         <MetricCard
                             label="TIR 70–180 / Tight"
                             value=summary.as_ref().map(|s| format!("{:.0}% / {:.0}%", s.tir_70_180_pct, s.titr_70_140_pct)).unwrap_or_else(|| "—".to_string())
                             detail=summary.as_ref().map(|s| format!("Wear {:.0}% · {} readings", s.estimated_active_wear_pct, s.reading_count)).unwrap_or_default()
                             accent="text-emerald-300"
+                            tip_term="TIR & TITR"
+                            tip_text="Time in Range (70–180 mg/dL, ADA target ≥70%) and Time in Tight Range (70–140 mg/dL, narrower stability band)."
                         />
                         <MetricCard
                             label="CV% / MAGE"
                             value=summary.as_ref().map(|s| format!("{:.1}% · {:.0}", s.cv_percent, s.mage_mg_dl)).unwrap_or_else(|| "—".to_string())
                             detail=cv_detail
                             accent="text-amber-300"
+                            tip_term="CV%, SD & MAGE"
+                            tip_text="Coefficient of Variation (CV% = SD ÷ Mean; target <36% for stable glucose) and Mean Amplitude of Glycemic Excursions (average size of significant swings in mg/dL)."
                         />
                         <MetricCard
                             label="GRI (Risk Index)"
                             value=gri_value
                             detail=gri_detail
                             accent="text-rose-300"
+                            tip_term="GRI"
+                            tip_text="Glycemia Risk Index (0–100): composite clinical risk score weighting low-glucose and high-glucose exposure. Lower scores (0–20 Zone A) indicate lower glycemic risk."
                         />
                         <MetricCard
                             label="PHQ-9 / GAD-7"
@@ -1407,6 +1615,8 @@ pub fn MentalHealthPage() -> impl IntoView {
                                 latest_gad7.map(|v| classify_gad7(v).label()).unwrap_or("Unscored"),
                             )
                             accent="text-violet-300"
+                            tip_term="PHQ-9 & GAD-7"
+                            tip_text="Validated screening scales: PHQ-9 (depression, 0–27) and GAD-7 (anxiety, 0–21). 0–4 Minimal · 5–9 Mild · 10–14 Moderate · 15+ Moderately Severe / Severe."
                         />
                     </div>
                 }
@@ -1449,8 +1659,8 @@ pub fn MentalHealthPage() -> impl IntoView {
                 on_clear_chat=clear_cgm_chat
             />
 
-            // Interactive 3D WebGL2 / 2D SVG dual-axis chart
-            <section class="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
+            // Interactive 3D / 2D dual-axis chart
+            <section class="print-hide print:hidden mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
                 <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <div>
                         <h2 class="text-lg font-semibold text-white">
@@ -1460,7 +1670,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                             {move || {
                                 let (low, high) = target_range_signal.get();
                                 format!(
-                                    "Explore your {:.0}–{:.0} mg/dL target zone with mood (emerald) and anxiety (rose) in pure-Rust WebGL2 3D or classic 2D SVG.",
+                                    "Explore your {:.0}–{:.0} mg/dL target zone with mood (emerald) and anxiety (rose) in interactive 3D or 2D view.",
                                     low, high
                                 )
                             }}
@@ -1472,6 +1682,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                                 view! {
                                     <button
                                         type="button"
+                                        aria-pressed=move || window.get() == w
                                         on:click=move |_| window.set(w)
                                         class=move || {
                                             if window.get() == w {
@@ -1486,9 +1697,10 @@ pub fn MentalHealthPage() -> impl IntoView {
                                 }
                             }).collect_view()}
                         </div>
-                        <div class="inline-flex rounded-full border border-white/15 bg-slate-900/80 p-0.5">
+                        <div class="inline-flex rounded-full border border-white/15 bg-slate-900/80 p-0.5" role="group" aria-label="Chart view mode">
                             <button
                                 type="button"
+                                aria-pressed=move || chart_mode.get() == ChartViewMode::WebGl3D
                                 on:click=move |_| chart_mode.set(ChartViewMode::WebGl3D)
                                 class=move || {
                                     if chart_mode.get() == ChartViewMode::WebGl3D {
@@ -1498,10 +1710,11 @@ pub fn MentalHealthPage() -> impl IntoView {
                                     }
                                 }
                             >
-                                "3D WebGL2"
+                                "3D View"
                             </button>
                             <button
                                 type="button"
+                                aria-pressed=move || chart_mode.get() == ChartViewMode::Svg2D
                                 on:click=move |_| chart_mode.set(ChartViewMode::Svg2D)
                                 class=move || {
                                     if chart_mode.get() == ChartViewMode::Svg2D {
@@ -1511,12 +1724,12 @@ pub fn MentalHealthPage() -> impl IntoView {
                                     }
                                 }
                             >
-                                "2D SVG"
+                                "2D View"
                             </button>
                         </div>
                         <span class="flex items-center gap-1.5">
                             <span class="inline-block h-2.5 w-2.5 rounded-full bg-cyan-400"></span>
-                            "Lingo glucose (mg/dL)"
+                            {move || format!("{} (mg/dL)", detected_monitor.get().display_name())}
                         </span>
                         <span class="flex items-center gap-1.5">
                             <span class="inline-block h-2.5 w-2.5 rounded-full bg-emerald-400"></span>
@@ -1534,16 +1747,19 @@ pub fn MentalHealthPage() -> impl IntoView {
                             readings=windowed_readings.into()
                             checkins=checkins.into()
                             target_range=target_range_signal
+                            monitor_name=Signal::derive(move || detected_monitor.get().display_name().to_string())
                         />
                     }.into_any(),
                     ChartViewMode::Svg2D => {
                         let (target_low, target_high) = target_range_signal.get();
+                        let mon_name = detected_monitor.get().display_name().to_string();
                         view! {
                             <LingoMoodTimelineChart
                                 readings=windowed_readings.get()
                                 checkins=checkins.get()
                                 target_low_mg_dl=target_low
                                 target_high_mg_dl=target_high
+                                monitor_name=mon_name
                             />
                         }
                         .into_any()
@@ -1563,7 +1779,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                         window.get().label(),
                     );
                     view! {
-                        <section class="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-5">
+                        <section class="print-hide print:hidden mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-5">
                             <div class="flex flex-wrap items-center justify-between gap-3">
                                 <div>
                                     <h2 class="text-lg font-semibold text-white">
@@ -1615,11 +1831,15 @@ pub fn MentalHealthPage() -> impl IntoView {
             }}
 
             // Longitudinal PHQ-9 & GAD-7 Trend Chart
-            <section class="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
+            <section class="print-hide print:hidden mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
                 <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <div>
-                        <h2 class="text-lg font-semibold text-white">
-                            "PHQ-9 & GAD-7 Longitudinal Trajectory"
+                        <h2 class="flex items-center text-lg font-semibold text-white">
+                            <span>"PHQ-9 & GAD-7 Longitudinal Trajectory"</span>
+                            <InfoTip
+                                term="PHQ-9 & GAD-7"
+                                text="Validated symptom screening scores over time: 0–4 Minimal · 5–9 Mild · 10–14 Moderate · 15–19 Moderately Severe (PHQ-9) · 20–27 / 15–21 Severe."
+                            />
                         </h2>
                         <p class="text-sm text-slate-400">
                             "Multi-week depression (PHQ-9, 0–27) and anxiety (GAD-7, 0–21) scores with Mild (5) and Moderate (10) clinical thresholds."
@@ -1637,17 +1857,36 @@ pub fn MentalHealthPage() -> impl IntoView {
                     </div>
                 </div>
                 {move || {
-                    let series = build_assessment_series(&sample_assessment_history(), &checkins.get());
-                    view! { <Phq9Gad7TrendChart series=series /> }
+                    let is_personal =
+                        loaded_file_label.get().is_some() || user_added_checkins.get();
+                    let baseline = if is_personal {
+                        Vec::new()
+                    } else {
+                        sample_assessment_history()
+                    };
+                    let series = build_assessment_series(&baseline, &checkins.get());
+                    if series.is_empty() {
+                        view! {
+                            <p class="rounded-xl border border-white/10 bg-slate-950/60 p-4 text-xs text-slate-300">
+                                "No personal PHQ-9 or GAD-7 scores logged yet (synthetic demo baseline hidden while viewing personal data). Log a check-in with an optional PHQ-9 (0–27) or GAD-7 (0–21) score below to start your own trend."
+                            </p>
+                        }
+                        .into_any()
+                    } else {
+                        view! { <Phq9Gad7TrendChart series=series /> }.into_any()
+                    }
                 }}
             </section>
 
-            // Two-column workspace: Check-in Logger + Abbott Lingo CSV Import
-            <div class="mb-8 grid gap-6 lg:grid-cols-2">
+            // Two-column workspace: Check-in Logger + Commercial CGM Import
+            <div class="print-hide print:hidden mb-8 grid gap-6 lg:grid-cols-2">
                 <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
                     <h2 class="mb-1 text-lg font-semibold text-white">"Log Mental Health Check-In"</h2>
                     <p class="mb-4 text-sm text-slate-400">
-                        "Correlates immediately with your nearest Lingo glucose reading and prior 2-hour excursion peak."
+                        {move || format!(
+                            "Correlates immediately with your nearest {} reading and prior 2-hour excursion peak.",
+                            detected_monitor.get().display_name()
+                        )}
                     </p>
                     <form on:submit=submit_checkin class="space-y-4">
                         <div class="grid grid-cols-3 gap-3">
@@ -1697,21 +1936,18 @@ pub fn MentalHealthPage() -> impl IntoView {
                                 />
                             </label>
                         </div>
-                        <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                             <label class="block text-xs text-slate-300">
-                                "Hour offset"
+                                "Check-in date & time (local)"
                                 <input
-                                    type="number"
-                                    step="0.5"
-                                    min="0"
-                                    max=move || format!("{:.1}", max_checkin_hour.get())
-                                    prop:value=move || hour_input.get()
-                                    on:input=move |ev| hour_input.set(event_target_value(&ev))
+                                    type="datetime-local"
+                                    prop:value=move || checkin_datetime.get()
+                                    on:input=move |ev| checkin_datetime.set(event_target_value(&ev))
                                     class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-sm text-white"
                                 />
                             </label>
                             <label class="block text-xs text-slate-300">
-                                "Sleep (hrs)"
+                                "Sleep (hrs, 0–24)"
                                 <input
                                     type="number"
                                     step="0.5"
@@ -1723,28 +1959,46 @@ pub fn MentalHealthPage() -> impl IntoView {
                                 />
                             </label>
                             <label class="block text-xs text-slate-300">
-                                "PHQ-9 (0–27)"
+                                <span class="inline-flex items-center">
+                                    "PHQ-9 (0–27, optional)"
+                                    <InfoTip
+                                        term="PHQ-9"
+                                        text="9-item depression screener (0–27): 0–4 Minimal · 5–9 Mild · 10–14 Moderate · 15–19 Moderately Severe · 20–27 Severe."
+                                    />
+                                </span>
                                 <input
                                     type="number"
                                     min="0"
                                     max="27"
-                                    placeholder="opt"
+                                    placeholder="0–27 (optional)"
                                     prop:value=move || phq9_input.get()
                                     on:input=move |ev| phq9_input.set(event_target_value(&ev))
                                     class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-sm text-white"
                                 />
+                                <span class="mt-0.5 block text-[10px] text-slate-500">
+                                    "0–4 Minimal · 5–9 Mild · 10–14 Moderate · 15+ Elevated"
+                                </span>
                             </label>
                             <label class="block text-xs text-slate-300">
-                                "GAD-7 (0–21)"
+                                <span class="inline-flex items-center">
+                                    "GAD-7 (0–21, optional)"
+                                    <InfoTip
+                                        term="GAD-7"
+                                        text="7-item anxiety screener (0–21): 0–4 Minimal · 5–9 Mild · 10–14 Moderate · 15–21 Severe."
+                                    />
+                                </span>
                                 <input
                                     type="number"
                                     min="0"
                                     max="21"
-                                    placeholder="opt"
+                                    placeholder="0–21 (optional)"
                                     prop:value=move || gad7_input.get()
                                     on:input=move |ev| gad7_input.set(event_target_value(&ev))
                                     class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-sm text-white"
                                 />
+                                <span class="mt-0.5 block text-[10px] text-slate-500">
+                                    "0–4 Minimal · 5–9 Mild · 10–14 Moderate · 15–21 Severe"
+                                </span>
                             </label>
                         </div>
                         <label class="block text-xs text-slate-300">
@@ -1757,38 +2011,45 @@ pub fn MentalHealthPage() -> impl IntoView {
                                 class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white placeholder:text-slate-500"
                             />
                         </label>
-                        <div class="flex items-center justify-between gap-3">
+                        {move || form_error.get().map(|err| view! {
+                            <p role="alert" class="rounded-lg border border-rose-400/35 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                                {err}
+                            </p>
+                        })}
+                        <div class="flex flex-wrap items-center justify-between gap-3">
                             <button
                                 type="submit"
-                                class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
+                                class="min-h-[40px] rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
                             >
                                 "Add check-in"
                             </button>
                             {move || form_status.get().map(|msg| view! {
-                                <span class="text-xs text-emerald-300">{msg}</span>
+                                <span role="status" aria-live="polite" class="text-xs text-emerald-300">
+                                    {msg}
+                                </span>
                             })}
                         </div>
                     </form>
                 </section>
 
-                <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
+                <section id="cgm-import" class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
                     <div class="mb-1 flex flex-wrap items-center justify-between gap-2">
-                        <h2 class="text-lg font-semibold text-white">"Abbott Lingo & Commercial CGM Import"</h2>
+                        <h2 class="text-lg font-semibold text-white">"Commercial CGM & Glucose File Import"</h2>
                         <span class="rounded-full border border-white/10 bg-slate-900 px-2.5 py-0.5 text-[11px] text-cyan-300">
                             {move || format!("{} ({})", detected_monitor.get().display_name(), source_unit.get().label())}
                         </span>
                     </div>
                     <p class="mb-3 text-sm text-slate-400">
-                        "Load personal exports locally (never uploaded): Abbott Lingo native CSV, Apple Health export.xml, Health Connect JSON (`dabney.health_bridge.v1`), FreeStyle LibreView, Dexcom Clarity/Stelo, Medtronic CareLink, Eversense, Tandem, Glooko/Tidepool, or BGM CSV."
+                        "Load personal exports privately on your device (never uploaded): Abbott Lingo CSV, Apple Health export.xml, Health Connect JSON, FreeStyle LibreView, Dexcom Clarity/Stelo, Medtronic CareLink, Eversense, Tandem, Glooko/Tidepool, or fingerstick meter CSV."
                     </p>
                     <details class="mb-3 rounded-xl border border-cyan-400/20 bg-cyan-500/5 px-3.5 py-2.5 text-xs text-slate-300">
                         <summary class="cursor-pointer font-semibold text-cyan-200">
-                            "How to export from Abbott Lingo today (+ Android Health Connect / Apple HealthKit)"
+                            "How to export from Abbott Lingo (+ Android Health Connect / Apple Health)"
                         </summary>
                         <ol class="mt-2 list-decimal space-y-1 pl-4 text-[11px] leading-relaxed text-slate-300">
-                            <li>"Open the Abbott Lingo app → You → Profile → Actions → Export your glucose data → Download file (5-min ISO-8601 CSV)."</li>
-                            <li>"Select that `.csv` below (or an iOS Apple Health `export.xml` or Health Connect JSON) — everything parses locally in Rust/WASM and stays in device RAM."</li>
-                            <li>"Direct Google Health Connect live sync lives strictly inside the separate opt-in personal Android build (`moe.dabney.personal`) and feeds this exact `dabney.health_bridge.v1` JSON schema, keeping the public Play Store demo (`moe.dabney.demo`) strictly zero-PHI."</li>
+                            <li>"Open the Abbott Lingo app → You → Profile → Actions → Export your glucose data → Download file."</li>
+                            <li>"Choose that CSV below (or an Apple Health export.xml or Health Connect JSON) — everything parses locally on your device and stays private (stored encrypted on this device only when local vault is enabled)."</li>
+                            <li>"Live Health Connect / Apple Health sync is available inside the opt-in personal Curie Mobile app, keeping the public browser demo strictly zero-PHI."</li>
                         </ol>
                     </details>
                     <div class="mb-3 flex flex-wrap gap-1.5">
@@ -1848,7 +2109,13 @@ pub fn MentalHealthPage() -> impl IntoView {
                             <select
                                 on:change=move |ev| {
                                     let val = event_target_value(&ev);
-                                    monitor_hint.set(GlucoseMonitor::from_slug(&val));
+                                    let next_hint = GlucoseMonitor::from_slug(&val);
+                                    monitor_hint.set(next_hint);
+                                    if let Some((full_raw, label)) =
+                                        uploaded_full_payload.get_untracked()
+                                    {
+                                        apply_glucose_text(&full_raw, next_hint, Some(label));
+                                    }
                                 }
                                 class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white"
                             >
@@ -1868,22 +2135,57 @@ pub fn MentalHealthPage() -> impl IntoView {
                             />
                         </label>
                     </div>
+                    {move || parsing_file.get().then(|| view! {
+                        <p
+                            role="status"
+                            aria-live="polite"
+                            class="mb-2 flex items-center gap-2 rounded-lg border border-cyan-400/25 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100"
+                        >
+                            <span
+                                aria-hidden="true"
+                                class="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-cyan-300/30 border-t-cyan-300"
+                            />
+                            <span>"Reading & validating glucose file locally…"</span>
+                        </p>
+                    })}
+                    {move || uploaded_full_payload.get().map(|(raw, label)| {
+                        let kb = raw.len() as f64 / 1024.0;
+                        view! {
+                            <div class="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-100">
+                                <span>
+                                    {format!("Full file held in memory: {label} ({kb:.1} KB). Clicking Parse & Validate re-parses the complete file.")}
+                                </span>
+                                <button
+                                    type="button"
+                                    on:click=move |_| uploaded_full_payload.set(None)
+                                    class="rounded-full border border-emerald-300/40 px-2.5 py-0.5 text-[11px] font-medium text-emerald-200 hover:bg-emerald-500/20"
+                                >
+                                    "Paste raw text instead"
+                                </button>
+                            </div>
+                        }
+                    })}
                     <textarea
                         rows="5"
+                        aria-label="Paste glucose export data (CSV, XML, or JSON)"
                         prop:value=move || csv_input.get()
-                        on:input=move |ev| csv_input.set(event_target_value(&ev))
+                        on:input=move |ev| {
+                            uploaded_full_payload.set(None);
+                            csv_input.set(event_target_value(&ev));
+                        }
                         class="w-full rounded-xl border border-white/10 bg-slate-950 p-3 font-mono text-xs text-slate-200"
                     />
                     <div class="mt-3 flex flex-wrap items-center justify-between gap-3">
                         <button
                             type="button"
+                            disabled=move || parsing_file.get()
                             on:click=apply_csv
-                            class="rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
+                            class="min-h-[40px] rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50"
                         >
                             "Parse & Validate Export"
                         </button>
                         {move || csv_error.get().map(|err| view! {
-                            <span class="text-xs text-rose-400">{err}</span>
+                            <span role="alert" class="text-xs text-rose-400">{err}</span>
                         })}
                     </div>
                     {move || import_diagnostics.get().map(|diag| view! {
@@ -1893,12 +2195,15 @@ pub fn MentalHealthPage() -> impl IntoView {
             </div>
 
             // Correlated check-ins table
-            <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
+            <section class="print-hide print:hidden rounded-2xl border border-white/10 bg-white/[0.02] p-6">
                 <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <div>
                         <h2 class="mb-1 text-lg font-semibold text-white">"Glucose–Mood Correlation Log"</h2>
                         <p class="text-sm text-slate-400">
-                            "Each mental health check-in paired with nearest Abbott Lingo glucose and peak reading in the preceding 2 hours."
+                            {move || format!(
+                                "Each mental health check-in paired with nearest {} glucose and peak reading in the preceding 2 hours.",
+                                detected_monitor.get().display_name()
+                            )}
                         </p>
                     </div>
                     {move || {
@@ -1907,7 +2212,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                         view! {
                             <a
                                 href=href
-                                download="dabney-mental-health-cgm.csv"
+                                download="curie-mental-health-cgm.csv"
                                 class="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-4 py-2 text-xs font-medium text-slate-200 transition hover:bg-white/5"
                             >
                                 "Download CSV"
@@ -1929,26 +2234,35 @@ pub fn MentalHealthPage() -> impl IntoView {
                         <tbody class="divide-y divide-white/5 text-slate-200">
                             {move || {
                                 let corr = correlations.get();
+                                let (target_low, target_high) = target_range_signal.get();
                                 if corr.is_empty() {
                                     return view! {
                                         <tr>
                                             <td colspan="5" class="py-4 text-xs text-slate-400">
-                                                "No mental health check-ins logged for this trace yet. Use the form above to correlate mood, anxiety, or sleep against this CGM window."
+                                                "No mental health check-ins logged for this trace yet. Use the form above to correlate mood, anxiety, or sleep against this glucose window."
                                             </td>
                                         </tr>
                                     }.into_any();
                                 }
                                 corr.into_iter().map(|row| {
-                                    let badge = if row.spike_adjacent {
+                                    let badge = if row.nearest_glucose_mg_dl < target_low {
+                                        view! {
+                                            <span class="inline-flex rounded-full bg-rose-500/15 px-2.5 py-0.5 text-xs font-medium text-rose-300">
+                                                {format!("Below target (<{target_low:.0})")}
+                                            </span>
+                                        }.into_any()
+                                    } else if row.peak_prior_2h_mg_dl > target_high
+                                        || row.nearest_glucose_mg_dl > target_high
+                                    {
                                         view! {
                                             <span class="inline-flex rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-medium text-amber-300">
-                                                "Post-spike (>140)"
+                                                {format!("Post-spike (>{target_high:.0})")}
                                             </span>
                                         }.into_any()
                                     } else {
                                         view! {
                                             <span class="inline-flex rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-300">
-                                                "In Lingo zone"
+                                                {format!("In target ({target_low:.0}–{target_high:.0})")}
                                             </span>
                                         }.into_any()
                                     };
@@ -1973,12 +2287,14 @@ pub fn MentalHealthPage() -> impl IntoView {
             </section>
 
             // Local-first Opt-In Multi-Platform Synthesizer, Actogram & Cool-Down Plan
-            <EpisodeActivationSection
-                events=activity_events
-                consent=platform_consent
-                asrm_score=asrm_score
-                sleep_hours=parsed_sleep_hours.into()
-            />
+            <div class="print-hide print:hidden">
+                <EpisodeActivationSection
+                    events=activity_events
+                    consent=platform_consent
+                    asrm_score=asrm_score
+                    sleep_hours=parsed_sleep_hours.into()
+                />
+            </div>
 
             // On-Device Personal Crisis & Support Card + 1-Page Printable Clinician Visit Brief
             <SupportAndClinicianBriefSection
@@ -2007,10 +2323,15 @@ fn MetricCard(
     value: String,
     detail: String,
     accent: &'static str,
+    tip_term: &'static str,
+    tip_text: &'static str,
 ) -> impl IntoView {
     view! {
         <div class="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-            <p class="text-xs font-medium text-slate-400">{label}</p>
+            <p class="flex items-center text-xs font-medium text-slate-400">
+                <span>{label}</span>
+                <InfoTip term=tip_term text=tip_text />
+            </p>
             <p class=format!("mt-1 text-2xl font-bold tracking-tight {accent}")>{value}</p>
             <p class="mt-1 text-xs text-slate-400">{detail}</p>
         </div>
@@ -2063,7 +2384,7 @@ fn ImportValidationPanel(diagnostics: GlucoseImportDiagnostics) -> impl IntoView
                     <p class="font-mono font-semibold text-emerald-200">{cadence_text}</p>
                 </div>
                 <div class="rounded-lg border border-white/5 bg-slate-900/70 px-2.5 py-1.5">
-                    <p class="text-slate-400">"Cap / OOR / Invalid"</p>
+                    <p class="text-slate-400">"Capped / OOR / Skipped"</p>
                     <p class="font-mono font-semibold text-amber-200">
                         {format!(
                             "{} / {} / {}",
@@ -2202,6 +2523,7 @@ fn LingoMoodTimelineChart(
     checkins: Vec<MentalHealthCheckIn>,
     #[prop(default = 70.0)] target_low_mg_dl: f64,
     #[prop(default = 140.0)] target_high_mg_dl: f64,
+    #[prop(optional)] monitor_name: Option<String>,
 ) -> impl IntoView {
     let mut target_low = if target_low_mg_dl.is_finite() {
         target_low_mg_dl
@@ -2238,7 +2560,7 @@ fn LingoMoodTimelineChart(
         .chain(checkins.iter().map(|c| c.hour_offset))
         .fold(24.0_f64, f64::max)
         .max(1.0);
-    // Lower floor to 45 mg/dL so Lingo floor-capped 54 mg/dL (<55) readings sit visibly above the bottom edge.
+    // Lower floor to 45 mg/dL so floor-capped 54 mg/dL (<55) readings sit visibly above the bottom edge.
     let min_g = 45.0_f64;
     let max_g = readings
         .iter()
@@ -2278,6 +2600,16 @@ fn LingoMoodTimelineChart(
     let floor_caps = select_svg_floor_cap_markers(&readings, 24);
     let (x_left, x_mid, x_right) = timeline_x_axis_labels(&readings, max_hour);
 
+    // Sample up to 36 evenly spaced points across the timeline for smooth hover/tap inspection.
+    let inspect_points: Vec<LingoReading> = if readings.len() <= 36 {
+        readings.clone()
+    } else {
+        let step = (readings.len() - 1) as f64 / 35.0;
+        (0..36)
+            .map(|i| readings[((i as f64 * step).round() as usize).min(readings.len() - 1)].clone())
+            .collect()
+    };
+
     let segment_polylines: Vec<String> = segments
         .iter()
         .filter(|seg| seg.len() >= 2)
@@ -2300,100 +2632,227 @@ fn LingoMoodTimelineChart(
         .map(|seg| (x_for(seg[0].hour_offset), y_for_g(seg[0].glucose_mg_dl)))
         .collect();
 
+    let selected_detail = RwSignal::new(Option::<String>::None);
+    let chart_aria_label = format!(
+        "{} continuous glucose monitoring and mental health check-in timeline",
+        monitor_name
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("Continuous glucose")
+    );
+
     view! {
-        <svg
-            viewBox="0 0 760 240"
-            class="w-full"
-            role="img"
-            aria-label="Abbott Lingo continuous glucose monitoring and mental health check-in timeline"
-        >
-            // Configurable target-range shaded metabolic zone
-            <rect
-                x=pad_l
-                y=band_top
-                width=plot_w
-                height=band_h
-                fill="rgba(52, 211, 153, 0.10)"
-            />
-            // Clinical 180 mg/dL hyperglycemia reference line (shown whenever target_high != 180)
-            {show_180_ref.then(|| view! {
-                <line x1=pad_l y1=y_180 x2=width - pad_r y2=y_180 stroke="rgba(251, 191, 36, 0.45)" stroke-dasharray="4 4" />
-            })}
-            <line x1=pad_l y1=band_top x2=width - pad_r y2=band_top stroke="rgba(52, 211, 153, 0.35)" stroke-dasharray="4 4" />
-            <line x1=pad_l y1=band_bottom x2=width - pad_r y2=band_bottom stroke="rgba(52, 211, 153, 0.35)" stroke-dasharray="4 4" />
-
-            // Y-axis labels
-            {show_180_label.then(|| view! {
-                <text x="8" y=y_180 + 4.0 fill=AMBER font-size="10">"180"</text>
-            })}
-            <text x="8" y=band_top + 4.0 fill=SLATE_LIGHT font-size="10">{format!("{target_high:.0}")}</text>
-            <text x="8" y=band_bottom + 4.0 fill=SLATE_LIGHT font-size="10">{format!("{target_low:.0}")}</text>
-            {show_max_g_label.then(|| view! {
-                <text x="8" y=pad_t + 6.0 fill=SLATE_LIGHT font-size="10">{format!("{:.0}", max_g)}</text>
-            })}
-
-            // Gap-aware glucose segments (never bridged across >2h sensor gaps)
-            {segment_polylines.into_iter().map(|pts| view! {
-                <polyline
-                    fill="none"
-                    stroke=CYAN
-                    stroke-width="2.5"
-                    stroke-linejoin="round"
-                    stroke-linecap="round"
-                    points=pts
+        <div class="space-y-2.5">
+            <svg
+                viewBox="0 0 760 240"
+                class="w-full"
+                role="img"
+                aria-label=chart_aria_label
+            >
+                // Configurable target-range shaded metabolic zone
+                <rect
+                    x=pad_l
+                    y=band_top
+                    width=plot_w
+                    height=band_h
+                    fill="rgba(52, 211, 153, 0.10)"
                 />
-            }).collect_view()}
-            {isolated_points.into_iter().map(|(cx, cy)| view! {
-                <circle cx=cx cy=cy r="2.5" fill=CYAN />
-            }).collect_view()}
+                // Clinical 180 mg/dL hyperglycemia reference line (shown whenever target_high != 180)
+                {show_180_ref.then(|| view! {
+                    <line x1=pad_l y1=y_180 x2=width - pad_r y2=y_180 stroke="rgba(251, 191, 36, 0.45)" stroke-dasharray="4 4" />
+                })}
+                <line x1=pad_l y1=band_top x2=width - pad_r y2=band_top stroke="rgba(52, 211, 153, 0.35)" stroke-dasharray="4 4" />
+                <line x1=pad_l y1=band_bottom x2=width - pad_r y2=band_bottom stroke="rgba(52, 211, 153, 0.35)" stroke-dasharray="4 4" />
 
-            // Spike markers (> 140 mg/dL local peaks; ceiling-capped readings styled distinctly in orange-red)
-            {spike_peaks.into_iter().map(|r| {
-                let cx = x_for(r.hour_offset);
-                let cy = y_for_g(r.glucose_mg_dl);
-                if r.bound.is_ceiling_capped() {
+                // Y-axis labels
+                {show_180_label.then(|| view! {
+                    <text x="8" y=y_180 + 4.0 fill=AMBER font-size="10">"180"</text>
+                })}
+                <text x="8" y=band_top + 4.0 fill=SLATE_LIGHT font-size="10">{format!("{target_high:.0}")}</text>
+                <text x="8" y=band_bottom + 4.0 fill=SLATE_LIGHT font-size="10">{format!("{target_low:.0}")}</text>
+                {show_max_g_label.then(|| view! {
+                    <text x="8" y=pad_t + 6.0 fill=SLATE_LIGHT font-size="10">{format!("{:.0}", max_g)}</text>
+                })}
+
+                // Gap-aware glucose segments (never bridged across >2h sensor gaps)
+                {segment_polylines.into_iter().map(|pts| view! {
+                    <polyline
+                        fill="none"
+                        stroke=CYAN
+                        stroke-width="2.5"
+                        stroke-linejoin="round"
+                        stroke-linecap="round"
+                        points=pts
+                    />
+                }).collect_view()}
+                {isolated_points.into_iter().map(|(cx, cy)| view! {
+                    <circle cx=cx cy=cy r="2.5" fill=CYAN />
+                }).collect_view()}
+
+                // Sampled invisible hit targets along the glucose trace for hover/tap/keyboard inspection
+                {inspect_points.into_iter().map(|r| {
+                    let cx = x_for(r.hour_offset);
+                    let cy = y_for_g(r.glucose_mg_dl);
+                    let val_label = if r.bound.is_ceiling_capped() {
+                        format!("≥{:.0} mg/dL (sensor ceiling)", r.glucose_mg_dl)
+                    } else if r.bound.is_floor_capped() {
+                        format!("≤{:.0} mg/dL (sensor floor)", r.glucose_mg_dl)
+                    } else {
+                        format!("{:.0} mg/dL", r.glucose_mg_dl)
+                    };
+                    let tip = format!("{} · Glucose: {val_label}", r.timestamp);
+                    let t1 = tip.clone();
+                    let t2 = tip.clone();
+                    let t3 = tip.clone();
                     view! {
-                        <circle cx=cx cy=cy r="5.0" fill="#f97316" stroke="#fff7ed" stroke-width="1.5" />
-                    }.into_any()
-                } else {
+                        <g
+                            tabindex="0"
+                            role="button"
+                            aria-label=tip.clone()
+                            class="cursor-pointer focus:outline-none"
+                            on:mouseenter=move |_| selected_detail.set(Some(t1.clone()))
+                            on:focus=move |_| selected_detail.set(Some(t2.clone()))
+                            on:click=move |_| selected_detail.set(Some(t3.clone()))
+                        >
+                            <title>{tip.clone()}</title>
+                            <circle cx=cx cy=cy r="9" fill="transparent" />
+                        </g>
+                    }
+                }).collect_view()}
+
+                // Spike markers (> target_high local peaks; ceiling-capped readings styled distinctly in orange-red)
+                {spike_peaks.into_iter().map(|r| {
+                    let cx = x_for(r.hour_offset);
+                    let cy = y_for_g(r.glucose_mg_dl);
+                    let tip = if r.bound.is_ceiling_capped() {
+                        format!("{} · Ceiling-capped peak ≥{:.0} mg/dL", r.timestamp, r.glucose_mg_dl)
+                    } else {
+                        format!("{} · Spike peak {:.0} mg/dL", r.timestamp, r.glucose_mg_dl)
+                    };
+                    let t1 = tip.clone();
+                    let t2 = tip.clone();
+                    let t3 = tip.clone();
+                    if r.bound.is_ceiling_capped() {
+                        view! {
+                            <g
+                                tabindex="0"
+                                role="button"
+                                aria-label=tip.clone()
+                                class="cursor-pointer focus:outline-none"
+                                on:mouseenter=move |_| selected_detail.set(Some(t1.clone()))
+                                on:focus=move |_| selected_detail.set(Some(t2.clone()))
+                                on:click=move |_| selected_detail.set(Some(t3.clone()))
+                            >
+                                <title>{tip.clone()}</title>
+                                <circle cx=cx cy=cy r="5.0" fill="#f97316" stroke="#fff7ed" stroke-width="1.5" />
+                            </g>
+                        }.into_any()
+                    } else {
+                        view! {
+                            <g
+                                tabindex="0"
+                                role="button"
+                                aria-label=tip.clone()
+                                class="cursor-pointer focus:outline-none"
+                                on:mouseenter=move |_| selected_detail.set(Some(t1.clone()))
+                                on:focus=move |_| selected_detail.set(Some(t2.clone()))
+                                on:click=move |_| selected_detail.set(Some(t3.clone()))
+                            >
+                                <title>{tip.clone()}</title>
+                                <circle cx=cx cy=cy r="4.5" fill=AMBER stroke="#0f172a" stroke-width="1.5" />
+                            </g>
+                        }.into_any()
+                    }
+                }).collect_view()}
+
+                // Floor-capped markers (<55 / ≤54 mg/dL dips in crimson)
+                {floor_caps.into_iter().map(|r| {
+                    let cx = x_for(r.hour_offset);
+                    let cy = y_for_g(r.glucose_mg_dl);
+                    let tip = format!("{} · Floor-capped low ≤{:.0} mg/dL", r.timestamp, r.glucose_mg_dl);
+                    let t1 = tip.clone();
+                    let t2 = tip.clone();
+                    let t3 = tip.clone();
                     view! {
-                        <circle cx=cx cy=cy r="4.5" fill=AMBER stroke="#0f172a" stroke-width="1.5" />
-                    }.into_any()
-                }
-            }).collect_view()}
+                        <g
+                            tabindex="0"
+                            role="button"
+                            aria-label=tip.clone()
+                            class="cursor-pointer focus:outline-none"
+                            on:mouseenter=move |_| selected_detail.set(Some(t1.clone()))
+                            on:focus=move |_| selected_detail.set(Some(t2.clone()))
+                            on:click=move |_| selected_detail.set(Some(t3.clone()))
+                        >
+                            <title>{tip.clone()}</title>
+                            <circle cx=cx cy=cy r="4.5" fill="#f43f5e" stroke="#fff1f2" stroke-width="1.5" />
+                        </g>
+                    }
+                }).collect_view()}
 
-            // Floor-capped markers (<55 / ≤54 mg/dL dips in crimson)
-            {floor_caps.into_iter().map(|r| {
-                let cx = x_for(r.hour_offset);
-                let cy = y_for_g(r.glucose_mg_dl);
-                view! {
-                    <circle cx=cx cy=cy r="4.5" fill="#f43f5e" stroke="#fff1f2" stroke-width="1.5" />
-                }
-            }).collect_view()}
+                // Mood & Anxiety markers
+                {checkins.into_iter().map(|c| {
+                    let cx = x_for(c.hour_offset);
+                    let my = y_for_score(c.mood);
+                    let ay = y_for_score(c.anxiety);
+                    let tip = format!(
+                        "{} · Mood {}/10 · Anxiety {}/10 · Energy {}/10 · Sleep {:.1}h — {}",
+                        c.recorded_at, c.mood, c.anxiety, c.energy, c.sleep_hours, c.note
+                    );
+                    let t1 = tip.clone();
+                    let t2 = tip.clone();
+                    let t3 = tip.clone();
+                    view! {
+                        <g
+                            tabindex="0"
+                            role="button"
+                            aria-label=tip.clone()
+                            class="cursor-pointer focus:outline-none"
+                            on:mouseenter=move |_| selected_detail.set(Some(t1.clone()))
+                            on:focus=move |_| selected_detail.set(Some(t2.clone()))
+                            on:click=move |_| selected_detail.set(Some(t3.clone()))
+                        >
+                            <title>{tip.clone()}</title>
+                            <line x1=cx y1=pad_t x2=cx y2=height - pad_b stroke="rgba(148,163,184,0.18)" stroke-dasharray="2 3" />
+                            <circle cx=cx cy=my r="4.5" fill=EMERALD stroke="#0f172a" stroke-width="1.5" />
+                            <circle cx=cx cy=ay r="4.5" fill=ROSE stroke="#0f172a" stroke-width="1.5" />
+                        </g>
+                    }
+                }).collect_view()}
 
-            // Mood & Anxiety markers
-            {checkins.into_iter().map(|c| {
-                let cx = x_for(c.hour_offset);
-                let my = y_for_score(c.mood);
-                let ay = y_for_score(c.anxiety);
-                view! {
-                    <g>
-                        <line x1=cx y1=pad_t x2=cx y2=height - pad_b stroke="rgba(148,163,184,0.18)" stroke-dasharray="2 3" />
-                        <circle cx=cx cy=my r="4.5" fill=EMERALD stroke="#0f172a" stroke-width="1.5" />
-                        <circle cx=cx cy=ay r="4.5" fill=ROSE stroke="#0f172a" stroke-width="1.5" />
-                    </g>
-                }
-            }).collect_view()}
-
-            // X-axis labels (real YYYY-MM-DD calendar dates when span >= 24h)
-            <text x=pad_l y=height - 8.0 fill=SLATE_LIGHT font-size="10">{x_left}</text>
-            <text x=pad_l + plot_w / 2.0 y=height - 8.0 text-anchor="middle" fill=SLATE_LIGHT font-size="10">
-                {x_mid}
-            </text>
-            <text x=width - pad_r y=height - 8.0 text-anchor="end" fill=SLATE_LIGHT font-size="10">
-                {x_right}
-            </text>
-        </svg>
+                // X-axis labels (real YYYY-MM-DD calendar dates when span >= 24h)
+                <text x=pad_l y=height - 8.0 fill=SLATE_LIGHT font-size="10">{x_left}</text>
+                <text x=pad_l + plot_w / 2.0 y=height - 8.0 text-anchor="middle" fill=SLATE_LIGHT font-size="10">
+                    {x_mid}
+                </text>
+                <text x=width - pad_r y=height - 8.0 text-anchor="end" fill=SLATE_LIGHT font-size="10">
+                    {x_right}
+                </text>
+            </svg>
+            <div class="flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-2 text-[11px]">
+                <p role="status" aria-live="polite" class="font-mono text-cyan-200">
+                    {move || {
+                        selected_detail.get().unwrap_or_else(|| {
+                            "Hover, focus, or tap any glucose point, peak, dip, or check-in marker for exact values."
+                                .to_string()
+                        })
+                    }}
+                </p>
+                <div class="flex flex-wrap items-center gap-3 text-[10px] text-slate-400">
+                    <span class="inline-flex items-center gap-1">
+                        <span class="inline-block h-2 w-2 rounded-full bg-amber-400"></span>
+                        "Spike peak"
+                    </span>
+                    <span class="inline-flex items-center gap-1">
+                        <span class="inline-block h-2 w-2 rounded-full bg-orange-500"></span>
+                        "Ceiling cap"
+                    </span>
+                    <span class="inline-flex items-center gap-1">
+                        <span class="inline-block h-2 w-2 rounded-full bg-rose-500"></span>
+                        "Floor cap"
+                    </span>
+                </div>
+            </div>
+        </div>
     }
 }
 
@@ -2428,41 +2887,80 @@ fn Phq9Gad7TrendChart(series: Vec<AssessmentPoint>) -> impl IntoView {
 
     let y_mild = y_for(5);
     let y_mod = y_for(10);
+    let selected_point = RwSignal::new(Option::<String>::None);
 
     view! {
-        <svg
-            viewBox="0 0 760 190"
-            class="w-full"
-            role="img"
-            aria-label="PHQ-9 and GAD-7 longitudinal score trajectory"
-        >
-            <line x1=pad_l y1=y_mod x2=width - pad_r y2=y_mod stroke="rgba(251, 191, 36, 0.35)" stroke-dasharray="4 4" />
-            <line x1=pad_l y1=y_mild x2=width - pad_r y2=y_mild stroke="rgba(52, 211, 153, 0.30)" stroke-dasharray="4 4" />
+        <div class="space-y-2.5">
+            <svg
+                viewBox="0 0 760 190"
+                class="w-full"
+                role="img"
+                aria-label="PHQ-9 and GAD-7 longitudinal score trajectory"
+            >
+                <line x1=pad_l y1=y_mod x2=width - pad_r y2=y_mod stroke="rgba(251, 191, 36, 0.35)" stroke-dasharray="4 4" />
+                <line x1=pad_l y1=y_mild x2=width - pad_r y2=y_mild stroke="rgba(52, 211, 153, 0.30)" stroke-dasharray="4 4" />
 
-            <text x="6" y=y_mod + 4.0 fill=AMBER font-size="10">"10"</text>
-            <text x="6" y=y_mild + 4.0 fill=EMERALD font-size="10">"5"</text>
-            <text x="6" y=pad_t + 6.0 fill=SLATE_LIGHT font-size="10">"27"</text>
+                <text x="6" y=y_mod + 4.0 fill=AMBER font-size="10">"10"</text>
+                <text x="6" y=y_mild + 4.0 fill=EMERALD font-size="10">"5"</text>
+                <text x="6" y=pad_t + 6.0 fill=SLATE_LIGHT font-size="10">"27"</text>
 
-            <polyline fill="none" stroke=VIOLET stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points=phq9_points />
-            <polyline fill="none" stroke=ROSE stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points=gad7_points />
+                <polyline fill="none" stroke=VIOLET stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points=phq9_points />
+                <polyline fill="none" stroke=ROSE stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points=gad7_points />
 
-            {series.into_iter().enumerate().map(|(i, p)| {
-                let cx = x_for(i);
-                let phq_circle = p.phq9.map(|v| view! {
-                    <circle cx=cx cy=y_for(v) r="4" fill=VIOLET stroke="#0f172a" stroke-width="1.5" />
-                });
-                let gad_circle = p.gad7.map(|v| view! {
-                    <circle cx=cx cy=y_for(v) r="4" fill=ROSE stroke="#0f172a" stroke-width="1.5" />
-                });
-                view! {
-                    <g>
-                        {phq_circle}
-                        {gad_circle}
-                        <text x=cx y=height - 8.0 text-anchor="middle" fill=SLATE_LIGHT font-size="10">{p.date}</text>
-                    </g>
-                }
-            }).collect_view()}
-        </svg>
+                {series.into_iter().enumerate().map(|(i, p)| {
+                    let cx = x_for(i);
+                    let phq_txt = p
+                        .phq9
+                        .map(|v| format!("PHQ-9 {v}/27 ({})", classify_phq9(v).label()))
+                        .unwrap_or_else(|| "PHQ-9 —".to_string());
+                    let gad_txt = p
+                        .gad7
+                        .map(|v| format!("GAD-7 {v}/21 ({})", classify_gad7(v).label()))
+                        .unwrap_or_else(|| "GAD-7 —".to_string());
+                    let tip = format!("{} · {phq_txt} · {gad_txt} — {}", p.date, p.label);
+                    let t1 = tip.clone();
+                    let t2 = tip.clone();
+                    let t3 = tip.clone();
+                    let phq_circle = p.phq9.map(|v| view! {
+                        <circle cx=cx cy=y_for(v) r="4.5" fill=VIOLET stroke="#0f172a" stroke-width="1.5" />
+                    });
+                    let gad_circle = p.gad7.map(|v| view! {
+                        <circle cx=cx cy=y_for(v) r="4.5" fill=ROSE stroke="#0f172a" stroke-width="1.5" />
+                    });
+                    view! {
+                        <g
+                            tabindex="0"
+                            role="button"
+                            aria-label=tip.clone()
+                            class="cursor-pointer focus:outline-none"
+                            on:mouseenter=move |_| selected_point.set(Some(t1.clone()))
+                            on:focus=move |_| selected_point.set(Some(t2.clone()))
+                            on:click=move |_| selected_point.set(Some(t3.clone()))
+                        >
+                            <title>{tip.clone()}</title>
+                            <rect
+                                x=(cx - 18.0).max(pad_l)
+                                y=pad_t
+                                width="36"
+                                height=plot_h
+                                fill="transparent"
+                            />
+                            {phq_circle}
+                            {gad_circle}
+                            <text x=cx y=height - 8.0 text-anchor="middle" fill=SLATE_LIGHT font-size="10">{p.date}</text>
+                        </g>
+                    }
+                }).collect_view()}
+            </svg>
+            <p role="status" aria-live="polite" class="border-t border-white/5 pt-2 font-mono text-[11px] text-violet-200">
+                {move || {
+                    selected_point.get().unwrap_or_else(|| {
+                        "Hover, focus, or tap any date to inspect PHQ-9 & GAD-7 scores and clinical severity."
+                            .to_string()
+                    })
+                }}
+            </p>
+        </div>
     }
 }
 
@@ -2503,13 +3001,12 @@ fn HealthConnectSyncCard(
         )
     };
 
-    let package_id = status.package_id.clone();
     let has_permission = status.has_glucose_permission;
 
     view! {
         <div
             data-health-connect-card="true"
-            class="mb-6 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-4 text-xs text-slate-200"
+            class="print-hide print:hidden mb-6 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-4 text-xs text-slate-200"
         >
             <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -2517,7 +3014,7 @@ fn HealthConnectSyncCard(
                         {format!("{platform_name} · Live On-Device Sync")}
                     </p>
                     <p class="mt-0.5 text-[11px] text-slate-300">
-                        {format!("Personal package {package_id} · {permission_summary}")}
+                        {permission_summary}
                     </p>
                 </div>
                 <span class=format!("rounded-full border px-2.5 py-0.5 text-[11px] font-semibold {badge_class}")>
@@ -2529,7 +3026,7 @@ fn HealthConnectSyncCard(
                 view! {
                     <p class="text-[11px] leading-relaxed text-amber-200">
                         {if status.sdk_status == "update_required" {
-                            "Health Connect requires an update on this Android device. Update Health Connect in Google Play or Android System Settings, then reopen Dabney.moe Personal."
+                            "Health Connect requires an update on this Android device. Update Health Connect in Google Play or Android System Settings, then reopen Curie Mobile."
                         } else {
                             platform_kind.unavailable_hint()
                         }}
@@ -2545,13 +3042,21 @@ fn HealthConnectSyncCard(
                                     type="button"
                                     disabled=move || busy.get()
                                     on:click=move |_| on_request_permission.run(())
-                                    class="rounded-full bg-emerald-400 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:opacity-50"
+                                    class="inline-flex min-h-[38px] items-center gap-2 rounded-full bg-emerald-400 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:opacity-50"
                                 >
-                                    {move || if busy.get() {
-                                        format!("Opening {platform_name}…")
-                                    } else {
-                                        "Grant Blood Glucose Access".to_string()
-                                    }}
+                                    {move || busy.get().then(|| view! {
+                                        <span
+                                            aria-hidden="true"
+                                            class="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-950/30 border-t-slate-950"
+                                        />
+                                    })}
+                                    <span>
+                                        {move || if busy.get() {
+                                            format!("Opening {platform_name}…")
+                                        } else {
+                                            "Grant Blood Glucose Access".to_string()
+                                        }}
+                                    </span>
                                 </button>
                             }
                             .into_any()
@@ -2561,15 +3066,23 @@ fn HealthConnectSyncCard(
                                     type="button"
                                     disabled=move || busy.get()
                                     on:click=move |_| on_sync_days.run(14)
-                                    class="rounded-full bg-emerald-400 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:opacity-50"
+                                    class="inline-flex min-h-[38px] items-center gap-2 rounded-full bg-emerald-400 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:opacity-50"
                                 >
-                                    {move || if busy.get() { "Syncing…" } else { "Sync Last 14 Days" }}
+                                    {move || busy.get().then(|| view! {
+                                        <span
+                                            aria-hidden="true"
+                                            class="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-950/30 border-t-slate-950"
+                                        />
+                                    })}
+                                    <span>
+                                        {move || if busy.get() { "Syncing…" } else { "Sync Last 14 Days" }}
+                                    </span>
                                 </button>
                                 <button
                                     type="button"
                                     disabled=move || busy.get()
                                     on:click=move |_| on_sync_days.run(90)
-                                    class="rounded-full border border-emerald-300/40 bg-slate-950/60 px-3.5 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/20 disabled:opacity-50"
+                                    class="min-h-[38px] rounded-full border border-emerald-300/40 bg-slate-950/60 px-3.5 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/20 disabled:opacity-50"
                                 >
                                     "Sync Last 90 Days"
                                 </button>
@@ -2582,10 +3095,10 @@ fn HealthConnectSyncCard(
             }}
 
             {move || message.get().map(|msg| view! {
-                <p class="mt-2 text-[11px] text-emerald-200">{msg}</p>
+                <p role="status" aria-live="polite" class="mt-2 text-[11px] text-emerald-200">{msg}</p>
             })}
             {move || error.get().map(|err| view! {
-                <p class="mt-2 text-[11px] text-rose-300">{err}</p>
+                <p role="alert" class="mt-2 text-[11px] text-rose-300">{err}</p>
             })}
         </div>
     }
@@ -2652,7 +3165,7 @@ mod tests {
         .to_html();
         assert!(needs_perm_html.contains("Android Health Connect"));
         assert!(needs_perm_html.contains("Grant Blood Glucose Access"));
-        assert!(needs_perm_html.contains("moe.dabney.personal"));
+        assert!(needs_perm_html.contains("stored encrypted on this device only"));
 
         let connected_status = HealthBridgeStatusUi {
             has_glucose_permission: true,
@@ -2691,7 +3204,7 @@ mod tests {
         }
         .to_html();
         assert!(ios_html.contains("Apple HealthKit"));
-        assert!(ios_html.contains("HKQuantityTypeIdentifierBloodGlucose"));
+        assert!(ios_html.contains("stored encrypted on this device only"));
         assert!(ios_html.contains("Sync Last 14 Days"));
     }
 
@@ -2701,11 +3214,16 @@ mod tests {
         let readings = import.readings;
         let checkins = sample_checkins();
         let html = view! {
-            <LingoMoodTimelineChart readings=readings checkins=checkins />
+            <LingoMoodTimelineChart
+                readings=readings
+                checkins=checkins
+                monitor_name="Dexcom G7".to_string()
+            />
         }
         .to_html();
-        assert!(html.contains("Abbott Lingo continuous glucose monitoring"));
+        assert!(html.contains("Dexcom G7 continuous glucose monitoring"));
         assert!(html.contains("<polyline"));
+        assert!(html.contains("<title>"));
         assert!(html.contains("140"));
         assert!(html.contains("70"));
 
@@ -2721,7 +3239,29 @@ mod tests {
         }
         .to_html();
         assert!(trend_html.contains("PHQ-9 and GAD-7 longitudinal score trajectory"));
+        assert!(trend_html.contains("<title>"));
         assert!(trend_html.contains("2026-10-31"));
+    }
+
+    #[test]
+    fn checkin_datetime_and_scale_validation_work_cleanly() {
+        let import = parse_commercial_glucose_input(SAMPLE_LINGO_CSV, None).unwrap();
+        let default_dt = default_checkin_datetime_for_readings(&import.readings);
+        assert!(default_dt.contains('T'));
+
+        let (label, offset) =
+            resolve_checkin_datetime_offset(&default_dt, &import.readings, 48.0).unwrap();
+        assert!(!label.contains('T'));
+        assert!(offset >= 0.0);
+        assert!(resolve_checkin_datetime_offset("", &import.readings, 48.0).is_err());
+
+        assert_eq!(parse_optional_scale_score("", 27, "PHQ-9").unwrap(), None);
+        assert_eq!(
+            parse_optional_scale_score("14", 27, "PHQ-9").unwrap(),
+            Some(14)
+        );
+        assert!(parse_optional_scale_score("28", 27, "PHQ-9").is_err());
+        assert!(parse_optional_scale_score("22", 21, "GAD-7").is_err());
     }
 
     #[test]
@@ -2787,7 +3327,7 @@ mod tests {
             <ImportValidationPanel diagnostics=import.diagnostics />
         }
         .to_html();
-        assert!(html.contains("Cap / OOR / Invalid"));
+        assert!(html.contains("Capped / OOR / Skipped"));
         assert!(html.contains("0 / 12 / 1"));
     }
 

@@ -435,18 +435,20 @@ pub fn build_lingo_3d_scene_with_range(
     scene
 }
 
-/// Interactive 3D WebGL2 (`glow` + `glam`) Abbott Lingo CGM & Mood/Anxiety viewport.
+/// Interactive 3D glucose & mood/anxiety trajectory viewport with Pointer Events & keyboard orbit.
 #[component]
 pub fn LingoMood3DChart(
     readings: Signal<Vec<LingoReading>>,
     checkins: Signal<Vec<MentalHealthCheckIn>>,
     #[prop(optional)] target_range: Option<Signal<(f64, f64)>>,
+    #[prop(optional)] monitor_name: Option<Signal<String>>,
 ) -> impl IntoView {
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
     let yaw = RwSignal::new(-0.42_f32);
     let pitch = RwSignal::new(0.36_f32);
     let distance = RwSignal::new(3.85_f32);
     let dragging = RwSignal::new(false);
+    let active_pointer_id = RwSignal::new(Option::<i32>::None);
     let last_xy = RwSignal::new((0_i32, 0_i32));
     let gl_error = RwSignal::new(Option::<String>::None);
 
@@ -517,15 +519,28 @@ pub fn LingoMood3DChart(
     #[cfg(not(all(target_arch = "wasm32", any(feature = "hydrate", feature = "csr"))))]
     let _ = (&scene_memo, &gl_error);
 
-    let on_mousedown = move |ev: leptos::ev::MouseEvent| {
+    let on_pointerdown = move |ev: leptos::ev::PointerEvent| {
+        let pointer_id = ev.pointer_id();
         dragging.set(true);
+        active_pointer_id.set(Some(pointer_id));
         last_xy.set((ev.client_x(), ev.client_y()));
+        #[cfg(any(feature = "hydrate", feature = "csr"))]
+        if let Some(canvas) = canvas_ref.get_untracked() {
+            let _ = canvas.set_pointer_capture(pointer_id);
+        }
     };
-    let on_mouseup = move |_: leptos::ev::MouseEvent| {
-        dragging.set(false);
+    let on_pointerup = move |ev: leptos::ev::PointerEvent| {
+        if active_pointer_id.get_untracked() == Some(ev.pointer_id()) {
+            dragging.set(false);
+            active_pointer_id.set(None);
+            #[cfg(any(feature = "hydrate", feature = "csr"))]
+            if let Some(canvas) = canvas_ref.get_untracked() {
+                let _ = canvas.release_pointer_capture(ev.pointer_id());
+            }
+        }
     };
-    let on_mousemove = move |ev: leptos::ev::MouseEvent| {
-        if dragging.get_untracked() {
+    let on_pointermove = move |ev: leptos::ev::PointerEvent| {
+        if dragging.get_untracked() && active_pointer_id.get_untracked() == Some(ev.pointer_id()) {
             let (lx, ly) = last_xy.get_untracked();
             let dx = (ev.client_x() - lx) as f32;
             let dy = (ev.client_y() - ly) as f32;
@@ -541,6 +556,49 @@ pub fn LingoMood3DChart(
     };
     let zoom_in = move |_| distance.update(|d| *d = (*d - 0.4).max(2.0));
     let zoom_out = move |_| distance.update(|d| *d = (*d + 0.4).min(6.5));
+    let on_keydown = move |ev: leptos::ev::KeyboardEvent| match ev.key().as_str() {
+        "ArrowLeft" => {
+            ev.prevent_default();
+            yaw.update(|v| *v += 0.14);
+        }
+        "ArrowRight" => {
+            ev.prevent_default();
+            yaw.update(|v| *v -= 0.14);
+        }
+        "ArrowUp" => {
+            ev.prevent_default();
+            pitch.update(|v| *v = (*v + 0.10).clamp(0.08, 1.35));
+        }
+        "ArrowDown" => {
+            ev.prevent_default();
+            pitch.update(|v| *v = (*v - 0.10).clamp(0.08, 1.35));
+        }
+        "+" | "=" => {
+            ev.prevent_default();
+            distance.update(|d| *d = (*d - 0.4).max(2.0));
+        }
+        "-" | "_" => {
+            ev.prevent_default();
+            distance.update(|d| *d = (*d + 0.4).min(6.5));
+        }
+        "r" | "R" | "0" => {
+            ev.prevent_default();
+            yaw.set(-0.42);
+            pitch.set(0.36);
+            distance.set(3.85);
+        }
+        _ => {}
+    };
+
+    let canvas_aria_label = move || {
+        let device = monitor_name
+            .map(|sig| sig.get())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "Continuous glucose".to_string());
+        format!(
+            "Interactive 3D {device} and mental state trajectory. Drag with mouse or touch, or focus and use arrow keys to rotate, plus and minus to zoom, R to reset."
+        )
+    };
 
     view! {
         <div class="space-y-3">
@@ -549,42 +607,54 @@ pub fn LingoMood3DChart(
                     node_ref=canvas_ref
                     width="900"
                     height="360"
-                    class="block h-[300px] w-full cursor-grab active:cursor-grabbing"
-                    aria-label="Interactive 3D WebGL2 Abbott Lingo glucose and mental state trajectory"
-                    on:mousedown=on_mousedown
-                    on:mouseup=on_mouseup
-                    on:mouseleave=on_mouseup
-                    on:mousemove=on_mousemove
+                    tabindex="0"
+                    role="application"
+                    style="touch-action: none;"
+                    class="block h-[300px] w-full touch-none cursor-grab active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                    aria-label=canvas_aria_label
+                    on:pointerdown=on_pointerdown
+                    on:pointerup=on_pointerup
+                    on:pointercancel=on_pointerup
+                    on:pointermove=on_pointermove
+                    on:keydown=on_keydown
                 />
                 <div class="pointer-events-none absolute top-3 left-3 rounded-lg bg-slate-950/75 px-2.5 py-1 text-[11px] text-slate-300 backdrop-blur">
-                    "Pure-Rust WebGL2 (glow + glam) · Drag to orbit"
+                    "3D View · Drag or use arrow keys to rotate"
                 </div>
                 <div class="absolute right-3 bottom-3 flex gap-1.5">
                     <button
                         type="button"
+                        aria-label="Zoom in 3D chart"
+                        title="Zoom in (+)"
                         on:click=zoom_in
-                        class="rounded-md border border-white/15 bg-slate-900/90 px-2.5 py-1 text-xs text-slate-200 transition hover:bg-slate-800"
+                        class="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg border border-white/15 bg-slate-900/90 px-2.5 py-1 text-sm font-semibold text-slate-200 transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
                     >
                         "+"
                     </button>
                     <button
                         type="button"
+                        aria-label="Zoom out 3D chart"
+                        title="Zoom out (−)"
                         on:click=zoom_out
-                        class="rounded-md border border-white/15 bg-slate-900/90 px-2.5 py-1 text-xs text-slate-200 transition hover:bg-slate-800"
+                        class="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg border border-white/15 bg-slate-900/90 px-2.5 py-1 text-sm font-semibold text-slate-200 transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
                     >
                         "−"
                     </button>
                     <button
                         type="button"
+                        aria-label="Reset 3D camera view"
+                        title="Reset 3D camera view (R)"
                         on:click=reset_view
-                        class="rounded-md border border-white/15 bg-slate-900/90 px-2.5 py-1 text-xs text-slate-200 transition hover:bg-slate-800"
+                        class="inline-flex min-h-[40px] items-center justify-center rounded-lg border border-white/15 bg-slate-900/90 px-3 py-1 text-xs font-medium text-slate-200 transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
                     >
                         "Reset 3D"
                     </button>
                 </div>
             </div>
             {move || gl_error.get().map(|err| view! {
-                <p class="text-xs text-amber-300">{format!("WebGL2 unavailable ({err}); switch to 2D SVG above.")}</p>
+                <p role="status" aria-live="polite" title=err class="text-xs text-amber-300">
+                    "3D chart view is unavailable on this browser; switch to 2D View above to inspect your timeline."
+                </p>
             })}
             <p class="text-xs text-slate-400">
                 {move || {
@@ -1004,7 +1074,11 @@ mod tests {
         }
         .to_html();
         assert!(html.contains("<canvas"));
-        assert!(html.contains("Pure-Rust WebGL2 (glow + glam)"));
+        assert!(html.contains("touch-action: none;"));
+        assert!(html.contains("tabindex=\"0\""));
+        assert!(html.contains("3D View · Drag or use arrow keys to rotate"));
+        assert!(html.contains("aria-label=\"Zoom in 3D chart\""));
+        assert!(html.contains("aria-label=\"Zoom out 3D chart\""));
         assert!(html.contains("Reset 3D"));
         assert!(html.contains("X-axis: 14d timeline"));
         assert!(html.contains("emerald 70–140 target plane"));

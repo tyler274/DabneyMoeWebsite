@@ -6,6 +6,7 @@
 
 use leptos::prelude::*;
 
+use crate::info_tip::InfoTip;
 use crate::mental_health_cgm::{ClinicalGlucoseSummary, GlucoseImportDiagnostics};
 use crate::mental_health_cgm_analytics::{
     CircadianPeriodSummary, DailyGlucoseSummary, EpisodeCounts, EpisodeKind, GlycemicEpisode,
@@ -74,7 +75,7 @@ pub fn SensorSaturationBanner(
     Some(view! {
         <section
             data-sensor-saturation-banner="true"
-            class="mb-8 rounded-2xl border border-amber-400/35 bg-amber-500/10 p-5 text-xs text-slate-200 space-y-3"
+            class="print-hide print:hidden mb-8 rounded-2xl border border-amber-400/35 bg-amber-500/10 p-5 text-xs text-slate-200 space-y-3"
         >
             <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="flex items-center gap-2">
@@ -169,7 +170,7 @@ pub fn PeriodComparisonCard(comparison: PeriodComparison) -> impl IntoView {
     view! {
         <section
             data-period-comparison-card="true"
-            class="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-4"
+            class="print-hide print:hidden mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-4"
         >
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -215,7 +216,13 @@ pub fn PeriodComparisonCard(comparison: PeriodComparison) -> impl IntoView {
                 </div>
 
                 <div class="rounded-xl border border-white/10 bg-slate-950/60 p-3">
-                    <p class="text-[11px] font-medium text-slate-400">"GMI (est. A1C)"</p>
+                    <p class="flex items-center text-[11px] font-medium text-slate-400">
+                        <span>"GMI (est. A1C)"</span>
+                        <InfoTip
+                            term="GMI"
+                            text="Glucose Management Indicator estimates lab A1C from average sensor glucose over the window."
+                        />
+                    </p>
                     <p class="mt-1 font-mono text-lg font-bold text-cyan-200">
                         {format!("{:.2}%", comparison.recent_gmi_pct)}
                     </p>
@@ -228,7 +235,13 @@ pub fn PeriodComparisonCard(comparison: PeriodComparison) -> impl IntoView {
                 </div>
 
                 <div class="rounded-xl border border-white/10 bg-slate-950/60 p-3">
-                    <p class="text-[11px] font-medium text-slate-400">"TIR 70–180"</p>
+                    <p class="flex items-center text-[11px] font-medium text-slate-400">
+                        <span>"TIR 70–180"</span>
+                        <InfoTip
+                            term="TIR"
+                            text="Time in Range (70–180 mg/dL). Delta is in percentage points (pp) vs. the prior 14-day period."
+                        />
+                    </p>
                     <p class="mt-1 font-mono text-lg font-bold text-emerald-300">
                         {format!("{:.1}%", comparison.recent_tir_pct)}
                     </p>
@@ -241,7 +254,13 @@ pub fn PeriodComparisonCard(comparison: PeriodComparison) -> impl IntoView {
                 </div>
 
                 <div class="rounded-xl border border-white/10 bg-slate-950/60 p-3">
-                    <p class="text-[11px] font-medium text-slate-400">"Tight TIR 70–140"</p>
+                    <p class="flex items-center text-[11px] font-medium text-slate-400">
+                        <span>"Tight TIR 70–140"</span>
+                        <InfoTip
+                            term="TITR"
+                            text="Time in Tight Range (70–140 mg/dL). Higher percentage points (pp) indicate tighter day-to-day stability."
+                        />
+                    </p>
                     <p class="mt-1 font-mono text-lg font-bold text-teal-300">
                         {format!("{:.1}%", comparison.recent_titr_pct)}
                     </p>
@@ -254,7 +273,13 @@ pub fn PeriodComparisonCard(comparison: PeriodComparison) -> impl IntoView {
                 </div>
 
                 <div class="rounded-xl border border-white/10 bg-slate-950/60 p-3">
-                    <p class="text-[11px] font-medium text-slate-400">"TBR <70"</p>
+                    <p class="flex items-center text-[11px] font-medium text-slate-400">
+                        <span>"TBR <70"</span>
+                        <InfoTip
+                            term="TBR"
+                            text="Time Below Range (<70 mg/dL). Clinical target is under 4% to reduce hypoglycemia risk."
+                        />
+                    </p>
                     <p class="mt-1 font-mono text-lg font-bold text-rose-300">
                         {format!("{:.1}%", comparison.recent_tbr_pct)}
                     </p>
@@ -294,15 +319,35 @@ pub fn CircadianBreakdownSection(periods: Vec<CircadianPeriodSummary>) -> impl I
     Some(view! {
         <section
             data-circadian-breakdown="true"
-            class="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-4"
+            class="print-hide print:hidden mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-4"
         >
-            <div>
-                <h2 class="text-lg font-semibold text-white">
-                    "Circadian Breakdown (Local Clock Time)"
-                </h2>
-                <p class="text-sm text-slate-400">
-                    "Mean, median, 95th percentile, TIR 70–180%, TBR <70%, and ceiling saturation across four 6-hour periods."
-                </p>
+            <div class="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                    <h2 class="flex items-center text-lg font-semibold text-white">
+                        <span>"Circadian Breakdown (Local Clock Time)"</span>
+                        <InfoTip
+                            term="p95"
+                            text="95th percentile (p95): 95% of readings in that 6-hour block fall below this level, highlighting typical upper peaks without single-point outliers."
+                        />
+                    </h2>
+                    <p class="text-sm text-slate-400">
+                        "Mean, median, 95th percentile (p95), TIR 70–180%, TBR <70%, and ceiling saturation across four 6-hour periods."
+                    </p>
+                </div>
+                <div class="flex flex-wrap items-center gap-3 text-[11px] text-slate-400">
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="inline-block h-2 w-2.5 rounded-sm bg-rose-400"></span>
+                        "Low (<70)"
+                    </span>
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="inline-block h-2 w-2.5 rounded-sm bg-emerald-400"></span>
+                        "In Range (70–180)"
+                    </span>
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="inline-block h-2 w-2.5 rounded-sm bg-amber-400"></span>
+                        "High (>180)"
+                    </span>
+                </div>
             </div>
 
             <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -346,10 +391,20 @@ pub fn CircadianBreakdownSection(periods: Vec<CircadianPeriodSummary>) -> impl I
                                             </p>
                                         </div>
 
-                                        <div class="flex h-2 w-full overflow-hidden rounded-full bg-slate-900">
-                                            <div style=format!("width: {tbr_w:.1}%") class="bg-rose-400"></div>
-                                            <div style=format!("width: {tir_w:.1}%") class="bg-emerald-400"></div>
-                                            <div style=format!("width: {tar_w:.1}%") class="bg-amber-400"></div>
+                                        <div
+                                            role="img"
+                                            aria-label=format!(
+                                                "{} distribution: Low under 70 is {tbr_w:.1}%, In Range 70 to 180 is {tir_w:.1}%, Above 180 is {tar_w:.1}%",
+                                                p.period.label()
+                                            )
+                                            title=format!(
+                                                "Low (<70): {tbr_w:.1}% · In Range (70–180): {tir_w:.1}% · High (>180): {tar_w:.1}%"
+                                            )
+                                            class="flex h-2 w-full overflow-hidden rounded-full bg-slate-900"
+                                        >
+                                            <div style=format!("width: {tbr_w:.1}%") class="bg-rose-400 transition-[width] duration-300"></div>
+                                            <div style=format!("width: {tir_w:.1}%") class="bg-emerald-400 transition-[width] duration-300"></div>
+                                            <div style=format!("width: {tar_w:.1}%") class="bg-amber-400 transition-[width] duration-300"></div>
                                         </div>
 
                                         <div class="grid grid-cols-3 gap-1.5 text-[11px]">
@@ -413,11 +468,19 @@ pub fn GlycemicEpisodesAndRocSection(
     view! {
         <section
             data-glycemic-episodes-roc="true"
-            class="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-5"
+            class="print-hide print:hidden mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-5"
         >
             <div>
-                <h2 class="text-lg font-semibold text-white">
-                    "Sustained Glycemic Episodes (≥15 min) & 15-Min Rate of Change"
+                <h2 class="flex flex-wrap items-center gap-1 text-lg font-semibold text-white">
+                    <span>"Sustained Glycemic Episodes (≥15 min) & 15-Min Rate of Change"</span>
+                    <InfoTip
+                        term="ATTD"
+                        text="International consensus (ATTD) defines a clinically distinct hypo- or hyperglycemic episode as staying past a threshold for at least 15 continuous minutes."
+                    />
+                    <InfoTip
+                        term="RoC"
+                        text="Rate of Change measures how quickly glucose rises or falls in mg/dL per minute. Swings of ±2.0 mg/dL/min or faster indicate rapid glycemic transitions."
+                    />
                 </h2>
                 <p class="text-sm text-slate-400">
                     "Distinct ATTD sustained events (broken across >30 min sensor gaps) paired with unbroken 15-minute glucose velocity."
@@ -450,7 +513,7 @@ pub fn GlycemicEpisodesAndRocSection(
                 </div>
 
                 <div class="rounded-xl border border-amber-400/20 bg-slate-950/60 p-3.5">
-                    <p class="text-xs font-medium text-slate-400">"Lingo Excursions (>140)"</p>
+                    <p class="text-xs font-medium text-slate-400">"Excursions (>140 mg/dL)"</p>
                     <p class="mt-1 font-mono text-2xl font-bold text-amber-300">{counts.lingo_excursion_gt_140_count}</p>
                     <p class="mt-0.5 text-[11px] text-slate-400">
                         {format!("Total duration: {}", format_duration_minutes(counts.lingo_excursion_gt_140_minutes))}
@@ -503,7 +566,15 @@ pub fn GlycemicEpisodesAndRocSection(
                                         <th class="py-2 pr-3">"Start → End"</th>
                                         <th class="py-2 pr-3">"Duration"</th>
                                         <th class="py-2 pr-3">"Readings"</th>
-                                        <th class="py-2 pr-3">"Peak / Nadir"</th>
+                                        <th class="py-2 pr-3">
+                                            <span class="inline-flex items-center">
+                                                "Peak / Nadir"
+                                                <InfoTip
+                                                    term="Nadir"
+                                                    text="Nadir is the lowest glucose reading reached during a low episode; Peak is the highest glucose reading reached during an elevated episode."
+                                                />
+                                            </span>
+                                        </th>
                                         <th class="py-2">"Sensor Cap"</th>
                                     </tr>
                                 </thead>
@@ -601,6 +672,7 @@ pub fn DailyGlucoseAndSessionsSection(
     }
 
     let show_all = RwSignal::new(false);
+    let selected_day_mix = RwSignal::new(Option::<String>::None);
     let total_days = days.len();
     let total_sessions = sessions.len();
     let total_gaps = gaps.len();
@@ -621,7 +693,7 @@ pub fn DailyGlucoseAndSessionsSection(
     Some(view! {
         <section
             data-daily-sessions="true"
-            class="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-5"
+            class="print-hide print:hidden mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-5"
         >
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -637,8 +709,9 @@ pub fn DailyGlucoseAndSessionsSection(
                 {(total_days > 14).then(|| view! {
                     <button
                         type="button"
+                        aria-expanded=move || show_all.get()
                         on:click=move |_| show_all.update(|v| *v = !*v)
-                        class="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3.5 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
+                        class="min-h-[36px] rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3.5 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
                     >
                         {move || if show_all.get() {
                             "Show recent 14 days".to_string()
@@ -701,6 +774,36 @@ pub fn DailyGlucoseAndSessionsSection(
                 })}
             </div>
 
+            // 4-color daily TIR bar legend & interactive inspection strip
+            <div class="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                <div class="flex flex-wrap items-center gap-3 text-slate-400">
+                    <span class="font-medium text-slate-300">"Daily Bar Legend:"</span>
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="inline-block h-2.5 w-2.5 rounded-sm bg-rose-400"></span>
+                        "Low (<70)"
+                    </span>
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-400"></span>
+                        "Tight (70–140)"
+                    </span>
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="inline-block h-2.5 w-2.5 rounded-sm bg-teal-500/80"></span>
+                        "In-Range (141–180)"
+                    </span>
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="inline-block h-2.5 w-2.5 rounded-sm bg-amber-400"></span>
+                        "High (>180)"
+                    </span>
+                </div>
+                <p role="status" aria-live="polite" class="font-mono text-cyan-200">
+                    {move || {
+                        selected_day_mix
+                            .get()
+                            .unwrap_or_else(|| "Hover or tap any daily bar for exact band percentages.".to_string())
+                    }}
+                </p>
+            </div>
+
             // Per-day breakdown table
             <div class="overflow-x-auto">
                 <table class="w-full min-w-[660px] border-collapse text-left text-xs">
@@ -746,7 +849,7 @@ pub fn DailyGlucoseAndSessionsSection(
                                         let ceil = day.ceiling_capped_pct;
                                         view! {
                                             <tr>
-                                                <td class="py-2 pr-3 whitespace-nowrap font-mono text-slate-200">{date}</td>
+                                                <td class="py-2 pr-3 whitespace-nowrap font-mono text-slate-200">{date.clone()}</td>
                                                 <td class="py-2 pr-3 whitespace-nowrap font-mono text-slate-300">
                                                     {format!("{rdgs} · {wear:.0}%")}
                                                 </td>
@@ -757,17 +860,35 @@ pub fn DailyGlucoseAndSessionsSection(
                                                     {format!("{min_g:.0}–{max_g:.0}")}
                                                 </td>
                                                 <td class="py-2 pr-3">
-                                                    <div class="flex items-center gap-2">
-                                                        <div class="flex h-2.5 w-28 shrink-0 overflow-hidden rounded-full border border-white/10 bg-slate-900">
-                                                            <div style=format!("width: {tbr_w:.1}%") class="bg-rose-400"></div>
-                                                            <div style=format!("width: {tight_w:.1}%") class="bg-emerald-400"></div>
-                                                            <div style=format!("width: {upper_tir_w:.1}%") class="bg-teal-500/80"></div>
-                                                            <div style=format!("width: {tar_w:.1}%") class="bg-amber-400"></div>
-                                                        </div>
-                                                        <span class="font-mono text-[11px] text-emerald-300">
-                                                            {format!("{tir:.0}%")}
-                                                        </span>
-                                                    </div>
+                                                    {
+                                                        let mix_summary = format!(
+                                                            "{date}: Low (<70) {tbr_w:.1}% · Tight (70–140) {tight_w:.1}% · Upper In-Range (141–180) {upper_tir_w:.1}% · High (>180) {tar_w:.1}%"
+                                                        );
+                                                        let mix_hover = mix_summary.clone();
+                                                        let mix_focus = mix_summary.clone();
+                                                        let mix_click = mix_summary.clone();
+                                                        view! {
+                                                            <div class="flex items-center gap-2">
+                                                                <button
+                                                                    type="button"
+                                                                    aria-label=mix_summary.clone()
+                                                                    title=mix_summary
+                                                                    on:mouseenter=move |_| selected_day_mix.set(Some(mix_hover.clone()))
+                                                                    on:focus=move |_| selected_day_mix.set(Some(mix_focus.clone()))
+                                                                    on:click=move |_| selected_day_mix.set(Some(mix_click.clone()))
+                                                                    class="flex h-3 w-28 shrink-0 cursor-pointer overflow-hidden rounded-full border border-white/10 bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                                                                >
+                                                                    <span style=format!("width: {tbr_w:.1}%") class="h-full bg-rose-400 transition-[width] duration-300"></span>
+                                                                    <span style=format!("width: {tight_w:.1}%") class="h-full bg-emerald-400 transition-[width] duration-300"></span>
+                                                                    <span style=format!("width: {upper_tir_w:.1}%") class="h-full bg-teal-500/80 transition-[width] duration-300"></span>
+                                                                    <span style=format!("width: {tar_w:.1}%") class="h-full bg-amber-400 transition-[width] duration-300"></span>
+                                                                </button>
+                                                                <span class="font-mono text-[11px] text-emerald-300">
+                                                                    {format!("{tir:.0}%")}
+                                                                </span>
+                                                            </div>
+                                                        }
+                                                    }
                                                 </td>
                                                 <td class=format!("py-2 whitespace-nowrap font-mono {ceil_cls}")>
                                                     {format!("{ceil:.1}%{floor_note}")}

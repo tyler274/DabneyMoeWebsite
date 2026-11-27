@@ -4,7 +4,7 @@
 //! rendering identically in native SSR and browser WebAssembly. All displayed patient
 //! charts are fictional synthetic examples containing zero real patient data.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use clinical_workspace::{
     answer_chart_question, synthetic_panel, today_overview, ChartRecord, ChatAnswer,
@@ -23,6 +23,27 @@ use crate::local_ai_chat::LocalLlmStatusBanner;
 use crate::patient_demo::ClinicalSuiteSwitcher;
 use crate::sections::{Footer, NavBar};
 use crate::AppShellMode;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PanelFilter {
+    All,
+    High,
+    Moderate,
+    Routine,
+    HasDraft,
+}
+
+impl PanelFilter {
+    const fn matches(self, patient: &PatientChart) -> bool {
+        match self {
+            Self::All => true,
+            Self::High => matches!(patient.urgency, Urgency::High),
+            Self::Moderate => matches!(patient.urgency, Urgency::Moderate),
+            Self::Routine => matches!(patient.urgency, Urgency::Routine),
+            Self::HasDraft => patient.reply_draft.is_some(),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DraftReviewState {
@@ -110,10 +131,10 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
     };
 
     view! {
-        <Title text="Dabney.moe Clinical Workspace — Local-First Rust & WASM | dabney.moe" />
+        <Title text="Curie Clinic & Curie Mobile — Local-First Clinical Showcase | dabney.moe" />
         <Meta
             name="description"
-            content="Clean-room Dabney.moe Clinical Workspace built in pure Rust and WebAssembly: synthetic zero-PHI patient & physician demos, verbatim record citations, and local-first metabolic & mental health tracking."
+            content="Clean-room Curie Clinic and Curie Mobile clinical showcase: synthetic zero-PHI patient & physician demos, verbatim record citations, and private metabolic & mental health tracking."
         />
         <Link rel="canonical" href="https://dabney.moe/clinical" />
 
@@ -129,34 +150,34 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
                             <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/40 bg-[#01081b] p-1 shadow-sm">
                                 <img
                                     src="/dabney-elephant.svg"
-                                    alt="Dabney.moe elephant emblem"
+                                    alt="Curie Clinical Workspace emblem"
                                     class="h-full w-full object-contain"
                                 />
                             </div>
                             <p class="text-xs font-semibold uppercase tracking-widest text-cyan-400">
-                                "Dabney.moe · Clean-Room Clinical Systems"
+                                "Curie Clinic & Curie Mobile · Clean-Room Clinical Showcase"
                             </p>
                         </div>
                         <h1 class="text-3xl font-bold tracking-tight text-white sm:text-4xl">
-                            "Dabney.moe Clinical Workspace"
+                            "Curie Clinical Workspace"
                         </h1>
                         <p class="text-base leading-relaxed text-slate-300">
-                            "A local-first Rust and WebAssembly clinical systems showcase engineered from scratch: "
-                            "typed longitudinal patient charts, strict per-patient citation boundaries, an embedded Axum API "
-                            "with optional same-origin streaming reverse proxy, and browser-native CGM & mood analytics."
+                            "A local-first clinical and patient companion showcase built from scratch: "
+                            "structured longitudinal patient charts, strict per-patient record citations, "
+                            "patient-controlled visit packets, and private on-device glucose & mood analytics."
                         </p>
                         <div class="flex flex-wrap gap-3 pt-2">
                             <A
                                 href="/clinical/patient"
                                 attr:class="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-6 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
                             >
-                                "Open Patient Demo →"
+                                "Open Curie Mobile (Patient) →"
                             </A>
                             <A
                                 href="/clinical/physician"
                                 attr:class="inline-flex items-center gap-2 rounded-full bg-cyan-500 px-6 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
                             >
-                                "Open Physician Workspace →"
+                                "Open Curie Clinic (Physician) →"
                             </A>
                             <A
                                 href="/mental-health"
@@ -204,23 +225,23 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
             <section class="space-y-4">
                 <div>
                     <p class="text-xs font-semibold uppercase tracking-widest text-cyan-400">
-                        "Architecture"
+                        "Design Pillars"
                     </p>
                     <h2 class="mt-1 text-2xl font-bold tracking-tight text-white">
-                        "Local-First Rust & WebAssembly Design"
+                        "Local-First Clinical & Patient Design"
                     </h2>
                 </div>
                 <div class="grid gap-5 md:grid-cols-3">
                     <article class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
                         <p class="text-xs font-semibold uppercase tracking-wider text-cyan-300">
-                            "01 · Shared Domain Crate"
+                            "01 · Unified Clinical Model"
                         </p>
                         <h3 class="mt-2 text-lg font-semibold text-white">
-                            "Identical SSR & WASM Execution"
+                            "Identical Web & On-Device Experience"
                         </h3>
                         <p class="mt-2 text-sm leading-relaxed text-slate-400">
-                            "A single dependency-light Rust crate models charts, follow-ups, reviewable draft replies, "
-                            "and deterministic chart search—running directly in the browser via WebAssembly or over the embedded Axum API."
+                            "A single shared clinical core models longitudinal charts, follow-ups, reviewable draft replies, "
+                            "and grounded chart search—running directly on your device without external cloud dependencies."
                         </p>
                     </article>
                     <article class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
@@ -240,14 +261,14 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
                             "03 · On-Device Self-Monitoring"
                         </p>
                         <h3 class="mt-2 text-lg font-semibold text-white">
-                            "Browser-Only CGM & Cadence Tools"
+                            "Private CGM & Mood Analytics"
                         </h3>
                         <p class="mt-2 text-sm leading-relaxed text-slate-400">
-                            "Pair commercial CGM/BGM exports with mood, PHQ-9, GAD-7, and ASRM tracking on "
+                            "Pair commercial glucose exports with mood, PHQ-9, GAD-7, and ASRM tracking on "
                             <A href="/mental-health" attr:class="text-cyan-300 underline decoration-cyan-400/40 underline-offset-2 hover:text-cyan-200">
                                 "/mental-health"
                             </A>
-                            " where files stay entirely inside local browser WASM."
+                            " where personal files stay strictly on your own device."
                         </p>
                     </article>
                 </div>
@@ -258,15 +279,15 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
                 <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div class="space-y-1.5">
                         <p class="text-xs font-semibold uppercase tracking-widest text-emerald-300">
-                            "Android App · moe.dabney.demo"
+                            "Curie Mobile · Android App"
                         </p>
                         <h2 class="text-xl font-bold text-white">
                             "Same Zero-PHI Clinical Suite on Android"
                         </h2>
                         <p class="max-w-2xl text-sm leading-relaxed text-slate-300">
-                            "Packaged from the exact same Rust & WebAssembly crate via Tauri v2 for Google Play "
-                            "demonstration. Runs offline with 100% synthetic sample profiles, zero analytics, zero "
-                            "Health Connect permissions, and zero PHI collection."
+                            "Packaged from the exact same local-first clinical core for offline Android demonstration. "
+                            "Runs with 100% synthetic sample profiles, zero analytics, zero health permissions, "
+                            "and zero PHI collection."
                         </p>
                     </div>
                     <div class="flex flex-wrap gap-2.5 shrink-0">
@@ -356,24 +377,35 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
         AppShellMode::ClinicalDemoApp => "mx-auto max-w-6xl px-4 pt-5 pb-28 sm:px-6 space-y-5",
     };
 
-    let (initial_id, initial_question, initial_answer) = panel.with_value(|charts| {
-        if let Some(first) = charts.first() {
-            let q = preset_questions_for_patient(&first.id)
-                .first()
-                .copied()
-                .unwrap_or("Summarize recent records")
-                .to_string();
-            let ans = answer_chart_question(first, &q);
-            (first.id.clone(), q, Some(ans))
-        } else {
-            (String::new(), String::new(), None)
-        }
-    });
+    let (initial_id, initial_question, initial_answer, initial_draft_states, initial_draft_texts) =
+        panel.with_value(|charts| {
+            let mut states = HashMap::new();
+            let mut texts = HashMap::new();
+            for chart in charts {
+                if let Some(draft) = chart.reply_draft.as_ref() {
+                    states.insert(chart.id.clone(), DraftReviewState::PendingReview);
+                    texts.insert(chart.id.clone(), draft.proposed_reply.clone());
+                }
+            }
+            if let Some(first) = charts.first() {
+                let q = preset_questions_for_patient(&first.id)
+                    .first()
+                    .copied()
+                    .unwrap_or("Summarize recent records")
+                    .to_string();
+                let ans = answer_chart_question(first, &q);
+                (first.id.clone(), q, Some(ans), states, texts)
+            } else {
+                (String::new(), String::new(), None, states, texts)
+            }
+        });
 
     let selected_id = RwSignal::new(initial_id);
+    let panel_filter = RwSignal::new(PanelFilter::All);
     let question_input = RwSignal::new(initial_question);
     let latest_answer = RwSignal::new(initial_answer);
-    let draft_state = RwSignal::new(DraftReviewState::PendingReview);
+    let draft_states = RwSignal::new(initial_draft_states);
+    let draft_texts = RwSignal::new(initial_draft_texts);
 
     // Optional on-device Gemini Nano (AICore) synthesis inside `moe.dabney.personal`.
     let llm_status = RwSignal::new(Option::<LocalLlmStatusUi>::None);
@@ -381,6 +413,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
     let llm_preparing = RwSignal::new(false);
     let llm_prepare_notice = RwSignal::new(Option::<String>::None);
     let llm_thinking = RwSignal::new(false);
+    let llm_error = RwSignal::new(Option::<String>::None);
     let llm_req_seq = RwSignal::new(0usize);
 
     Effect::new(move |_| {
@@ -415,8 +448,8 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
     let select_patient = move |patient_id: String| {
         llm_req_seq.update(|n| *n += 1);
         llm_thinking.set(false);
+        llm_error.set(None);
         selected_id.set(patient_id.clone());
-        draft_state.set(DraftReviewState::PendingReview);
         let default_q = preset_questions_for_patient(&patient_id)
             .first()
             .copied()
@@ -448,6 +481,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
             return;
         };
         latest_answer.set(Some(grounded.clone()));
+        llm_error.set(None);
 
         let req_id = llm_req_seq.get_untracked() + 1;
         llm_req_seq.set(req_id);
@@ -467,16 +501,24 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                     return;
                 }
                 llm_thinking.set(false);
-                if let Ok(gen) = res {
-                    let mut enhanced = grounded.clone();
-                    enhanced.answer = gen.text;
-                    enhanced.basis = format!(
-                        "{} (on-device · {} ms) grounded strictly in {} verbatim single-patient citation(s).",
-                        gen.model_name,
-                        gen.latency_ms,
-                        enhanced.citations.len()
-                    );
-                    latest_answer.set(Some(enhanced));
+                match res {
+                    Ok(gen) => {
+                        let mut enhanced = grounded.clone();
+                        enhanced.answer = gen.text;
+                        enhanced.basis = format!(
+                            "{} (on-device · {} ms) grounded strictly in {} verbatim single-patient citation(s).",
+                            gen.model_name,
+                            gen.latency_ms,
+                            enhanced.citations.len()
+                        );
+                        latest_answer.set(Some(enhanced));
+                    }
+                    Err(_) => {
+                        llm_error.set(Some(
+                            "On-device AI synthesis was unavailable for this turn; showing record-cited summary."
+                                .to_string(),
+                        ));
+                    }
                 }
             });
         }
@@ -489,11 +531,30 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
         ask_question(question_input.get());
     };
 
+    let (total_patients, high_count, moderate_count, routine_count, draft_count) = panel
+        .with_value(|charts| {
+            let total = charts.len();
+            let high = charts
+                .iter()
+                .filter(|p| matches!(p.urgency, Urgency::High))
+                .count();
+            let moderate = charts
+                .iter()
+                .filter(|p| matches!(p.urgency, Urgency::Moderate))
+                .count();
+            let routine = charts
+                .iter()
+                .filter(|p| matches!(p.urgency, Urgency::Routine))
+                .count();
+            let drafts = charts.iter().filter(|p| p.reply_draft.is_some()).count();
+            (total, high, moderate, routine, drafts)
+        });
+
     view! {
-        <Title text="Physician Workspace Demo — Dabney.moe Clinical Workspace | dabney.moe" />
+        <Title text="Curie Clinic — Physician Workspace Demo | dabney.moe" />
         <Meta
             name="description"
-            content="Interactive zero-PHI synthetic physician workspace in Rust and WebAssembly: today's clinic queue, 4 synthetic longitudinal charts, reviewable draft replies, and record-cited chart Q&A."
+            content="Interactive zero-PHI Curie Clinic synthetic physician workspace: compact clinic queue summary, 4 synthetic longitudinal charts, editable reviewable draft replies, and record-cited chart Q&A."
         />
         <Link rel="canonical" href="https://dabney.moe/clinical/physician" />
 
@@ -506,13 +567,13 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                     <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/40 bg-[#01081b] p-1 shadow-sm">
                         <img
                             src="/dabney-elephant.svg"
-                            alt="Dabney.moe elephant emblem"
+                            alt="Curie Clinic emblem"
                             class="h-full w-full object-contain"
                         />
                     </div>
                     <div>
                         <p class="text-xs font-semibold uppercase tracking-widest text-cyan-400">
-                            {format!("{} · {}", overview.practice_name, overview.clinic_date)}
+                            {format!("Curie Clinic · {} · {}", overview.practice_name, overview.clinic_date)}
                         </p>
                         <h1 class="text-2xl font-bold tracking-tight text-white sm:text-3xl">
                             "Physician Workspace Demo"
@@ -524,7 +585,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                         href="/clinical/patient"
                         attr:class="rounded-full border border-emerald-400/35 bg-emerald-500/15 px-4 py-2 font-medium text-emerald-200 transition hover:bg-emerald-500/25"
                     >
-                        "Patient Demo"
+                        "Curie Mobile (Patient)"
                     </A>
                     <A
                         href="/clinical"
@@ -551,67 +612,58 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                 <p class="text-xs leading-relaxed text-emerald-100 sm:text-sm">
                     <span class="font-semibold text-emerald-300">"Synthetic Zero-PHI Demo: "</span>
                     {overview.synthetic_notice.clone()}
-                    " Runs deterministically in Rust/WASM with zero external services."
+                    " Runs locally on your device with zero external services."
                 </p>
                 <span class="rounded-full border border-emerald-400/40 bg-slate-950/60 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-emerald-300">
                     "Offline-Ready"
                 </span>
             </div>
 
-            // Today's clinic schedule / queue
-            <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
-                <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <h2 class="text-sm font-semibold uppercase tracking-wider text-cyan-300">
-                        "Today's Clinic Schedule & Queue"
+            // Compact clinic summary & urgency filter strip (deduplicated from Patient Panel)
+            <section
+                aria-label="Today's clinic queue summary and filters"
+                class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.02] px-5 py-3.5"
+            >
+                <div class="flex flex-wrap items-center gap-2 text-xs">
+                    <h2 class="font-semibold uppercase tracking-wider text-cyan-300">
+                        "Today's Clinic Queue"
                     </h2>
-                    <span class="text-xs text-slate-400">
-                        {format!("{} synthetic charts in panel", overview.patients.len())}
+                    <span class="text-slate-400">
+                        {format!("· {total_patients} charts · {draft_count} draft replies")}
                     </span>
                 </div>
-                <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    {overview
-                        .patients
-                        .into_iter()
-                        .map(|summary| {
-                            let pid_click = summary.id.clone();
-                            let pid_active = summary.id.clone();
-                            let urgency_cls = urgency_badge_class(summary.urgency);
-                            let time_text = summary
-                                .visit_time
-                                .unwrap_or_else(|| "Panel review".to_string());
-                            view! {
-                                <button
-                                    type="button"
-                                    on:click=move |_| select_patient(pid_click.clone())
-                                    class=move || {
-                                        if selected_id.get() == pid_active {
-                                            "w-full rounded-xl border border-cyan-400/60 bg-cyan-500/10 p-3.5 text-left transition"
-                                        } else {
-                                            "w-full rounded-xl border border-white/10 bg-slate-950/60 p-3.5 text-left transition hover:border-white/25 hover:bg-white/[0.04]"
-                                        }
+                <div class="flex flex-wrap items-center gap-1.5 text-xs" role="group" aria-label="Filter patient panel">
+                    {[
+                        (PanelFilter::All, format!("All ({total_patients})")),
+                        (PanelFilter::High, format!("High ({high_count})")),
+                        (PanelFilter::Moderate, format!("Moderate ({moderate_count})")),
+                        (PanelFilter::Routine, format!("Routine ({routine_count})")),
+                        (PanelFilter::HasDraft, format!("Drafts ({draft_count})")),
+                    ]
+                    .into_iter()
+                    .map(|(f, label)| {
+                        view! {
+                            <button
+                                type="button"
+                                aria-pressed=move || panel_filter.get() == f
+                                on:click=move |_| panel_filter.set(f)
+                                class=move || {
+                                    if panel_filter.get() == f {
+                                        "min-h-[34px] rounded-full bg-cyan-500 px-3 py-1 font-semibold text-slate-950 transition"
+                                    } else {
+                                        "min-h-[34px] rounded-full border border-white/15 bg-slate-950/60 px-3 py-1 font-medium text-slate-300 transition hover:border-white/30 hover:text-white"
                                     }
-                                >
-                                    <div class="flex items-center justify-between gap-2">
-                                        <span class="font-mono text-xs font-semibold text-cyan-300">
-                                            {time_text}
-                                        </span>
-                                        <span class=format!("rounded-full border px-2 py-0.5 text-[10px] font-semibold {urgency_cls}")>
-                                            {summary.urgency.label()}
-                                        </span>
-                                    </div>
-                                    <p class="mt-1.5 text-sm font-semibold text-white">{summary.display_name}</p>
-                                    <p class="mt-0.5 line-clamp-1 text-xs text-slate-400">{summary.primary_focus}</p>
-                                    <p class="mt-2 text-[11px] text-slate-500">
-                                        {format!("{} records · {} open follow-ups", summary.record_count, summary.open_follow_ups)}
-                                    </p>
-                                </button>
-                            }
-                        })
-                        .collect_view()}
+                                }
+                            >
+                                {label}
+                            </button>
+                        }
+                    })
+                    .collect_view()}
                 </div>
             </section>
 
-            // Main workspace: Patient selector + Selected patient chart
+            // Main workspace: Single authoritative Patient Panel + Selected patient chart
             <div class="grid gap-6 lg:grid-cols-12">
                 // Left sidebar: Clickable patient panel selector
                 <aside class="lg:col-span-4 space-y-3">
@@ -620,56 +672,101 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                             "Patient Panel"
                         </h2>
                         <div class="space-y-2.5">
-                            {panel.with_value(|charts| {
-                                charts
-                                    .iter()
-                                    .map(|patient| {
-                                        let pid_click = patient.id.clone();
-                                        let pid_active = patient.id.clone();
-                                        let urgency_cls = urgency_badge_class(patient.urgency);
-                                        let visit_note = patient
-                                            .visit
-                                            .as_ref()
-                                            .map(|v| format!("{} · {}", v.starts_at, v.modality))
-                                            .unwrap_or_else(|| "Asynchronous review".to_string());
-                                        let has_draft = patient.reply_draft.is_some();
-                                        view! {
-                                            <button
-                                                type="button"
-                                                on:click=move |_| select_patient(pid_click.clone())
-                                                class=move || {
-                                                    if selected_id.get() == pid_active {
-                                                        "w-full rounded-xl border border-cyan-400/60 bg-cyan-500/10 p-3.5 text-left transition"
-                                                    } else {
-                                                        "w-full rounded-xl border border-white/10 bg-slate-950/50 p-3.5 text-left transition hover:border-white/25 hover:bg-white/[0.03]"
-                                                    }
-                                                }
-                                            >
-                                                <div class="flex items-start justify-between gap-2">
-                                                    <div>
-                                                        <p class="text-sm font-semibold text-white">{patient.display_name.clone()}</p>
-                                                        <p class="font-mono text-[11px] text-slate-400">
-                                                            {format!("{} · DOB {}", patient.mrn, patient.birth_date)}
-                                                        </p>
-                                                    </div>
-                                                    <span class=format!("shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold {urgency_cls}")>
-                                                        {patient.urgency.label()}
-                                                    </span>
-                                                </div>
-                                                <p class="mt-2 text-xs text-slate-300">{patient.primary_focus.clone()}</p>
-                                                <div class="mt-2.5 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-                                                    <span class="rounded bg-white/5 px-1.5 py-0.5 text-cyan-300">{visit_note}</span>
-                                                    {has_draft.then(|| view! {
-                                                        <span class="rounded border border-amber-400/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-300">
-                                                            "Draft reply"
-                                                        </span>
-                                                    })}
-                                                </div>
-                                            </button>
+                            {move || {
+                                let active_filter = panel_filter.get();
+                                let states_map = draft_states.get();
+                                panel.with_value(|charts| {
+                                    let visible: Vec<&PatientChart> = charts
+                                        .iter()
+                                        .filter(|p| active_filter.matches(p))
+                                        .collect();
+                                    if visible.is_empty() {
+                                        return view! {
+                                            <p class="rounded-xl border border-white/10 bg-slate-950/50 p-3 text-xs text-slate-400">
+                                                "No charts match this filter."
+                                            </p>
                                         }
-                                    })
-                                    .collect_view()
-                            })}
+                                        .into_any();
+                                    }
+                                    visible
+                                        .into_iter()
+                                        .map(|patient| {
+                                            let pid_click = patient.id.clone();
+                                            let pid_active = patient.id.clone();
+                                            let pid_aria = patient.id.clone();
+                                            let urgency_cls = urgency_badge_class(patient.urgency);
+                                            let visit_note = patient
+                                                .visit
+                                                .as_ref()
+                                                .map(|v| format!("{} · {}", v.starts_at, v.modality))
+                                                .unwrap_or_else(|| "Asynchronous review".to_string());
+                                            let draft_badge = patient.reply_draft.as_ref().map(|_| {
+                                                let st = states_map
+                                                    .get(&patient.id)
+                                                    .copied()
+                                                    .unwrap_or(DraftReviewState::PendingReview);
+                                                match st {
+                                                    DraftReviewState::PendingReview => (
+                                                        "Draft reply",
+                                                        "border-amber-400/30 bg-amber-500/10 text-amber-300",
+                                                    ),
+                                                    DraftReviewState::ApprovedLocal => (
+                                                        "Draft approved",
+                                                        "border-emerald-400/35 bg-emerald-500/15 text-emerald-300",
+                                                    ),
+                                                    DraftReviewState::HeldForVisit => (
+                                                        "Held for visit",
+                                                        "border-cyan-400/35 bg-cyan-500/15 text-cyan-300",
+                                                    ),
+                                                }
+                                            });
+                                            let open_fu = patient
+                                                .follow_ups
+                                                .iter()
+                                                .filter(|f| !matches!(f.standing, FollowUpStanding::Completed))
+                                                .count();
+                                            let rec_count = patient.records.len();
+                                            view! {
+                                                <button
+                                                    type="button"
+                                                    aria-pressed=move || selected_id.get() == pid_aria
+                                                    on:click=move |_| select_patient(pid_click.clone())
+                                                    class=move || {
+                                                        if selected_id.get() == pid_active {
+                                                            "w-full rounded-xl border border-cyan-400/60 bg-cyan-500/10 p-3.5 text-left transition"
+                                                        } else {
+                                                            "w-full rounded-xl border border-white/10 bg-slate-950/50 p-3.5 text-left transition hover:border-white/25 hover:bg-white/[0.03]"
+                                                        }
+                                                    }
+                                                >
+                                                    <div class="flex items-start justify-between gap-2">
+                                                        <div>
+                                                            <p class="text-sm font-semibold text-white">{patient.display_name.clone()}</p>
+                                                            <p class="font-mono text-[11px] text-slate-400">
+                                                                {format!("{} · DOB {}", patient.mrn, patient.birth_date)}
+                                                            </p>
+                                                        </div>
+                                                        <span class=format!("shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold {urgency_cls}")>
+                                                            {patient.urgency.label()}
+                                                        </span>
+                                                    </div>
+                                                    <p class="mt-2 text-xs text-slate-300">{patient.primary_focus.clone()}</p>
+                                                    <div class="mt-2.5 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                                                        <span class="rounded bg-white/5 px-1.5 py-0.5 text-cyan-300">{visit_note}</span>
+                                                        <span>{format!("{rec_count} recs · {open_fu} open")}</span>
+                                                        {draft_badge.map(|(label, cls)| view! {
+                                                            <span class=format!("rounded border px-1.5 py-0.5 {cls}")>
+                                                                {label}
+                                                            </span>
+                                                        })}
+                                                    </div>
+                                                </button>
+                                            }
+                                        })
+                                        .collect_view()
+                                        .into_any()
+                                })
+                            }}
                         </div>
                     </div>
                 </aside>
@@ -743,9 +840,9 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                             "Ask About This Patient's Records"
                                         </h3>
                                         <p class="mt-1 text-xs text-slate-400">
-                                            "Deterministic local retrieval scoped strictly to "
+                                            "Scoped strictly to "
                                             <span class="font-mono text-slate-200">{patient.mrn.clone()}</span>
-                                            ". Cited source record IDs are highlighted below."
+                                            " — cited source record IDs are highlighted below."
                                         </p>
                                     </div>
 
@@ -788,12 +885,13 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                                 view! {
                                                     <button
                                                         type="button"
+                                                        disabled=move || llm_thinking.get()
                                                         on:click=move |_| {
                                                             let q = preset.to_string();
                                                             question_input.set(q.clone());
                                                             ask_question(q);
                                                         }
-                                                        class="rounded-full border border-white/15 bg-slate-950/70 px-3 py-1 text-xs text-slate-300 transition hover:border-cyan-400/40 hover:text-white"
+                                                        class="min-h-[34px] rounded-full border border-white/15 bg-slate-950/70 px-3 py-1 text-xs text-slate-300 transition hover:border-cyan-400/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                                                     >
                                                         {preset}
                                                     </button>
@@ -802,7 +900,29 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                             .collect_view()}
                                     </div>
 
-                                    {active_answer.map(|ans| view! { <GroundedAnswerView answer=ans /> })}
+                                    {move || llm_thinking.get().then(|| view! {
+                                        <div
+                                            role="status"
+                                            aria-live="polite"
+                                            class="flex items-center gap-2 rounded-xl border border-cyan-400/25 bg-cyan-500/10 px-3.5 py-2.5 text-xs text-cyan-100"
+                                        >
+                                            <span
+                                                aria-hidden="true"
+                                                class="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-cyan-300/30 border-t-cyan-300"
+                                            />
+                                            <span>"Synthesizing record-cited answer on-device…"</span>
+                                        </div>
+                                    })}
+
+                                    {move || llm_error.get().map(|msg| view! {
+                                        <p role="status" aria-live="polite" class="text-xs text-amber-200">
+                                            {msg}
+                                        </p>
+                                    })}
+
+                                    <div aria-live="polite">
+                                        {active_answer.map(|ans| view! { <GroundedAnswerView answer=ans /> })}
+                                    </div>
                                 </div>
 
                                 // Problems, Medications, Follow-ups
@@ -894,9 +1014,17 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                     </div>
                                 </div>
 
-                                // Optional reviewable draft reply card
+                                // Optional reviewable draft reply card (per-patient state & editable text persisted across patient switches)
                                 {patient.reply_draft.clone().map(|draft| {
-                                    view! { <ReplyDraftCard draft=draft state=draft_state /> }
+                                    let pid = patient.id.clone();
+                                    view! {
+                                        <ReplyDraftCard
+                                            patient_id=pid
+                                            draft=draft
+                                            states=draft_states
+                                            texts=draft_texts
+                                        />
+                                    }
                                 })}
 
                                 // Longitudinal source records
@@ -998,7 +1126,47 @@ fn GroundedAnswerView(answer: ChatAnswer) -> impl IntoView {
 }
 
 #[component]
-fn ReplyDraftCard(draft: ReplyDraft, state: RwSignal<DraftReviewState>) -> impl IntoView {
+fn ReplyDraftCard(
+    patient_id: String,
+    draft: ReplyDraft,
+    states: RwSignal<HashMap<String, DraftReviewState>>,
+    texts: RwSignal<HashMap<String, String>>,
+) -> impl IntoView {
+    let original_reply = draft.proposed_reply.clone();
+    let pid_state = patient_id.clone();
+    let pid_text = patient_id.clone();
+    let pid_edited = patient_id.clone();
+    let pid_input = patient_id.clone();
+    let pid_approve = patient_id.clone();
+    let pid_hold = patient_id.clone();
+    let pid_reset = patient_id.clone();
+    let orig_for_edited = original_reply.clone();
+    let orig_for_reset = original_reply.clone();
+
+    let current_state = move || {
+        states.with(|map| {
+            map.get(&pid_state)
+                .copied()
+                .unwrap_or(DraftReviewState::PendingReview)
+        })
+    };
+    let current_state_cls = current_state.clone();
+
+    let current_text = move || {
+        texts.with(|map| {
+            map.get(&pid_text)
+                .cloned()
+                .unwrap_or_else(|| original_reply.clone())
+        })
+    };
+
+    let is_edited = move || {
+        texts.with(|map| {
+            map.get(&pid_edited)
+                .is_some_and(|val| val != &orig_for_edited)
+        })
+    };
+
     view! {
         <div class="rounded-2xl border border-amber-400/30 bg-amber-500/[0.06] p-6 space-y-3">
             <div class="flex flex-wrap items-center justify-between gap-2">
@@ -1009,17 +1177,28 @@ fn ReplyDraftCard(draft: ReplyDraft, state: RwSignal<DraftReviewState>) -> impl 
                     <p class="mt-0.5 text-xs text-slate-400">
                         "In response to message "
                         <span class="font-mono text-amber-200">{draft.message_record_id}</span>
-                        " — clinician approval required; never auto-sent."
+                        " — clinician review and editing required; never auto-sent."
                     </p>
                 </div>
-                <span class=move || {
-                    format!(
-                        "rounded-full border px-3 py-1 text-xs font-semibold {}",
-                        state.get().badge_class()
-                    )
-                }>
-                    {move || state.get().label()}
-                </span>
+                <div class="flex flex-wrap items-center gap-2">
+                    {move || is_edited().then(|| view! {
+                        <span class="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-0.5 text-[11px] font-medium text-cyan-200">
+                            "Edited"
+                        </span>
+                    })}
+                    <span
+                        role="status"
+                        aria-live="polite"
+                        class=move || {
+                            format!(
+                                "rounded-full border px-3 py-1 text-xs font-semibold {}",
+                                current_state_cls().badge_class()
+                            )
+                        }
+                    >
+                        {move || current_state().label()}
+                    </span>
+                </div>
             </div>
 
             <div class="rounded-xl border border-white/10 bg-slate-950/60 p-3.5 text-xs">
@@ -1027,31 +1206,68 @@ fn ReplyDraftCard(draft: ReplyDraft, state: RwSignal<DraftReviewState>) -> impl 
                 <p class="mt-1 text-slate-200">{draft.patient_question}</p>
             </div>
 
-            <div class="rounded-xl border border-white/10 bg-slate-950/80 p-4 text-sm leading-relaxed text-slate-100">
-                {draft.proposed_reply}
-            </div>
+            <label class="block space-y-1.5">
+                <span class="text-xs font-medium text-slate-300">
+                    "Proposed clinician reply (editable before approval)"
+                </span>
+                <textarea
+                    rows="4"
+                    aria-label="Editable patient reply draft"
+                    prop:value=current_text
+                    on:input=move |ev| {
+                        let val = event_target_value(&ev);
+                        let pid = pid_input.clone();
+                        texts.update(|map| {
+                            map.insert(pid.clone(), val);
+                        });
+                        states.update(|map| {
+                            map.insert(pid, DraftReviewState::PendingReview);
+                        });
+                    }
+                    class="w-full rounded-xl border border-white/15 bg-slate-950/85 p-3.5 text-sm leading-relaxed text-slate-100 focus:border-amber-400/60 focus:outline-none focus:ring-1 focus:ring-amber-400/50"
+                />
+            </label>
 
             <p class="font-mono text-[11px] text-slate-400">{draft.basis}</p>
 
             <div class="flex flex-wrap gap-2 pt-1">
                 <button
                     type="button"
-                    on:click=move |_| state.set(DraftReviewState::ApprovedLocal)
-                    class="rounded-full bg-emerald-500 px-4 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-400"
+                    on:click=move |_| {
+                        let pid = pid_approve.clone();
+                        states.update(|map| {
+                            map.insert(pid, DraftReviewState::ApprovedLocal);
+                        });
+                    }
+                    class="min-h-[38px] rounded-full bg-emerald-500 px-4 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-400"
                 >
                     "Approve draft (demo)"
                 </button>
                 <button
                     type="button"
-                    on:click=move |_| state.set(DraftReviewState::HeldForVisit)
-                    class="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-4 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
+                    on:click=move |_| {
+                        let pid = pid_hold.clone();
+                        states.update(|map| {
+                            map.insert(pid, DraftReviewState::HeldForVisit);
+                        });
+                    }
+                    class="min-h-[38px] rounded-full border border-cyan-400/30 bg-cyan-500/10 px-4 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
                 >
                     "Hold for visit"
                 </button>
                 <button
                     type="button"
-                    on:click=move |_| state.set(DraftReviewState::PendingReview)
-                    class="rounded-full border border-white/15 px-3.5 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-white/5"
+                    on:click=move |_| {
+                        let pid = pid_reset.clone();
+                        let orig = orig_for_reset.clone();
+                        states.update(|map| {
+                            map.insert(pid.clone(), DraftReviewState::PendingReview);
+                        });
+                        texts.update(|map| {
+                            map.insert(pid, orig);
+                        });
+                    }
+                    class="min-h-[38px] rounded-full border border-white/15 px-3.5 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-white/5"
                 >
                     "Reset"
                 </button>
@@ -1155,20 +1371,26 @@ mod tests {
         let html = render_in_app_context("/clinical", || {
             view! { <ClinicalOverviewPage /> }.into_any()
         });
-        assert!(html.contains("Dabney.moe Clinical Workspace"));
+        assert!(html.contains("Curie Clinical Workspace"));
+        assert!(html.contains("Curie Clinic"));
+        assert!(html.contains("Curie Mobile"));
         assert!(html.contains("/dabney-elephant.svg"));
         assert!(html.contains("/clinical/patient"));
         assert!(html.contains("/clinical/physician"));
         assert!(html.contains("/mental-health"));
-        assert!(html.contains("moe.dabney.demo"));
         assert!(html.contains("Synthetic Zero-PHI Guarantee"));
         assert!(html.contains("Nadia Kulkarni"));
         assert!(html.contains("David Okafor"));
-        let legacy_brand = ["co", "da"].concat();
-        assert!(
-            !html.to_ascii_lowercase().contains(&legacy_brand),
-            "clinical overview HTML must not contain legacy brand strings"
-        );
+        for legacy_brand in [
+            ["co", "da"].concat(),
+            ["du", "et"].concat(),
+            ["cho", "rds"].concat(),
+        ] {
+            assert!(
+                !html.to_ascii_lowercase().contains(&legacy_brand),
+                "clinical overview HTML must not contain legacy brand string: {legacy_brand}"
+            );
+        }
     }
 
     #[test]
@@ -1176,9 +1398,12 @@ mod tests {
         let html = render_in_app_context("/clinical/physician", || {
             view! { <PhysicianWorkspacePage /> }.into_any()
         });
+        assert!(html.contains("Curie Clinic"));
         assert!(html.contains("Physician Workspace Demo"));
         assert!(html.contains("/dabney-elephant.svg"));
         assert!(html.contains("Dabney.moe Synthetic Clinic"));
+        assert!(html.contains("Today's Clinic Queue"));
+        assert!(html.contains("aria-label=\"Editable patient reply draft\""));
         for name in [
             "Nadia Kulkarni",
             "Carlos Mendez",
@@ -1192,10 +1417,15 @@ mod tests {
         assert!(html.contains("Metformin ER"));
         assert!(html.contains("Cited in answer"));
         assert!(html.contains("Reviewable Patient Reply Draft"));
-        let legacy_brand = ["co", "da"].concat();
-        assert!(
-            !html.to_ascii_lowercase().contains(&legacy_brand),
-            "physician workspace HTML must not contain legacy brand strings"
-        );
+        for legacy_brand in [
+            ["co", "da"].concat(),
+            ["du", "et"].concat(),
+            ["cho", "rds"].concat(),
+        ] {
+            assert!(
+                !html.to_ascii_lowercase().contains(&legacy_brand),
+                "physician workspace HTML must not contain legacy brand string: {legacy_brand}"
+            );
+        }
     }
 }

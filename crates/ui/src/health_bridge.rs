@@ -47,11 +47,11 @@ impl HealthBridgePlatform {
 
     pub fn permission_summary(self) -> &'static str {
         match self {
-            Self::AndroidHealthConnect => "READ_BLOOD_GLUCOSE only · stays in device RAM",
-            Self::IosHealthKit => {
-                "HKQuantityTypeIdentifierBloodGlucose read-only · stays in device RAM"
+            Self::AndroidHealthConnect => {
+                "Read-only blood glucose · stored encrypted on this device only"
             }
-            Self::Other => "Read-only blood glucose · stays in device RAM",
+            Self::IosHealthKit => "Read-only blood glucose · stored encrypted on this device only",
+            Self::Other => "Read-only blood glucose · stays on this device only",
         }
     }
 
@@ -365,7 +365,7 @@ pub fn build_personal_cgm_chat_prompt_with_analytics(
 ) -> String {
     let mut prompt = String::with_capacity(2800);
     prompt.push_str(
-        "You are a concise, calm, local on-device metabolic & wellness reflection assistant inside Dabney.moe Personal.\n\
+        "You are a concise, calm, local on-device metabolic & wellness reflection assistant inside Curie Mobile.\n\
          Rules:\n\
          - Use ONLY the exact numbers and facts provided below. Never invent readings, labs, or timestamps.\n\
          - Be direct, practical, and easy to read (3-6 short sentences or concise bullets).\n\

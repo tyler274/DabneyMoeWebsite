@@ -71,6 +71,10 @@ pub struct CrisisResource {
     pub name: &'static str,
     pub contact: &'static str,
     pub detail: &'static str,
+    pub call_href: Option<&'static str>,
+    pub call_label: Option<&'static str>,
+    pub sms_href: Option<&'static str>,
+    pub sms_label: Option<&'static str>,
 }
 
 pub const CRISIS_RESOURCES: [CrisisResource; 3] = [
@@ -78,16 +82,28 @@ pub const CRISIS_RESOURCES: [CrisisResource; 3] = [
         name: "988 Suicide & Crisis Lifeline (US / Canada)",
         contact: "Call or text 988",
         detail: "Free, confidential, 24/7 behavioral health crisis counselors; you can also ask about local non-police mobile crisis response.",
+        call_href: Some("tel:988"),
+        call_label: Some("Call 988"),
+        sms_href: Some("sms:988"),
+        sms_label: Some("Text 988"),
     },
     CrisisResource {
         name: "Crisis Text Line",
         contact: "Text HOME to 741741",
         detail: "Free, 24/7 text-based support with a trained crisis counselor.",
+        call_href: None,
+        call_label: None,
+        sms_href: Some("sms:741741?&body=HOME"),
+        sms_label: Some("Text HOME to 741741"),
     },
     CrisisResource {
         name: "SAMHSA National Helpline",
         contact: "1-800-662-4357",
         detail: "Free, confidential, 24/7 treatment referral and mental health support information.",
+        call_href: Some("tel:18006624357"),
+        call_label: Some("Call 1-800-662-4357"),
+        sms_href: None,
+        sms_label: None,
     },
 ];
 
@@ -223,7 +239,7 @@ pub fn render_clinician_brief_markdown_with_analytics(
     };
 
     let mut md = String::from(
-        "# Dabney.moe — Patient-Prepared Clinical Brief\n\n\
+        "# Curie Mobile — Patient-Prepared Clinical Brief\n\n\
          > **Note:** Self-monitoring summary prepared locally by the patient for clinician review. Not an automated medical diagnosis.\n\n\
          ## 1. Mental Health Scales & Daily Check-Ins\n",
     );
@@ -507,6 +523,7 @@ pub fn SupportAndClinicianBriefSection(
     let new_step = RwSignal::new(String::new());
     let include_card_in_brief = RwSignal::new(false);
     let card_status = RwSignal::new(Option::<String>::None);
+    let confirm_wipe_card = RwSignal::new(false);
     #[cfg(any(feature = "hydrate", feature = "csr"))]
     let hydrated = RwSignal::new(false);
 
@@ -572,6 +589,7 @@ pub fn SupportAndClinicianBriefSection(
         #[cfg(any(feature = "hydrate", feature = "csr"))]
         clear_support_card();
         card.set(PersonalSupportCard::default());
+        confirm_wipe_card.set(false);
         card_status.set(Some(
             "Local support card wiped and reset to defaults.".into(),
         ));
@@ -585,9 +603,9 @@ pub fn SupportAndClinicianBriefSection(
     };
 
     view! {
-        <div class="mt-8 grid gap-6 lg:grid-cols-2">
+        <div class="print-brief-container mt-8 grid gap-6 lg:grid-cols-2 print:mt-0 print:block">
             // 1. On-Device Stanley-Brown Personal Crisis & Support Card
-            <section class="rounded-2xl border border-emerald-400/20 bg-white/[0.02] p-6">
+            <section class="print-hide print:hidden rounded-2xl border border-emerald-400/20 bg-white/[0.02] p-6">
                 <div class="mb-4 flex flex-wrap items-start justify-between gap-2">
                     <div>
                         <p class="mb-1 text-xs font-semibold uppercase tracking-widest text-emerald-300">
@@ -597,248 +615,316 @@ pub fn SupportAndClinicianBriefSection(
                             "Personal Crisis & Support Card"
                         </h2>
                         <p class="mt-1 text-xs text-slate-400">
-                            "Keep your early warning signs, coping steps, care team, trusted person, and verified 24/7 non-police support lines privately in this browser."
+                            "Keep your early warning signs, coping steps, care team, trusted person, and verified 24/7 non-police support lines privately on this device."
                         </p>
                     </div>
-                    <div class="flex flex-wrap gap-1.5">
+                    <div class="flex flex-wrap items-center gap-1.5">
                         {move || {
                             let href = markdown_data_uri(&render_support_card_markdown(&card.get()));
                             view! {
                                 <a
                                     href=href
-                                    download="dabney-personal-support-card.md"
-                                    class="rounded-full border border-emerald-400/30 px-3 py-1 text-xs font-medium text-emerald-300 transition hover:bg-emerald-500/10"
+                                    download="curie-personal-support-card.md"
+                                    class="inline-flex min-h-[36px] items-center rounded-full border border-emerald-400/30 px-3 py-1 text-xs font-medium text-emerald-300 transition hover:bg-emerald-500/10"
                                 >
                                     "Save card .md"
                                 </a>
                             }
                         }}
-                        <button
-                            type="button"
-                            on:click=reset_support_card
-                            class="rounded-full border border-white/15 px-3 py-1 text-xs text-slate-300 transition hover:bg-white/5"
-                        >
-                            "Wipe card"
-                        </button>
+                        {move || if confirm_wipe_card.get() {
+                            view! {
+                                <div class="flex flex-wrap items-center gap-1.5 rounded-xl border border-rose-400/40 bg-rose-950/60 px-2.5 py-1">
+                                    <span class="text-[11px] font-medium text-rose-100">
+                                        "Wipe safety card?"
+                                    </span>
+                                    <button
+                                        type="button"
+                                        on:click=reset_support_card
+                                        class="min-h-[36px] rounded-full bg-rose-500 px-3 py-1 text-xs font-semibold text-white transition hover:bg-rose-400"
+                                    >
+                                        "Confirm wipe"
+                                    </button>
+                                    <button
+                                        type="button"
+                                        on:click=move |_| confirm_wipe_card.set(false)
+                                        class="min-h-[36px] rounded-full border border-white/20 px-3 py-1 text-xs text-slate-200 transition hover:bg-white/10"
+                                    >
+                                        "Cancel"
+                                    </button>
+                                </div>
+                            }
+                            .into_any()
+                        } else {
+                            view! {
+                                <button
+                                    type="button"
+                                    on:click=move |_| confirm_wipe_card.set(true)
+                                    class="min-h-[36px] rounded-full border border-white/15 px-3 py-1 text-xs text-slate-300 transition hover:border-rose-400/40 hover:bg-rose-500/10 hover:text-rose-200"
+                                >
+                                    "Wipe card"
+                                </button>
+                            }
+                            .into_any()
+                        }}
                     </div>
                 </div>
 
-                // Verified 24/7 non-police crisis resources
-                <div class="mb-4 space-y-2">
+                // Verified 24/7 non-police crisis resources with tappable tel:/sms: links (>=44px tap targets)
+                <div class="mb-5 space-y-2.5">
                     {CRISIS_RESOURCES.iter().map(|res| view! {
-                        <div class="rounded-xl border border-emerald-400/20 bg-emerald-500/5 px-3.5 py-2.5">
-                            <div class="flex flex-wrap items-baseline justify-between gap-2">
+                        <div class="rounded-xl border border-emerald-400/25 bg-emerald-500/5 px-3.5 py-3">
+                            <div class="flex flex-wrap items-center justify-between gap-2">
                                 <span class="text-xs font-semibold text-white">{res.name}</span>
-                                <span class="font-mono text-xs font-bold text-emerald-300">{res.contact}</span>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    {res.call_href.zip(res.call_label).map(|(href, label)| view! {
+                                        <a
+                                            href=href
+                                            class="inline-flex min-h-[44px] items-center rounded-full border border-emerald-400/45 bg-emerald-500/15 px-3.5 py-2 font-mono text-xs font-bold text-emerald-200 transition hover:bg-emerald-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+                                        >
+                                            {label}
+                                        </a>
+                                    })}
+                                    {res.sms_href.zip(res.sms_label).map(|(href, label)| view! {
+                                        <a
+                                            href=href
+                                            class="inline-flex min-h-[44px] items-center rounded-full border border-cyan-400/45 bg-cyan-500/15 px-3.5 py-2 font-mono text-xs font-bold text-cyan-200 transition hover:bg-cyan-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                                        >
+                                            {label}
+                                        </a>
+                                    })}
+                                </div>
                             </div>
-                            <p class="mt-0.5 text-[11px] text-slate-300">{res.detail}</p>
+                            <p class="mt-1.5 text-[11px] text-slate-300">{res.detail}</p>
                         </div>
                     }).collect_view()}
                 </div>
 
-                // Editable personal care team & trusted contact (stored strictly in localStorage)
-                <div class="mb-4 grid gap-3 sm:grid-cols-2">
-                    <label class="block text-xs text-slate-300">
-                        "Care clinician / therapist"
-                        <input
-                            type="text"
-                            placeholder="e.g. Dr. Rivera (Psychiatry)"
-                            prop:value=move || card.get().clinician_name
-                            on:input=move |ev| {
-                                let v = event_target_value(&ev);
-                                card.update(|c| c.clinician_name = v);
-                            }
-                            class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500"
-                        />
-                    </label>
-                    <label class="block text-xs text-slate-300">
-                        "Clinic phone / portal"
-                        <input
-                            type="text"
-                            placeholder="e.g. (555) 010-2000"
-                            prop:value=move || card.get().clinician_contact
-                            on:input=move |ev| {
-                                let v = event_target_value(&ev);
-                                card.update(|c| c.clinician_contact = v);
-                            }
-                            class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500"
-                        />
-                    </label>
-                    <label class="block text-xs text-slate-300 sm:col-span-2">
-                        "Urgent behavioral health clinic / pharmacy note"
-                        <input
-                            type="text"
-                            placeholder="e.g. Preferred walk-in crisis clinic, pharmacy hours, or medication reminder"
-                            prop:value=move || card.get().urgent_clinic_note
-                            on:input=move |ev| {
-                                let v = event_target_value(&ev);
-                                card.update(|c| c.urgent_clinic_note = v);
-                            }
-                            class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500"
-                        />
-                    </label>
-                    <label class="block text-xs text-slate-300">
-                        "Trusted friend / family member"
-                        <input
-                            type="text"
-                            placeholder="Name"
-                            prop:value=move || card.get().trusted_person_name
-                            on:input=move |ev| {
-                                let v = event_target_value(&ev);
-                                card.update(|c| c.trusted_person_name = v);
-                            }
-                            class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500"
-                        />
-                    </label>
-                    <label class="block text-xs text-slate-300">
-                        "Trusted contact phone"
-                        <input
-                            type="text"
-                            placeholder="Phone or preferred method"
-                            prop:value=move || card.get().trusted_person_contact
-                            on:input=move |ev| {
-                                let v = event_target_value(&ev);
-                                card.update(|c| c.trusted_person_contact = v);
-                            }
-                            class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500"
-                        />
-                    </label>
-                    <label class="block text-xs text-slate-300 sm:col-span-2">
-                        "What helps my trusted person say or do"
-                        <input
-                            type="text"
-                            placeholder="e.g. Remind me to pause and wait before sending big messages"
-                            prop:value=move || card.get().trusted_person_note
-                            on:input=move |ev| {
-                                let v = event_target_value(&ev);
-                                card.update(|c| c.trusted_person_note = v);
-                            }
-                            class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500"
-                        />
-                    </label>
-                    <label class="block text-xs text-slate-300 sm:col-span-2">
-                        "3. Grounding places & calming settings"
-                        <input
-                            type="text"
-                            placeholder="e.g. Quiet room, neighborhood walk, library"
-                            prop:value=move || card.get().calming_places_note
-                            on:input=move |ev| {
-                                let v = event_target_value(&ev);
-                                card.update(|c| c.calming_places_note = v);
-                            }
-                            class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500"
-                        />
-                    </label>
-                    <label class="block text-xs text-slate-300 sm:col-span-2">
-                        "6. Making my environment calmer & safer"
-                        <input
-                            type="text"
-                            placeholder="e.g. Do Not Disturb on devices, water nearby, 24h wait on big decisions"
-                            prop:value=move || card.get().safe_environment_note
-                            on:input=move |ev| {
-                                let v = event_target_value(&ev);
-                                card.update(|c| c.safe_environment_note = v);
-                            }
-                            class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500"
-                        />
-                    </label>
-                </div>
+                <div class="space-y-5">
+                    // Step 1: Personal Early Warning Signs
+                    <div class="space-y-2">
+                        <p class="text-xs font-semibold text-amber-300">"1. My early warning signs"</p>
+                        <ul class="space-y-1.5 text-xs text-slate-300">
+                            {move || card.get().warning_signs.into_iter().enumerate().map(|(i, sign)| view! {
+                                <li class="flex items-center justify-between gap-2 rounded-lg border border-white/5 bg-slate-950/60 py-1 pr-1 pl-2.5">
+                                    <span class="flex items-start gap-2 py-1">
+                                        <span class="font-mono text-[11px] text-amber-300">{format!("{}.", i + 1)}</span>
+                                        <span>{sign}</span>
+                                    </span>
+                                    <button
+                                        type="button"
+                                        aria-label="Remove warning sign"
+                                        on:click=move |_| {
+                                            card.update(|c| {
+                                                if i < c.warning_signs.len() {
+                                                    c.warning_signs.remove(i);
+                                                }
+                                            });
+                                        }
+                                        class="inline-flex min-h-[40px] min-w-[40px] shrink-0 items-center justify-center rounded-lg text-base text-slate-400 transition hover:bg-rose-500/15 hover:text-rose-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+                                    >
+                                        "×"
+                                    </button>
+                                </li>
+                            }).collect_view()}
+                        </ul>
+                        <form on:submit=add_warning_sign class="flex gap-2">
+                            <input
+                                type="text"
+                                aria-label="Add an early warning sign"
+                                placeholder="Add an early warning sign..."
+                                prop:value=move || new_warning.get()
+                                on:input=move |ev| new_warning.set(event_target_value(&ev))
+                                class="min-h-[40px] flex-1 rounded-lg border border-white/10 bg-slate-900 px-3 py-1.5 text-xs text-white placeholder:text-slate-500"
+                            />
+                            <button
+                                type="submit"
+                                class="min-h-[40px] rounded-full border border-white/15 px-3.5 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-white/5"
+                            >
+                                "Add sign"
+                            </button>
+                        </form>
+                    </div>
 
-                // Step 1: Personal Early Warning Signs
-                <div class="mb-4 space-y-2">
-                    <p class="text-xs font-medium text-amber-300">"1. My early warning signs"</p>
-                    <ul class="space-y-1.5 text-xs text-slate-300">
-                        {move || card.get().warning_signs.into_iter().enumerate().map(|(i, sign)| view! {
-                            <li class="flex items-start justify-between gap-2 rounded-lg border border-white/5 bg-slate-950/60 px-2.5 py-1.5">
-                                <span class="flex items-start gap-2">
-                                    <span class="font-mono text-[11px] text-amber-300">{format!("{}.", i + 1)}</span>
-                                    <span>{sign}</span>
-                                </span>
-                                <button
-                                    type="button"
-                                    aria-label="Remove warning sign"
-                                    on:click=move |_| {
-                                        card.update(|c| {
-                                            if i < c.warning_signs.len() {
-                                                c.warning_signs.remove(i);
-                                            }
-                                        });
-                                    }
-                                    class="text-slate-500 transition hover:text-rose-300"
-                                >
-                                    "×"
-                                </button>
-                            </li>
-                        }).collect_view()}
-                    </ul>
-                    <form on:submit=add_warning_sign class="flex gap-2">
-                        <input
-                            type="text"
-                            placeholder="Add an early warning sign..."
-                            prop:value=move || new_warning.get()
-                            on:input=move |ev| new_warning.set(event_target_value(&ev))
-                            class="flex-1 rounded-lg border border-white/10 bg-slate-900 px-3 py-1.5 text-xs text-white placeholder:text-slate-500"
-                        />
-                        <button
-                            type="submit"
-                            class="rounded-full border border-white/15 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-white/5"
-                        >
-                            "Add sign"
-                        </button>
-                    </form>
-                </div>
+                    // Step 2: Internal Grounding & Coping Steps
+                    <div class="space-y-2">
+                        <p class="text-xs font-semibold text-emerald-300">"2. Personal grounding & coping steps"</p>
+                        <ul class="space-y-1.5 text-xs text-slate-300">
+                            {move || card.get().coping_steps.into_iter().enumerate().map(|(i, step)| view! {
+                                <li class="flex items-center justify-between gap-2 rounded-lg border border-white/5 bg-slate-950/60 py-1 pr-1 pl-2.5">
+                                    <span class="flex items-start gap-2 py-1">
+                                        <span class="font-mono text-[11px] text-emerald-300">{format!("{}.", i + 1)}</span>
+                                        <span>{step}</span>
+                                    </span>
+                                    <button
+                                        type="button"
+                                        aria-label="Remove coping step"
+                                        on:click=move |_| {
+                                            card.update(|c| {
+                                                if i < c.coping_steps.len() {
+                                                    c.coping_steps.remove(i);
+                                                }
+                                            });
+                                        }
+                                        class="inline-flex min-h-[40px] min-w-[40px] shrink-0 items-center justify-center rounded-lg text-base text-slate-400 transition hover:bg-rose-500/15 hover:text-rose-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+                                    >
+                                        "×"
+                                    </button>
+                                </li>
+                            }).collect_view()}
+                        </ul>
+                        <form on:submit=add_coping_step class="flex gap-2 pt-1">
+                            <input
+                                type="text"
+                                aria-label="Add a personal grounding step"
+                                placeholder="Add a personal grounding step..."
+                                prop:value=move || new_step.get()
+                                on:input=move |ev| new_step.set(event_target_value(&ev))
+                                class="min-h-[40px] flex-1 rounded-lg border border-white/10 bg-slate-900 px-3 py-1.5 text-xs text-white placeholder:text-slate-500"
+                            />
+                            <button
+                                type="submit"
+                                class="min-h-[40px] rounded-full border border-white/15 px-3.5 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-white/5"
+                            >
+                                "Add step"
+                            </button>
+                        </form>
+                    </div>
 
-                // Step 2: Internal Grounding & Coping Steps
-                <div class="space-y-2">
-                    <p class="text-xs font-medium text-emerald-300">"2. Personal grounding & coping steps"</p>
-                    <ul class="space-y-1.5 text-xs text-slate-300">
-                        {move || card.get().coping_steps.into_iter().enumerate().map(|(i, step)| view! {
-                            <li class="flex items-start justify-between gap-2 rounded-lg border border-white/5 bg-slate-950/60 px-2.5 py-1.5">
-                                <span class="flex items-start gap-2">
-                                    <span class="font-mono text-[11px] text-emerald-300">{format!("{}.", i + 1)}</span>
-                                    <span>{step}</span>
-                                </span>
-                                <button
-                                    type="button"
-                                    aria-label="Remove coping step"
-                                    on:click=move |_| {
-                                        card.update(|c| {
-                                            if i < c.coping_steps.len() {
-                                                c.coping_steps.remove(i);
-                                            }
-                                        });
+                    // Step 3: Grounding Places & Calming Settings
+                    <div class="space-y-1.5">
+                        <label class="block text-xs font-semibold text-cyan-300">
+                            "3. Grounding places & calming settings"
+                            <input
+                                type="text"
+                                placeholder="e.g. Quiet room, neighborhood walk, library"
+                                prop:value=move || card.get().calming_places_note
+                                on:input=move |ev| {
+                                    let v = event_target_value(&ev);
+                                    card.update(|c| c.calming_places_note = v);
+                                }
+                                class="mt-1.5 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-2 text-xs font-normal text-white placeholder:text-slate-500"
+                            />
+                        </label>
+                    </div>
+
+                    // Step 4: Trusted Support Person
+                    <div class="space-y-2">
+                        <p class="text-xs font-semibold text-cyan-300">"4. Trusted support person"</p>
+                        <div class="grid gap-3 sm:grid-cols-2">
+                            <label class="block text-xs text-slate-300">
+                                "Trusted friend / family member"
+                                <input
+                                    type="text"
+                                    placeholder="Name"
+                                    prop:value=move || card.get().trusted_person_name
+                                    on:input=move |ev| {
+                                        let v = event_target_value(&ev);
+                                        card.update(|c| c.trusted_person_name = v);
                                     }
-                                    class="text-slate-500 transition hover:text-rose-300"
-                                >
-                                    "×"
-                                </button>
-                            </li>
-                        }).collect_view()}
-                    </ul>
-                    <form on:submit=add_coping_step class="flex gap-2 pt-1">
-                        <input
-                            type="text"
-                            placeholder="Add a personal grounding step..."
-                            prop:value=move || new_step.get()
-                            on:input=move |ev| new_step.set(event_target_value(&ev))
-                            class="flex-1 rounded-lg border border-white/10 bg-slate-900 px-3 py-1.5 text-xs text-white placeholder:text-slate-500"
-                        />
-                        <button
-                            type="submit"
-                            class="rounded-full border border-white/15 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-white/5"
-                        >
-                            "Add step"
-                        </button>
-                    </form>
+                                    class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500"
+                                />
+                            </label>
+                            <label class="block text-xs text-slate-300">
+                                "Trusted contact phone"
+                                <input
+                                    type="text"
+                                    placeholder="Phone or preferred method"
+                                    prop:value=move || card.get().trusted_person_contact
+                                    on:input=move |ev| {
+                                        let v = event_target_value(&ev);
+                                        card.update(|c| c.trusted_person_contact = v);
+                                    }
+                                    class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500"
+                                />
+                            </label>
+                            <label class="block text-xs text-slate-300 sm:col-span-2">
+                                "What helps my trusted person say or do"
+                                <input
+                                    type="text"
+                                    placeholder="e.g. Remind me to pause and wait before sending big messages"
+                                    prop:value=move || card.get().trusted_person_note
+                                    on:input=move |ev| {
+                                        let v = event_target_value(&ev);
+                                        card.update(|c| c.trusted_person_note = v);
+                                    }
+                                    class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500"
+                                />
+                            </label>
+                        </div>
+                    </div>
+
+                    // Step 5: Care Team & Urgent Clinic
+                    <div class="space-y-2">
+                        <p class="text-xs font-semibold text-cyan-300">"5. Care team & urgent clinic"</p>
+                        <div class="grid gap-3 sm:grid-cols-2">
+                            <label class="block text-xs text-slate-300">
+                                "Care clinician / therapist"
+                                <input
+                                    type="text"
+                                    placeholder="e.g. Dr. Rivera (Psychiatry)"
+                                    prop:value=move || card.get().clinician_name
+                                    on:input=move |ev| {
+                                        let v = event_target_value(&ev);
+                                        card.update(|c| c.clinician_name = v);
+                                    }
+                                    class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500"
+                                />
+                            </label>
+                            <label class="block text-xs text-slate-300">
+                                "Clinic phone / portal"
+                                <input
+                                    type="text"
+                                    placeholder="e.g. (555) 010-2000"
+                                    prop:value=move || card.get().clinician_contact
+                                    on:input=move |ev| {
+                                        let v = event_target_value(&ev);
+                                        card.update(|c| c.clinician_contact = v);
+                                    }
+                                    class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500"
+                                />
+                            </label>
+                            <label class="block text-xs text-slate-300 sm:col-span-2">
+                                "Urgent behavioral health clinic / pharmacy note"
+                                <input
+                                    type="text"
+                                    placeholder="e.g. Preferred walk-in crisis clinic, pharmacy hours, or medication reminder"
+                                    prop:value=move || card.get().urgent_clinic_note
+                                    on:input=move |ev| {
+                                        let v = event_target_value(&ev);
+                                        card.update(|c| c.urgent_clinic_note = v);
+                                    }
+                                    class="mt-1 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500"
+                                />
+                            </label>
+                        </div>
+                    </div>
+
+                    // Step 6: Making My Environment Calmer & Safer
+                    <div class="space-y-1.5">
+                        <label class="block text-xs font-semibold text-cyan-300">
+                            "6. Making my environment calmer & safer"
+                            <input
+                                type="text"
+                                placeholder="e.g. Do Not Disturb on devices, water nearby, 24h wait on big decisions"
+                                prop:value=move || card.get().safe_environment_note
+                                on:input=move |ev| {
+                                    let v = event_target_value(&ev);
+                                    card.update(|c| c.safe_environment_note = v);
+                                }
+                                class="mt-1.5 w-full rounded-lg border border-white/10 bg-slate-900 px-2.5 py-2 text-xs font-normal text-white placeholder:text-slate-500"
+                            />
+                        </label>
+                    </div>
+
                     {move || card_status.get().map(|msg| view! {
-                        <p class="text-xs text-emerald-300">{msg}</p>
+                        <p role="status" aria-live="polite" class="text-xs text-emerald-300">{msg}</p>
                     })}
                 </div>
             </section>
 
             // 2. 1-Page Printable / Exportable Clinician Visit Brief
-            <section class="rounded-2xl border border-cyan-400/20 bg-white/[0.02] p-6">
-                <div class="mb-4 flex flex-wrap items-start justify-between gap-2">
+            <section class="print-brief-card rounded-2xl border border-cyan-400/20 bg-white/[0.02] p-6">
+                <div class="print-hide print:hidden mb-4 flex flex-wrap items-start justify-between gap-2">
                     <div>
                         <p class="mb-1 text-xs font-semibold uppercase tracking-widest text-cyan-300">
                             "Patient-Consented Clinical Handoff"
@@ -857,14 +943,14 @@ pub fn SupportAndClinicianBriefSection(
                                 <button
                                     type="button"
                                     on:click=trigger_print
-                                    class="rounded-full bg-cyan-500 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-400"
+                                    class="min-h-[36px] rounded-full bg-cyan-500 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-400"
                                 >
                                     "Print / Save PDF"
                                 </button>
                                 <a
                                     href=href
-                                    download="dabney-clinician-visit-brief.md"
-                                    class="inline-flex items-center rounded-full border border-white/15 px-3.5 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-white/5"
+                                    download="curie-clinician-visit-brief.md"
+                                    class="inline-flex min-h-[36px] items-center rounded-full border border-white/15 px-3.5 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-white/5"
                                 >
                                     "Download .md"
                                 </a>
@@ -872,7 +958,7 @@ pub fn SupportAndClinicianBriefSection(
                         }
                     }}
                 </div>
-                <label class="mb-3 inline-flex items-center gap-2 text-xs text-slate-300">
+                <label class="print-hide print:hidden mb-3 inline-flex cursor-pointer items-center gap-2 text-xs text-slate-300">
                     <input
                         type="checkbox"
                         prop:checked=move || include_card_in_brief.get()
@@ -884,7 +970,7 @@ pub fn SupportAndClinicianBriefSection(
                 {move || {
                     let md = brief_markdown.get();
                     view! {
-                        <pre class="max-h-[480px] overflow-auto whitespace-pre-wrap rounded-xl border border-white/10 bg-slate-950 p-4 font-mono text-xs leading-relaxed text-slate-200">
+                        <pre class="print-brief-pre max-h-[480px] overflow-auto whitespace-pre-wrap rounded-xl border border-white/10 bg-slate-950 p-4 font-mono text-xs leading-relaxed text-slate-200">
                             {md}
                         </pre>
                     }
@@ -977,10 +1063,23 @@ mod tests {
         .to_html();
         assert!(html.contains("Personal Crisis &amp; Support Card"));
         assert!(html.contains("988 Suicide &amp; Crisis Lifeline"));
+        assert!(html.contains("href=\"tel:988\""));
+        assert!(html.contains("href=\"sms:988\""));
+        assert!(html.contains("href=\"sms:741741?&amp;body=HOME\""));
+        assert!(html.contains("href=\"tel:18006624357\""));
         assert!(html.contains("My early warning signs"));
         assert!(html.contains("Save card .md"));
         assert!(html.contains("1-Page Clinician Visit Brief"));
         assert!(html.contains("Print / Save PDF"));
+        assert!(html.contains("print-brief-pre"));
+        // Verify Stanley-Brown 1 -> 2 -> 3 -> 4 -> 5 -> 6 sequential ordering in rendered HTML.
+        let p1 = html.find("1. My early warning signs").unwrap();
+        let p2 = html.find("2. Personal grounding").unwrap();
+        let p3 = html.find("3. Grounding places").unwrap();
+        let p4 = html.find("4. Trusted support person").unwrap();
+        let p5 = html.find("5. Care team").unwrap();
+        let p6 = html.find("6. Making my environment").unwrap();
+        assert!(p1 < p2 && p2 < p3 && p3 < p4 && p4 < p5 && p5 < p6);
     }
 
     #[test]

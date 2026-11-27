@@ -6,6 +6,7 @@
 use leptos::prelude::*;
 
 use crate::health_bridge::AppAlertStatusUi;
+use crate::info_tip::InfoTip;
 use crate::mental_health_cgm_alerts::{
     format_glucose_reading_honestly, save_alert_config_to_storage, AlertSeverity,
     BrowserNotificationPermission, GlucoseAlertConfig, GlucoseTargetPreset, RangeBreachEpisode,
@@ -182,6 +183,7 @@ pub fn GlucoseRangeAlertsCard(
     let low_draft = RwSignal::new(format!("{:.0}", initial_cfg.low_mg_dl));
     let high_draft = RwSignal::new(format!("{:.0}", initial_cfg.high_mg_dl));
     let urgent_high_draft = RwSignal::new(format!("{:.0}", initial_cfg.urgent_high_mg_dl));
+    let clamp_notice = RwSignal::new(Option::<String>::None);
 
     // Keep text input drafts aligned when presets, Reset defaults, or localStorage hydration
     // update `config`.
@@ -208,28 +210,47 @@ pub fn GlucoseRangeAlertsCard(
         let uhigh = urgent_high_draft.get_untracked();
 
         let mut next = config.get_untracked();
-        if let Ok(v) = ulow.trim().parse::<f64>() {
-            if v.is_finite() {
-                next.urgent_low_mg_dl = v;
+        let mut invalid_entry = false;
+        let parse_field = |raw: &str, current: f64, bad: &mut bool| -> f64 {
+            match raw.trim().parse::<f64>() {
+                Ok(v) if v.is_finite() => v,
+                _ => {
+                    *bad = true;
+                    current
+                }
             }
-        }
-        if let Ok(v) = low.trim().parse::<f64>() {
-            if v.is_finite() {
-                next.low_mg_dl = v;
-            }
-        }
-        if let Ok(v) = high.trim().parse::<f64>() {
-            if v.is_finite() {
-                next.high_mg_dl = v;
-            }
-        }
-        if let Ok(v) = uhigh.trim().parse::<f64>() {
-            if v.is_finite() {
-                next.urgent_high_mg_dl = v;
-            }
-        }
+        };
+        next.urgent_low_mg_dl = parse_field(&ulow, next.urgent_low_mg_dl, &mut invalid_entry);
+        next.low_mg_dl = parse_field(&low, next.low_mg_dl, &mut invalid_entry);
+        next.high_mg_dl = parse_field(&high, next.high_mg_dl, &mut invalid_entry);
+        next.urgent_high_mg_dl = parse_field(&uhigh, next.urgent_high_mg_dl, &mut invalid_entry);
+
+        let requested = (
+            next.urgent_low_mg_dl,
+            next.low_mg_dl,
+            next.high_mg_dl,
+            next.urgent_high_mg_dl,
+        );
         next.preset = GlucoseTargetPreset::Custom;
         let sanitized = next.sanitized();
+        let was_clamped = invalid_entry
+            || (sanitized.urgent_low_mg_dl - requested.0).abs() > 0.5
+            || (sanitized.low_mg_dl - requested.1).abs() > 0.5
+            || (sanitized.high_mg_dl - requested.2).abs() > 0.5
+            || (sanitized.urgent_high_mg_dl - requested.3).abs() > 0.5;
+
+        if was_clamped {
+            clamp_notice.set(Some(format!(
+                "Adjusted thresholds to stay within safe clinical bounds (45–350 mg/dL, strictly ordered with ≥10 mg/dL target span): Urgent Low {:.0} < Target Low {:.0} < Target High {:.0} < Urgent High {:.0} mg/dL.",
+                sanitized.urgent_low_mg_dl,
+                sanitized.low_mg_dl,
+                sanitized.high_mg_dl,
+                sanitized.urgent_high_mg_dl,
+            )));
+        } else {
+            clamp_notice.set(None);
+        }
+
         config.set(sanitized.clone());
         save_alert_config_to_storage(&sanitized);
         urgent_low_draft.set(format!("{:.0}", sanitized.urgent_low_mg_dl));
@@ -239,18 +260,21 @@ pub fn GlucoseRangeAlertsCard(
     };
 
     let apply_tight_preset = move |_| {
+        clamp_notice.set(None);
         persist_update(Box::new(|cfg| {
             cfg.apply_preset(GlucoseTargetPreset::TightMetabolic);
         }));
     };
 
     let apply_ada_preset = move |_| {
+        clamp_notice.set(None);
         persist_update(Box::new(|cfg| {
             cfg.apply_preset(GlucoseTargetPreset::AdaStandard);
         }));
     };
 
     let reset_defaults = move |_| {
+        clamp_notice.set(None);
         let defaults = GlucoseAlertConfig::default();
         config.set(defaults.clone());
         save_alert_config_to_storage(&defaults);
@@ -264,14 +288,18 @@ pub fn GlucoseRangeAlertsCard(
     view! {
         <section
             data-glucose-range-alerts="true"
-            class="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-5"
+            class="print-hide print:hidden mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-5"
         >
             // 1. Live Target-Range Status Header
             <div class="flex flex-wrap items-start justify-between gap-3">
                 <div>
                     <div class="flex flex-wrap items-center gap-2">
-                        <h2 class="text-lg font-semibold text-white">
-                            "Automated Glucose Range Alerts"
+                        <h2 class="flex items-center text-lg font-semibold text-white">
+                            <span>"Automated Glucose Range Alerts"</span>
+                            <InfoTip
+                                term="Range Thresholds"
+                                text="Thresholds must stay in order: Urgent Low < Target Low < Target High < Urgent High (between 45 and 350 mg/dL, with at least a 10 mg/dL target band)."
+                            />
                         </h2>
                         {move || {
                             let cfg = config.get().sanitized();
@@ -346,7 +374,8 @@ pub fn GlucoseRangeAlertsCard(
                             <div
                                 data-active-alert-callout="true"
                                 role="status"
-                                class=format!("rounded-xl border p-4 space-y-2 text-xs {callout_cls}")
+                                aria-live="polite"
+                                class=format!("rounded-xl border p-4 space-y-2 text-xs transition-colors {callout_cls}")
                             >
                                 <div class="flex flex-wrap items-center justify-between gap-2">
                                     <div class="flex flex-wrap items-center gap-2">
@@ -418,6 +447,7 @@ pub fn GlucoseRangeAlertsCard(
                 <div class="flex flex-wrap items-center gap-1.5 text-xs">
                     <button
                         type="button"
+                        aria-pressed=move || config.get().sanitized().preset == GlucoseTargetPreset::TightMetabolic
                         on:click=apply_tight_preset
                         class=move || {
                             if config.get().sanitized().preset == GlucoseTargetPreset::TightMetabolic {
@@ -431,6 +461,7 @@ pub fn GlucoseRangeAlertsCard(
                     </button>
                     <button
                         type="button"
+                        aria-pressed=move || config.get().sanitized().preset == GlucoseTargetPreset::AdaStandard
                         on:click=apply_ada_preset
                         class=move || {
                             if config.get().sanitized().preset == GlucoseTargetPreset::AdaStandard {
@@ -460,7 +491,25 @@ pub fn GlucoseRangeAlertsCard(
             </div>
 
             // 3. User-Configurable Thresholds & Anti-Fatigue Controls
-            <form on:submit=on_thresholds_submit class="space-y-4">
+            <form
+                on:submit=on_thresholds_submit
+                class=move || {
+                    if config.get().enabled {
+                        "space-y-4 transition-opacity"
+                    } else {
+                        "space-y-4 opacity-60 transition-opacity"
+                    }
+                }
+            >
+                {move || (!config.get().enabled).then(|| view! {
+                    <p
+                        role="status"
+                        aria-live="polite"
+                        class="rounded-xl border border-slate-500/35 bg-slate-900/80 px-3.5 py-2 text-xs text-slate-300"
+                    >
+                        "Automated alerts are paused. Turn on \"Automated range alerts\" above to resume breach notifications."
+                    </p>
+                })}
                 <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <label class="block text-xs text-slate-300">
                         "Urgent Low (mg/dL)"
@@ -523,6 +572,17 @@ pub fn GlucoseRangeAlertsCard(
                         />
                     </label>
                 </div>
+
+                {move || clamp_notice.get().map(|msg| view! {
+                    <p
+                        data-threshold-clamp-notice="true"
+                        role="status"
+                        aria-live="polite"
+                        class="rounded-xl border border-amber-400/35 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
+                    >
+                        {msg}
+                    </p>
+                })}
 
                 <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     <label class="block text-xs text-slate-300">
@@ -591,8 +651,12 @@ pub fn GlucoseRangeAlertsCard(
                             class="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-white/20 bg-slate-900 accent-amber-400"
                         />
                         <span>
-                            <strong class="block font-medium text-white">
-                                "Rapid change (±2 mg/dL/min)"
+                            <strong class="flex items-center font-medium text-white">
+                                <span>"Rapid change (±2 mg/dL/min)"</span>
+                                <InfoTip
+                                    term="RoC"
+                                    text="Rate of Change: triggers an early warning when glucose rises or falls by at least 2 mg/dL per minute near your bounds."
+                                />
                             </strong>
                             <span class="text-[11px] text-slate-400">
                                 "Alert when approaching low/high bounds rapidly"
@@ -627,9 +691,16 @@ pub fn GlucoseRangeAlertsCard(
             // 4. Browser & Native App Notification Channel Controls
             <div
                 data-alert-channels="true"
-                class="rounded-xl border border-white/10 bg-slate-950/70 p-4 space-y-3 text-xs"
+                class=move || {
+                    if config.get().enabled {
+                        "rounded-xl border border-white/10 bg-slate-950/70 p-4 space-y-3 text-xs transition-opacity"
+                    } else {
+                        "rounded-xl border border-white/10 bg-slate-950/70 p-4 space-y-3 text-xs opacity-50 transition-opacity"
+                    }
+                }
             >
                 {move || {
+                    let alerts_enabled = config.get().enabled;
                     if let Some(status) = app_alert_status.get().filter(|s| s.enabled) {
                         let platform_badge = native_platform_badge(&status);
                         let perm_granted = status.permission_granted;
@@ -657,27 +728,24 @@ pub fn GlucoseRangeAlertsCard(
                                     )>
                                         {perm_label}
                                     </span>
-                                    {(!status.channel_id.is_empty()).then(|| view! {
-                                        <span class="font-mono text-[10px] text-slate-400">
-                                            {format!("channel {}", status.channel_id)}
-                                        </span>
-                                    })}
                                 </div>
 
                                 <div class="flex flex-wrap items-center gap-2">
                                     {(!perm_granted).then(|| view! {
                                         <button
                                             type="button"
+                                            disabled=!alerts_enabled
                                             on:click=move |_| on_request_app_permission.run(())
-                                            class="rounded-full bg-emerald-400 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-300"
+                                            class="rounded-full bg-emerald-400 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
                                         >
                                             "Enable App Notifications"
                                         </button>
                                     })}
                                     <button
                                         type="button"
+                                        disabled=!alerts_enabled
                                         on:click=move |_| on_send_test_alert.run(())
-                                        class="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-3.5 py-1.5 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/25"
+                                        class="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-3.5 py-1.5 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-50"
                                     >
                                         "Send Test Alert"
                                     </button>
@@ -688,6 +756,7 @@ pub fn GlucoseRangeAlertsCard(
                                 <label class="inline-flex cursor-pointer items-center gap-2 text-xs text-slate-200">
                                     <input
                                         type="checkbox"
+                                        disabled=!alerts_enabled
                                         prop:checked=move || config.get().app_notifications_enabled
                                         on:change=move |ev| {
                                             let checked = event_target_checked(&ev);
@@ -695,7 +764,7 @@ pub fn GlucoseRangeAlertsCard(
                                                 cfg.app_notifications_enabled = checked;
                                             }));
                                         }
-                                        class="h-3.5 w-3.5 rounded border-white/20 bg-slate-900 accent-emerald-400"
+                                        class="h-3.5 w-3.5 rounded border-white/20 bg-slate-900 accent-emerald-400 disabled:cursor-not-allowed"
                                     />
                                     <span>"Deliver native app notifications on personal readings"</span>
                                 </label>
@@ -704,6 +773,7 @@ pub fn GlucoseRangeAlertsCard(
                                     <label class="inline-flex items-center gap-2 text-xs text-slate-300">
                                         <span>"Auto-check Health Connect"</span>
                                         <select
+                                            disabled=!alerts_enabled
                                             prop:value=move || config.get().sanitized().auto_poll_minutes.to_string()
                                             on:change=move |ev| {
                                                 if let Ok(mins) = event_target_value(&ev).parse::<u32>() {
@@ -712,7 +782,7 @@ pub fn GlucoseRangeAlertsCard(
                                                     }));
                                                 }
                                             }
-                                            class="rounded-lg border border-emerald-400/30 bg-slate-900 px-2.5 py-1 text-xs text-white"
+                                            class="rounded-lg border border-emerald-400/30 bg-slate-900 px-2.5 py-1 text-xs text-white disabled:cursor-not-allowed"
                                         >
                                             {AUTO_POLL_OPTIONS.iter().copied().map(|(mins, label)| {
                                                 view! {
@@ -733,6 +803,8 @@ pub fn GlucoseRangeAlertsCard(
                     } else {
                         let perm = browser_permission.get();
                         let (perm_label, perm_cls) = browser_permission_badge(perm);
+                        let test_disabled =
+                            !alerts_enabled || perm == BrowserNotificationPermission::Denied;
                         view! {
                             <div class="flex flex-wrap items-center justify-between gap-3">
                                 <div class="flex flex-wrap items-center gap-2">
@@ -750,27 +822,41 @@ pub fn GlucoseRangeAlertsCard(
                                     {(perm == BrowserNotificationPermission::Default).then(|| view! {
                                         <button
                                             type="button"
+                                            disabled=!alerts_enabled
                                             on:click=move |_| on_request_browser_permission.run(())
-                                            class="rounded-full bg-emerald-400 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-300"
+                                            class="rounded-full bg-emerald-400 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
                                         >
                                             "Enable Browser Notifications"
                                         </button>
                                     })}
                                     <button
                                         type="button"
+                                        disabled=test_disabled
                                         on:click=move |_| on_send_test_alert.run(())
-                                        class="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-3.5 py-1.5 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/25"
+                                        class="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-3.5 py-1.5 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-50"
                                     >
                                         "Send Test Alert"
                                     </button>
                                 </div>
                             </div>
 
+                            {(perm == BrowserNotificationPermission::Denied).then(|| view! {
+                                <p
+                                    data-notification-unblock-guide="true"
+                                    role="status"
+                                    aria-live="polite"
+                                    class="rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[11px] leading-relaxed text-rose-100"
+                                >
+                                    "Notifications are currently blocked by your browser. To unblock: click the lock or site-settings icon in the address bar → Site settings → Notifications → Allow, then reload this page."
+                                </p>
+                            })}
+
                             {(perm == BrowserNotificationPermission::Granted).then(|| view! {
                                 <div class="border-t border-white/5 pt-2.5">
                                     <label class="inline-flex cursor-pointer items-center gap-2 text-xs text-slate-200">
                                         <input
                                             type="checkbox"
+                                            disabled=!alerts_enabled
                                             prop:checked=move || config.get().browser_notifications_enabled
                                             on:change=move |ev| {
                                                 let checked = event_target_checked(&ev);
@@ -778,7 +864,7 @@ pub fn GlucoseRangeAlertsCard(
                                                     cfg.browser_notifications_enabled = checked;
                                                 }));
                                             }
-                                            class="h-3.5 w-3.5 rounded border-white/20 bg-slate-900 accent-emerald-400"
+                                            class="h-3.5 w-3.5 rounded border-white/20 bg-slate-900 accent-emerald-400 disabled:cursor-not-allowed"
                                         />
                                         <span>"Deliver browser notifications when personal readings breach target range"</span>
                                     </label>
@@ -790,7 +876,12 @@ pub fn GlucoseRangeAlertsCard(
                 }}
 
                 {move || alert_feedback.get().map(|msg| view! {
-                    <p data-alert-feedback="true" class="text-[11px] text-cyan-200">
+                    <p
+                        data-alert-feedback="true"
+                        role="status"
+                        aria-live="polite"
+                        class="text-[11px] text-cyan-200"
+                    >
                         {msg}
                     </p>
                 })}
@@ -837,26 +928,30 @@ pub fn GlucoseRangeAlertsCard(
 
                         <div
                             data-custom-target-bar="true"
+                            role="img"
+                            aria-label=format!(
+                                "Custom target range breakdown: Below target {below:.1}%, In target {in_target:.1}%, Above target {above:.1}%"
+                            )
                             class="flex h-3 w-full overflow-hidden rounded-full border border-white/10 bg-slate-900"
                         >
                             {(below > 0.0).then(|| view! {
                                 <div
                                     style=format!("width: {below:.2}%")
-                                    class="h-full bg-rose-500"
+                                    class="h-full bg-rose-500 transition-[width] duration-300"
                                     title=format!("Below target: {below:.1}%")
                                 />
                             })}
                             {(in_target > 0.0).then(|| view! {
                                 <div
                                     style=format!("width: {in_target:.2}%")
-                                    class="h-full bg-emerald-400"
+                                    class="h-full bg-emerald-400 transition-[width] duration-300"
                                     title=format!("In custom target: {in_target:.1}%")
                                 />
                             })}
                             {(above > 0.0).then(|| view! {
                                 <div
                                     style=format!("width: {above:.2}%")
-                                    class="h-full bg-amber-400"
+                                    class="h-full bg-amber-400 transition-[width] duration-300"
                                     title=format!("Above target: {above:.1}%")
                                 />
                             })}
@@ -1178,5 +1273,46 @@ mod tests {
         assert!(ios_html.contains("Granted"));
         assert!(!ios_html.contains("Enable App Notifications"));
         assert!(ios_html.contains("Auto-check Health Connect"));
+    }
+
+    #[test]
+    fn renders_unblock_guidance_on_denied_permission_and_dims_when_paused() {
+        let paused_cfg = GlucoseAlertConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        let cfg = RwSignal::new(paused_cfg);
+        let trace = synthetic_breaching_trace();
+        let summary = RwSignal::new(evaluate_window_range_alerts(
+            &trace,
+            &cfg.get_untracked(),
+            &AlertDispatchState::default(),
+        ));
+        let browser_perm = RwSignal::new(BrowserNotificationPermission::Denied);
+        let app_status = RwSignal::new(Option::<AppAlertStatusUi>::None);
+        let hc_ready = RwSignal::new(false);
+        let personal_loaded = RwSignal::new(true);
+        let feedback = RwSignal::new(Option::<String>::None);
+
+        let html = view! {
+            <GlucoseRangeAlertsCard
+                config=cfg
+                summary=summary.into()
+                browser_permission=browser_perm.into()
+                app_alert_status=app_status.into()
+                health_connect_ready=hc_ready.into()
+                personal_data_loaded=personal_loaded.into()
+                alert_feedback=feedback.into()
+                on_request_browser_permission=Callback::new(|()| {})
+                on_request_app_permission=Callback::new(|()| {})
+                on_send_test_alert=Callback::new(|()| {})
+            />
+        }
+        .to_html();
+
+        assert!(html.contains("data-notification-unblock-guide=\"true\""));
+        assert!(html.contains("Notifications are currently blocked by your browser"));
+        assert!(html.contains("Automated alerts are paused"));
+        assert!(html.contains("opacity-50"));
     }
 }
