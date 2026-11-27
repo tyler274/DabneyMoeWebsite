@@ -1,74 +1,44 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-26T04:36:58Z",
+  "generated_at": "2026-11-27T02:06:23Z",
   "website": {
     "repo": "DabneyMoeWebsite",
-    "revision": "c80c5ad47d46f6e0510ae4f57123d6a80e2e71fd",
-    "short_revision": "c80c5ad",
-    "commit_timestamp": "2026-11-26T04:36:58Z",
-    "total_files": 197,
-    "total_lines": 45536,
-    "tyler_lines": 45536,
+    "revision": "8251e2c46a9a0ca5668d48803de33fee0459c7a7",
+    "short_revision": "8251e2c",
+    "commit_timestamp": "2026-11-27T02:06:23Z",
+    "total_files": 213,
+    "total_lines": 57654,
+    "tyler_lines": 57654,
     "tyler_pct": 100.0,
     "external_lines": 0
   },
   "upstream": {
     "name": "dabney-moe",
-    "revision": "b1ffa981f4f18796ebf25ad41b1f425cdb843024",
-    "short_revision": "b1ffa981f",
-    "commit_timestamp": "2026-11-26T04:32:42Z",
-    "source_files": 1644,
-    "source_lines": 661326,
-    "source_tyler_lines": 622856,
-    "source_tyler_pct": 94.2,
-    "source_provenance_adjusted_pct": 95.2,
+    "revision": "ad5951c746ac3bb3483061b63daa63e4f23f4d40",
+    "short_revision": "ad5951c74",
+    "commit_timestamp": "2026-11-27T01:59:52Z",
+    "source_files": 1878,
+    "source_lines": 690643,
+    "source_tyler_lines": 690643,
+    "source_tyler_pct": 100.0,
+    "source_provenance_adjusted_pct": 100.0,
     "patients_files": 469,
-    "patients_lines": 198686,
-    "patients_tyler_lines": 177864,
-    "combined_files": 2113,
-    "combined_lines": 860012,
-    "combined_tyler_lines": 800720,
-    "combined_tyler_pct": 93.1,
+    "patients_lines": 467796,
+    "patients_tyler_lines": 467796,
+    "combined_files": 2347,
+    "combined_lines": 1158439,
+    "combined_tyler_lines": 1158439,
+    "combined_tyler_pct": 100.0,
     "authors": [
       {
         "author": "Tyler Port",
-        "label": "Tyler Port — Combined Surviving Lines (b1ffa981f)",
-        "detail": "622,856 source lines (94.2%) + 177,864 clean-room patient lines (800,720 combined; 95.2% provenance-adjusted source)",
-        "source_lines": 622856,
-        "patients_lines": 177864,
-        "combined_lines": 800720,
-        "pct": 93.1,
+        "label": "Tyler Port — Combined Surviving Lines (ad5951c74)",
+        "detail": "690,643 source lines (100.0%) + 467,796 clean-room patient lines (1,158,439 combined; 100.0% provenance-adjusted source)",
+        "source_lines": 690643,
+        "patients_lines": 467796,
+        "combined_lines": 1158439,
+        "pct": 100.0,
         "color": "#22d3ee"
-      },
-      {
-        "author": "Dev Patale",
-        "label": "Dev Patale (remaining mixed/docs & diff tokens)",
-        "detail": "32,912 source lines · down from 122,840 (-73.2%) + 20,822 coincidental patient JSON matches (3.04M legacy patients purged)",
-        "source_lines": 32912,
-        "patients_lines": 20822,
-        "combined_lines": 53734,
-        "pct": 6.2,
-        "color": "#f59e0b"
-      },
-      {
-        "author": "Elijah Gwynn",
-        "label": "Elijah Gwynn (remaining mixed/diff tokens)",
-        "detail": "4,624 source lines · down from 14,865 (-68.9%)",
-        "source_lines": 4624,
-        "patients_lines": 0,
-        "combined_lines": 4624,
-        "pct": 0.5,
-        "color": "#a78bfa"
-      },
-      {
-        "author": "Other",
-        "label": "Other / Automated Dependency Updates",
-        "detail": "934 lines (automated lockfile & dependency bot updates)",
-        "source_lines": 934,
-        "patients_lines": 0,
-        "combined_lines": 934,
-        "pct": 0.1,
-        "color": "#64748b"
       }
     ],
     "tiers": [
@@ -76,28 +46,28 @@
         "key": "reclaimed",
         "label": "Reclaimed Clean-Room · REA reimplemented crates, docs & patients/",
         "count": 14,
-        "examples": "patients/, harness, clinical-library, ui, public-site, patient-bank, verification/, boundaries, ui-gallery, extension-popup, agent-skills, gmail, nix/, intent/",
+        "examples": "patients/, patient-bank, harness, clinical-library, public-site, ui, verification/, boundaries, ui-gallery, extension-popup, agent-skills, gmail, nix/, intent/",
         "color": "#22d3ee"
       },
       {
         "key": "tier1_2",
         "label": "Tier 1 & 2 · >=90% Tyler-authored crates & ops",
-        "count": 39,
-        "examples": "local-product, physician-sample, workspace-tools, duet-api, physician-app, infra/, scripts/, front-door, physician-demo-api, physician-demo-db, physician-auth, duet-app, +27 more",
+        "count": 52,
+        "examples": "local-product, physician-sample, workspace-tools, mobile-api, physician-app, infra/, .agents/, scripts/, root configs, front-door, physician-demo-api, physician-demo-db, +40 more",
         "color": "#34d399"
       },
       {
         "key": "tier3",
         "label": "Tier 3 · 50–89.9% mixed multi-contributor areas",
-        "count": 6,
-        "examples": ".agents/, root configs, .github/, skills/, .claude/, .githooks/",
+        "count": 0,
+        "examples": "None",
         "color": "#fbbf24"
       },
       {
         "key": "tier4",
         "label": "Tier 4 · <50% remaining config/doc areas (0 runtime crates)",
-        "count": 1,
-        "examples": ".cargo/",
+        "count": 0,
+        "examples": "None",
         "color": "#fb7185"
       }
     ]
@@ -124,8 +94,8 @@
     {
       "label": "Standalone dabney-moe workspace (combined source + patients/)",
       "before_pct": 14.4,
-      "after_pct": 93.1,
-      "note": "Chinese-wall REA clean-room rewrites across 14 areas + 469 patient files (93.1% combined; 94.2% raw / 95.2% provenance-adjusted source)"
+      "after_pct": 100.0,
+      "note": "Chinese-wall REA clean-room rewrites across 14 areas + 469 patient files (100.0% combined; 100.0% raw / 100.0% provenance-adjusted source)"
     }
   ],
   "replacement_ledger": [
@@ -194,9 +164,15 @@
       "removed": "Last 3 Tier-3 Rust crates (physician-wire, physician-auth, mobile) + 56 multi-author app, client, API, extension, book & ops files",
       "replacement": "Two-stage Chinese-wall REA rewrites (149 Evidence JSONs; 100% of 38 Rust crates >=90% Tyler or Reclaimed; full workspace Clippy host+wasm32 & all PG 16 + 5/5 Chromium suites PASS)",
       "owner": "100% clean-room @tyler274"
+    },
+    {
+      "category": "Standalone workspace Wave 5A+5B & Curie/Moleworks rebase (ad5951c74)",
+      "removed": "Final 285 unrewritten files across physician-app, local-product, physician-sample, 26 tail Rust crates, infra/gcp, workflows & skills (0 remaining external lines)",
+      "replacement": "Two-stage Chinese-wall REA v6.8.0 rewrites (286 Wave 5 bundles -> 696 cumulative) layered onto the strictly-Tyler Curie/Moleworks export (43 crates, 26/26 Chromium site, 1,143 mdbook links, 0.0% Eli/Dev)",
+      "owner": "100% clean-room @tyler274"
     }
   ],
-  "total_bundles": 410,
+  "total_bundles": 696,
   "rea_evidence": [
     {
       "operation": "inspect_sqlite_database",
@@ -275,6 +251,18 @@
       "evidence_id": "ev_e950677700db44e8ab2f54415365bdcd0efefdece9a34817e2f2a0637660b119",
       "bundles": 45,
       "scope": "Black-box specs for 30 ops/config/book/extension/script files (dev/ 98.1%, extension/ 97.2%, scripts/ 97.0%, book/ 91.2%; 1,157 lychee links + 11/11 connector + 33/33 CI unit tests PASS)"
+    },
+    {
+      "operation": "inspect_rust_binary + capture_process (Wave 5A Apps/Infra/Local/Ops/Skills · 171 bundles)",
+      "evidence_id": "ev_4760d39270db8f4ce977db94fb1be94c443ffd97e6ce2033b128fcf84e21a80b",
+      "bundles": 171,
+      "scope": "Black-box specs for 156 remaining files across physician-app/client, local-product (227/227 tests), infra/gcp (173/173 OpenTofu), ops/Nix (69/69 tests), workflows & skills (124/124) plus in-repo mdbook chapter"
+    },
+    {
+      "operation": "inspect_rust_binary + capture_process (Wave 5B Tail-Rust/Physician-Sample · 115 bundles)",
+      "evidence_id": "ev_8ad69016fd1d7e94fb7c01c8f943b951bc7ffa58d9c59a76856d00b1e8ad4fb4",
+      "bundles": 115,
+      "scope": "Black-box specs for final 129 unrewritten files: 26 tail Rust crates (606/606 unit + 44/44 PG 16) and physician-sample (151/151 unit + 65/65 PG 16 + 33/33 Chromium); rebased onto Curie/Moleworks 43-crate workspace (ad5951c74, 0.0% Eli/Dev)"
     }
   ]
 }
