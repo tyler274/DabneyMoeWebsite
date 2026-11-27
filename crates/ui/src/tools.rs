@@ -3,6 +3,7 @@
 use leptos::prelude::*;
 use leptos_router::components::A;
 
+use crate::i18n::{t, use_locale, Msg};
 use crate::portfolio::{
     analyze_buy, analyze_portfolio, analyze_rebalance, parse_deposit, parse_withdrawal,
     parse_withholding_pct, AccountType, BuyReport, PortfolioImpact, RebalanceReport, SellReport,
@@ -37,6 +38,7 @@ fn fmt_usd(amount: f64) -> String {
 
 #[component]
 pub fn ToolsMenu() -> impl IntoView {
+    let locale = use_locale();
     let open = RwSignal::new(false);
     let toggle = move |_| open.update(|value| *value = !*value);
     let close = move |_| open.set(false);
@@ -50,52 +52,52 @@ pub fn ToolsMenu() -> impl IntoView {
                 aria-haspopup="true"
                 on:click=toggle
             >
-                "Tools"
+                {move || t(locale.get(), Msg::NavTools)}
                 <span class="text-[10px] opacity-70">{move || if open.get() { "▲" } else { "▼" }}</span>
             </button>
             <Show when=move || open.get()>
                 <div
-                    class="absolute right-0 z-50 mt-2 min-w-56 rounded-xl border border-white/10 bg-slate-900 py-2 shadow-xl"
+                    class="absolute end-0 z-50 mt-2 min-w-56 rounded-xl border border-white/10 bg-slate-900 py-2 text-start shadow-xl"
                     role="menu"
                 >
                     <A href="/clinical" on:click=close>
                         <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            "Clinical Workspace"
+                            {move || t(locale.get(), Msg::ToolClinicalSuite)}
                         </span>
                     </A>
                     <A href="/clinical/patient" on:click=close>
                         <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            "Patient Experience Demo"
+                            {move || t(locale.get(), Msg::ToolPatientDemo)}
                         </span>
                     </A>
                     <A href="/clinical/physician" on:click=close>
                         <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            "Physician Workspace Demo"
+                            {move || t(locale.get(), Msg::ToolPhysicianDemo)}
                         </span>
                     </A>
                     <A href="/mental-health" on:click=close>
                         <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            "Mental Health & CGM"
+                            {move || t(locale.get(), Msg::ToolMentalHealth)}
                         </span>
                     </A>
                     <A href="/tools/recovery" on:click=close>
                         <span class="block px-4 py-2 text-emerald-300 transition hover:bg-white/5 hover:text-emerald-200" role="menuitem">
-                            "Recovery Care Finder"
+                            {move || t(locale.get(), Msg::ToolRecoveryFinder)}
                         </span>
                     </A>
                     <A href="/android" on:click=close>
                         <span class="block px-4 py-2 text-emerald-300 transition hover:bg-white/5 hover:text-emerald-200" role="menuitem">
-                            "Android App (F-Droid / APK)"
+                            {move || t(locale.get(), Msg::ToolAndroidApp)}
                         </span>
                     </A>
                     <A href="/tools/investment-account" on:click=close>
                         <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            "Investment Account Calculator"
+                            {move || t(locale.get(), Msg::ToolPortfolio)}
                         </span>
                     </A>
                     <A href="/ownership" on:click=close>
                         <span class="block px-4 py-2 text-slate-200 transition hover:bg-white/5 hover:text-white" role="menuitem">
-                            "Code Ownership Report"
+                            {move || t(locale.get(), Msg::ToolOwnership)}
                         </span>
                     </A>
                 </div>

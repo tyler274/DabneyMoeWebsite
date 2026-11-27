@@ -22,13 +22,14 @@ use crate::chart_citations::{
 use crate::dashboard_layout::{load_layout_prefs, save_layout_prefs, STORAGE_KEY_PHYSICIAN_LAYOUT};
 use crate::dashboard_layout::{
     LayoutDensity, PhysicianFocusOrder, PhysicianLayoutCustomizer, PhysicianLayoutPrefs,
-    SidebarPlacement,
+    PhysicianLayoutPreset, SidebarPlacement,
 };
 use crate::health_bridge::LocalLlmStatusUi;
 #[cfg(any(feature = "csr", feature = "hydrate"))]
 use crate::health_bridge::{
     build_chart_chat_prompt, generate_local_llm, prepare_local_llm, probe_local_llm,
 };
+use crate::i18n::{t, use_locale, Locale, Msg};
 use crate::local_ai_chat::LocalLlmStatusBanner;
 use crate::patient_demo::ClinicalSuiteSwitcher;
 use crate::sections::{Footer, NavBar};
@@ -135,6 +136,7 @@ fn preset_questions_for_patient(patient_id: &str) -> &'static [&'static str] {
 pub fn ClinicalOverviewPage() -> impl IntoView {
     let overview = today_overview();
     let app_mode = use_context::<AppShellMode>().unwrap_or(AppShellMode::Website);
+    let locale = use_locale();
     let container_cls = match app_mode {
         AppShellMode::Website => "mx-auto max-w-5xl px-6 py-12 space-y-12",
         AppShellMode::ClinicalDemoApp => "mx-auto max-w-4xl px-4 pt-6 pb-28 sm:px-6 space-y-8",
@@ -169,7 +171,7 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
                             </p>
                         </div>
                         <h1 class="text-3xl font-bold tracking-tight text-white sm:text-4xl">
-                            "Curie Clinical Workspace"
+                            {move || format!("Curie {}", t(locale.get(), Msg::ToolClinicalSuite))}
                         </h1>
                         <p class="text-base leading-relaxed text-slate-300">
                             "A local-first clinical and patient companion showcase built from scratch: "
@@ -181,26 +183,26 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
                                 href="/clinical/patient"
                                 attr:class="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-6 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
                             >
-                                "Open Curie Mobile (Patient) →"
+                                {move || t(locale.get(), Msg::MhOpenMobile)}
                             </A>
                             <A
                                 href="/clinical/physician"
                                 attr:class="inline-flex items-center gap-2 rounded-full bg-cyan-500 px-6 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
                             >
-                                "Open Curie Clinic (Physician) →"
+                                {move || t(locale.get(), Msg::MhOpenClinic)}
                             </A>
                             <A
                                 href="/mental-health"
                                 attr:class="inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-5 py-2.5 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/20"
                             >
-                                "Mental Health & CGM Tracker"
+                                {move || t(locale.get(), Msg::SuiteMentalHealth)}
                             </A>
                             {(app_mode == AppShellMode::Website).then(|| view! {
                                 <A
                                     href="/android"
                                     attr:class="inline-flex items-center gap-2 rounded-full border border-cyan-400/35 bg-slate-950/70 px-5 py-2.5 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-500/15"
                                 >
-                                    "Install Android App (F-Droid / APK)"
+                                    {move || t(locale.get(), Msg::ToolAndroidApp)}
                                 </A>
                             })}
                         </div>
@@ -218,7 +220,7 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
                 <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                         <p class="text-xs font-semibold uppercase tracking-widest text-emerald-300">
-                            "Synthetic Zero-PHI Guarantee"
+                            {move || t(locale.get(), Msg::ZeroPhiBannerTitle)}
                         </p>
                         <p class="mt-1 text-sm leading-relaxed text-slate-200">
                             {overview.synthetic_notice.clone()}
@@ -226,7 +228,7 @@ pub fn ClinicalOverviewPage() -> impl IntoView {
                         </p>
                     </div>
                     <span class="shrink-0 self-start rounded-full border border-emerald-400/40 bg-slate-950/60 px-3 py-1 text-xs font-semibold text-emerald-300 sm:self-center">
-                        "100% Synthetic"
+                        {move || t(locale.get(), Msg::ZeroPhiBannerBadge)}
                     </span>
                 </div>
             </section>
@@ -382,6 +384,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
     let panel = StoredValue::new(synthetic_panel());
     let overview = today_overview();
     let app_mode = use_context::<AppShellMode>().unwrap_or(AppShellMode::Website);
+    let locale = use_locale();
     let layout_prefs = RwSignal::new(PhysicianLayoutPrefs::default());
     let layout_open = RwSignal::new(false);
     let layout_notice = RwSignal::new(Option::<String>::None);
@@ -622,10 +625,11 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                     </div>
                     <div>
                         <p class="text-xs font-semibold uppercase tracking-widest text-cyan-400">
-                            {format!("Curie Clinic · {} · {}", overview.practice_name, overview.clinic_date)}
+                            {move || t(locale.get(), Msg::PhysicianEyebrow)}
+                            {format!(" · {} · {}", overview.practice_name, overview.clinic_date)}
                         </p>
                         <h1 class="text-2xl font-bold tracking-tight text-white sm:text-3xl">
-                            "Physician Workspace Demo"
+                            {move || t(locale.get(), Msg::PhysicianTitle)}
                         </h1>
                     </div>
                 </div>
@@ -634,19 +638,20 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                         href="/clinical/patient"
                         attr:class="rounded-full border border-emerald-400/35 bg-emerald-500/15 px-4 py-2 font-medium text-emerald-200 transition hover:bg-emerald-500/25"
                     >
-                        "Curie Mobile (Patient)"
+                        {move || t(locale.get(), Msg::SuitePatient)}
                     </A>
                     <A
                         href="/clinical"
-                        attr:class="rounded-full border border-white/15 px-4 py-2 font-medium text-slate-200 transition hover:bg-white/5"
+                        attr:class="inline-flex items-center gap-1 rounded-full border border-white/15 px-4 py-2 font-medium text-slate-200 transition hover:bg-white/5"
                     >
-                        "← Workspace Overview"
+                        <span class="inline-block rtl:rotate-180" aria-hidden="true">"←"</span>
+                        <span>{move || t(locale.get(), Msg::SuiteOverview)}</span>
                     </A>
                     <A
                         href="/mental-health"
                         attr:class="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-4 py-2 font-medium text-emerald-200 transition hover:bg-emerald-500/20"
                     >
-                        "Mental Health & CGM"
+                        {move || t(locale.get(), Msg::SuiteMentalHealth)}
                     </A>
                 </div>
             </header>
@@ -659,12 +664,14 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                 role="status"
             >
                 <p class="text-xs leading-relaxed text-emerald-100 sm:text-sm">
-                    <span class="font-semibold text-emerald-300">"Synthetic Zero-PHI Demo: "</span>
+                    <span class="font-semibold text-emerald-300">
+                        {move || format!("{}: ", t(locale.get(), Msg::ZeroPhiBannerBadge))}
+                    </span>
                     {overview.synthetic_notice.clone()}
                     " Runs locally on your device with zero external services."
                 </p>
                 <span class="rounded-full border border-emerald-400/40 bg-slate-950/60 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-emerald-300">
-                    "Offline-Ready"
+                    {move || t(locale.get(), Msg::OfflineReadyBadge)}
                 </span>
             </div>
 
@@ -675,7 +682,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
             >
                 <div class="flex flex-wrap items-center gap-2 text-xs">
                     <h2 class="font-semibold uppercase tracking-wider text-cyan-300">
-                        "Today's Clinic Queue"
+                        {move || t(locale.get(), Msg::PhysicianTodayQueue)}
                     </h2>
                     <span class="text-slate-400">
                         {format!("· {total_patients} charts · {draft_count} draft replies")}
@@ -683,14 +690,14 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                 </div>
                 <div class="flex flex-wrap items-center gap-1.5 text-xs" role="group" aria-label="Filter patient panel">
                     {[
-                        (PanelFilter::All, format!("All ({total_patients})")),
-                        (PanelFilter::High, format!("High ({high_count})")),
-                        (PanelFilter::Moderate, format!("Moderate ({moderate_count})")),
-                        (PanelFilter::Routine, format!("Routine ({routine_count})")),
-                        (PanelFilter::HasDraft, format!("Drafts ({draft_count})")),
+                        (PanelFilter::All, Msg::PhysicianFilterAll, total_patients),
+                        (PanelFilter::High, Msg::PhysicianFilterHigh, high_count),
+                        (PanelFilter::Moderate, Msg::PhysicianFilterModerate, moderate_count),
+                        (PanelFilter::Routine, Msg::PhysicianFilterRoutine, routine_count),
+                        (PanelFilter::HasDraft, Msg::PhysicianFilterDrafts, draft_count),
                     ]
                     .into_iter()
-                    .map(|(f, label)| {
+                    .map(|(f, msg, count)| {
                         view! {
                             <button
                                 type="button"
@@ -704,7 +711,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                     }
                                 }
                             >
-                                {label}
+                                {move || format!("{} ({count})", t(locale.get(), msg))}
                             </button>
                         }
                     })
@@ -724,7 +731,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                     }
                                     class="min-h-[34px] rounded-full border border-emerald-400/40 bg-emerald-500/15 px-3 py-1 font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
                                 >
-                                    "Show Patient Panel"
+                                    {move || t(locale.get(), Msg::PhysicianShowPanel)}
                                 </button>
                             }
                         })
@@ -741,7 +748,22 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                             }
                         }
                     >
-                        {move || format!("Layout: {} ▾", layout_prefs.get().active_label())}
+                        {move || {
+                            let loc = locale.get();
+                            let preset_label = match layout_prefs.get().preset {
+                                Some(PhysicianLayoutPreset::FocusedTriage) => {
+                                    t(loc, Msg::LayoutPresetFocusedTriage)
+                                }
+                                Some(PhysicianLayoutPreset::ChartFirstSplit) => {
+                                    t(loc, Msg::LayoutPresetChartFirstSplit)
+                                }
+                                Some(PhysicianLayoutPreset::CalmReading) => {
+                                    t(loc, Msg::LayoutPresetCalmReading)
+                                }
+                                None => t(loc, Msg::LayoutCustomLabel),
+                            };
+                            format!("{}: {} ▾", t(loc, Msg::LayoutButtonPrefix), preset_label)
+                        }}
                     </button>
                 </div>
             </section>
@@ -810,18 +832,18 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                     <div class="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
                         <div class="mb-3 flex items-center justify-between gap-2">
                             <h2 class="text-xs font-semibold uppercase tracking-widest text-slate-400">
-                                "Patient Panel"
+                                {move || t(locale.get(), Msg::PhysicianPatientPanel)}
                             </h2>
                             <span class="text-[11px] text-slate-500">{format!("{total_patients} total")}</span>
                         </div>
                         <div class="mb-3">
                             <label for="physician-panel-search" class="sr-only">
-                                "Filter patients by name, MRN, or focus"
+                                {move || t(locale.get(), Msg::PhysicianSearchPlaceholder)}
                             </label>
                             <input
                                 id="physician-panel-search"
                                 type="search"
-                                placeholder="Find patient by name, MRN, or focus…"
+                                placeholder=move || t(locale.get(), Msg::PhysicianSearchPlaceholder)
                                 prop:value=move || panel_search.get()
                                 on:input=move |ev| panel_search.set(event_target_value(&ev))
                                 class="min-h-[38px] w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-cyan-400 focus:outline-none"
@@ -848,7 +870,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                     if visible.is_empty() {
                                         return view! {
                                             <p class="rounded-xl border border-white/10 bg-slate-950/50 p-3 text-xs text-slate-400">
-                                                "No charts match this filter."
+                                                {move || t(locale.get(), Msg::PhysicianNoMatch)}
                                             </p>
                                         }
                                         .into_any();
@@ -898,9 +920,9 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                                     on:click=move |_| select_patient(pid_click.clone())
                                                     class=move || {
                                                         if selected_id.get() == pid_active {
-                                                            "w-full rounded-xl border border-cyan-400/60 bg-cyan-500/10 p-3.5 text-left transition"
+                                                            "w-full rounded-xl border border-cyan-400/60 bg-cyan-500/10 p-3.5 text-start transition"
                                                         } else {
-                                                            "w-full rounded-xl border border-white/10 bg-slate-950/50 p-3.5 text-left transition hover:border-white/25 hover:bg-white/[0.03]"
+                                                            "w-full rounded-xl border border-white/10 bg-slate-950/50 p-3.5 text-start transition hover:border-white/25 hover:bg-white/[0.03]"
                                                         }
                                                     }
                                                 >
@@ -985,22 +1007,30 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                     aria-label="Chart sections"
                                     class="order-1 flex flex-wrap items-center gap-1.5 rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-xs"
                                 >
-                                    <span class="pr-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                                        "Jump to:"
+                                    <span class="pe-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                                        {move || t(locale.get(), Msg::PhysicianJumpTo)}
                                     </span>
-                                    <a href="#chart-summary" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-cyan-400/40 hover:text-white">"Summary"</a>
+                                    <a href="#chart-summary" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-cyan-400/40 hover:text-white">
+                                        {move || t(locale.get(), Msg::PhysicianJumpSummary)}
+                                    </a>
                                     {move || layout_prefs.get().show_qa.then(|| view! {
-                                        <a href="#chart-qa" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-cyan-400/40 hover:text-white">"Chart Q&A"</a>
+                                        <a href="#chart-qa" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-cyan-400/40 hover:text-white">
+                                            {move || t(locale.get(), Msg::PhysicianJumpQa)}
+                                        </a>
                                     })}
                                     {move || layout_prefs.get().show_clinical_grid.then(|| view! {
-                                        <a href="#chart-clinical" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-emerald-400/40 hover:text-white">"Problems & Meds"</a>
+                                        <a href="#chart-clinical" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-emerald-400/40 hover:text-white">
+                                            {move || t(locale.get(), Msg::PhysicianJumpClinical)}
+                                        </a>
                                     })}
                                     {move || (has_reply_draft && layout_prefs.get().show_reply_draft).then(|| view! {
-                                        <a href="#chart-reply" class="rounded-full border border-amber-400/30 bg-amber-500/10 px-2.5 py-1 font-medium text-amber-200 transition hover:bg-amber-500/20">"Proposed Reply"</a>
+                                        <a href="#chart-reply" class="rounded-full border border-amber-400/30 bg-amber-500/10 px-2.5 py-1 font-medium text-amber-200 transition hover:bg-amber-500/20">
+                                            {move || t(locale.get(), Msg::PhysicianJumpReply)}
+                                        </a>
                                     })}
                                     {move || layout_prefs.get().show_source_records.then(|| view! {
                                         <a href="#chart-records" class="rounded-full border border-white/10 px-2.5 py-1 text-slate-200 transition hover:border-white/30 hover:text-white">
-                                            {format!("Source Records ({rec_total})")}
+                                            {move || format!("{} ({rec_total})", t(locale.get(), Msg::PhysicianJumpRecords))}
                                         </a>
                                     })}
                                 </nav>
@@ -1023,7 +1053,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                             </p>
                                         </div>
                                         {patient.visit.clone().map(|slot| view! {
-                                            <div class="rounded-xl border border-cyan-400/25 bg-cyan-500/10 px-3.5 py-2 text-right">
+                                            <div class="rounded-xl border border-cyan-400/25 bg-cyan-500/10 px-3.5 py-2 text-end">
                                                 <p class="font-mono text-xs font-semibold text-cyan-300">
                                                     {format!("{} · {}", slot.starts_at, slot.modality)}
                                                 </p>
@@ -1051,10 +1081,10 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                 >
                                     <div>
                                         <p class="text-xs font-semibold uppercase tracking-widest text-cyan-400">
-                                            "Chart-Grounded Q&A"
+                                            {move || t(locale.get(), Msg::PhysicianQaEyebrow)}
                                         </p>
                                         <h3 class="mt-1 text-lg font-semibold text-white">
-                                            "Ask About This Patient's Records"
+                                            {move || t(locale.get(), Msg::PhysicianQaHeading)}
                                         </h3>
                                         <p class="mt-1 text-xs text-slate-400">
                                             "Scoped strictly to "
@@ -1081,7 +1111,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                         <input
                                             type="text"
                                             aria-label="Ask a clinical question about the selected chart"
-                                            placeholder="Ask about labs, CGM trends, medications, or messages..."
+                                            placeholder=move || t(locale.get(), Msg::PhysicianAskPlaceholder)
                                             prop:value=move || question_input.get()
                                             on:input=move |ev| question_input.set(event_target_value(&ev))
                                             class="flex-1 rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-cyan-400/60 focus:outline-none focus:ring-1 focus:ring-cyan-400/50"
@@ -1091,7 +1121,14 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                             disabled=move || llm_thinking.get()
                                             class="rounded-full bg-cyan-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50"
                                         >
-                                            {move || if llm_thinking.get() { "Synthesizing…" } else { "Ask chart" }}
+                                            {move || {
+                                                let loc = locale.get();
+                                                if llm_thinking.get() {
+                                                    t(loc, Msg::PhysicianSynthesizing)
+                                                } else {
+                                                    t(loc, Msg::PhysicianAskButton)
+                                                }
+                                            }}
                                         </button>
                                     </form>
 
@@ -1166,7 +1203,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                 >
                                     <div class="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
                                         <h3 class="text-xs font-semibold uppercase tracking-widest text-cyan-300">
-                                            "Problems"
+                                            {move || t(locale.get(), Msg::PhysicianProblems)}
                                         </h3>
                                         <ul class="mt-3 space-y-2.5">
                                             {patient
@@ -1195,7 +1232,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
 
                                     <div class="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
                                         <h3 class="text-xs font-semibold uppercase tracking-widest text-emerald-300">
-                                            "Active Medications"
+                                            {move || t(locale.get(), Msg::PhysicianMedications)}
                                         </h3>
                                         <ul class="mt-3 space-y-2.5">
                                             {patient
@@ -1222,7 +1259,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
 
                                     <div class="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
                                         <h3 class="text-xs font-semibold uppercase tracking-widest text-amber-300">
-                                            "Follow-Ups"
+                                            {move || t(locale.get(), Msg::PhysicianFollowUps)}
                                         </h3>
                                         <ul class="mt-3 space-y-2.5">
                                             {patient
@@ -1292,7 +1329,7 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                     <div class="flex flex-wrap items-center justify-between gap-2">
                                         <div>
                                             <h3 class="text-lg font-semibold text-white">
-                                                "Longitudinal Source Records"
+                                                {move || t(locale.get(), Msg::PhysicianSourceRecords)}
                                             </h3>
                                             <p class="text-xs text-slate-400">
                                                 "Labs, CGM summaries, progress notes, imaging, and inbound messages. Records cited by the active Q&A response are highlighted."
@@ -1302,6 +1339,17 @@ pub fn PhysicianWorkspacePage() -> impl IntoView {
                                             {format!("{} records", patient.records.len())}
                                         </span>
                                     </div>
+                                    {move || {
+                                        let loc = locale.get();
+                                        (loc != Locale::En).then(|| view! {
+                                            <p
+                                                role="note"
+                                                class="rounded-xl border border-cyan-400/25 bg-cyan-500/10 px-3.5 py-2 text-xs text-cyan-100"
+                                            >
+                                                {t(loc, Msg::CitationSourceLanguageNote)}
+                                            </p>
+                                        })
+                                    }}
                                     <div class="space-y-3">
                                         {patient
                                             .records
@@ -1348,6 +1396,7 @@ fn GroundedAnswerView(
     records: Vec<ChartRecord>,
     on_select_record: Callback<String>,
 ) -> impl IntoView {
+    let locale = use_locale();
     let record_map: HashMap<String, ChartRecord> = records
         .iter()
         .cloned()
@@ -1376,9 +1425,19 @@ fn GroundedAnswerView(
             />
 
             <div class="space-y-2.5">
-                <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                    "Cited Source Records"
-                </p>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                        {move || t(locale.get(), Msg::CitationCitedRecordsHeading)}
+                    </p>
+                    {move || {
+                        let loc = locale.get();
+                        (loc != Locale::En).then(|| view! {
+                            <span class="text-[11px] text-cyan-200/85">
+                                {t(loc, Msg::CitationSourceLanguageNote)}
+                            </span>
+                        })
+                    }}
+                </div>
                 <div class="grid gap-2.5 sm:grid-cols-2">
                     {answer
                         .citations
@@ -1597,6 +1656,7 @@ fn SourceRecordCard(
     is_focused: bool,
     on_clear_focus: Callback<()>,
 ) -> impl IntoView {
+    let locale = use_locale();
     let anchor_id = record_anchor_id("chart-record", &record.id);
     let kind_cls = record_kind_badge_class(record.kind);
     let container_cls = if is_focused {
@@ -1627,7 +1687,7 @@ fn SourceRecordCard(
                     })}
                     {is_focused.then(|| view! {
                         <span class="rounded-full border border-cyan-300/60 bg-cyan-400/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-cyan-100">
-                            "Focused from citation"
+                            {move || t(locale.get(), Msg::CitationFocusedBadge)}
                         </span>
                     })}
                 </div>
@@ -1638,14 +1698,14 @@ fn SourceRecordCard(
                                 href="#chart-qa"
                                 class="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-cyan-200 transition hover:border-cyan-300 hover:bg-cyan-500/25 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
                             >
-                                "Back to Q&A ↑"
+                                {move || t(locale.get(), Msg::PhysicianBackToQa)}
                             </a>
                             <button
                                 type="button"
                                 on:click=move |_| on_clear_focus.run(())
                                 class="rounded-full border border-white/15 bg-slate-950/70 px-2.5 py-0.5 text-[11px] font-medium text-slate-200 transition hover:border-white/30 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
                             >
-                                "Clear"
+                                {move || t(locale.get(), Msg::PhysicianClearFocus)}
                             </button>
                         </div>
                     })}

@@ -11,6 +11,8 @@ use std::collections::HashMap;
 use clinical_workspace::{ChartRecord, ChatCitation, RecordKind};
 use leptos::prelude::*;
 
+use crate::i18n::{t, use_locale, Locale, Msg};
+
 /// Visual accent palette for citation badges, cards, and tooltips.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CitationAccent {
@@ -31,8 +33,8 @@ impl CitationAccent {
 
     const fn badge_tooltip_open_class(self) -> &'static str {
         match self {
-            Self::Cyan => "pointer-events-auto absolute bottom-full left-1/2 z-50 mb-2 block w-72 max-w-[85vw] -translate-x-1/2 rounded-xl border border-cyan-400/40 bg-slate-950/95 p-3 text-left text-[11px] font-normal not-italic normal-case tracking-normal leading-relaxed text-slate-100 shadow-2xl shadow-black/60 backdrop-blur sm:w-80",
-            Self::Emerald => "pointer-events-auto absolute bottom-full left-1/2 z-50 mb-2 block w-72 max-w-[85vw] -translate-x-1/2 rounded-xl border border-emerald-400/40 bg-slate-950/95 p-3 text-left text-[11px] font-normal not-italic normal-case tracking-normal leading-relaxed text-slate-100 shadow-2xl shadow-black/60 backdrop-blur sm:w-80",
+            Self::Cyan => "pointer-events-auto absolute bottom-full left-1/2 z-50 mb-2 block w-72 max-w-[85vw] -translate-x-1/2 rounded-xl border border-cyan-400/40 bg-slate-950/95 p-3 text-start text-[11px] font-normal not-italic normal-case tracking-normal leading-relaxed text-slate-100 shadow-2xl shadow-black/60 backdrop-blur sm:w-80",
+            Self::Emerald => "pointer-events-auto absolute bottom-full left-1/2 z-50 mb-2 block w-72 max-w-[85vw] -translate-x-1/2 rounded-xl border border-emerald-400/40 bg-slate-950/95 p-3 text-start text-[11px] font-normal not-italic normal-case tracking-normal leading-relaxed text-slate-100 shadow-2xl shadow-black/60 backdrop-blur sm:w-80",
         }
     }
 
@@ -52,8 +54,8 @@ impl CitationAccent {
 
     const fn card_link_class(self) -> &'static str {
         match self {
-            Self::Cyan => "group block rounded-xl border border-cyan-400/40 bg-cyan-500/[0.08] p-3 text-left transition hover:border-cyan-300/70 hover:bg-cyan-500/[0.14] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400",
-            Self::Emerald => "group block rounded-xl border border-emerald-400/40 bg-emerald-500/[0.08] p-3 text-left transition hover:border-emerald-300/70 hover:bg-emerald-500/[0.14] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400",
+            Self::Cyan => "group block rounded-xl border border-cyan-400/40 bg-cyan-500/[0.08] p-3 text-start transition hover:border-cyan-300/70 hover:bg-cyan-500/[0.14] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400",
+            Self::Emerald => "group block rounded-xl border border-emerald-400/40 bg-emerald-500/[0.08] p-3 text-start transition hover:border-emerald-300/70 hover:bg-emerald-500/[0.14] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400",
         }
     }
 
@@ -77,8 +79,8 @@ impl CitationAccent {
 
     const fn card_tooltip_open_class(self) -> &'static str {
         match self {
-            Self::Cyan => "pointer-events-auto absolute bottom-full left-1/2 z-50 mb-2 w-72 max-w-[90vw] -translate-x-1/2 rounded-xl border border-cyan-400/40 bg-slate-950/95 p-3 text-left text-[11px] font-normal leading-relaxed text-slate-100 shadow-2xl shadow-black/60 backdrop-blur sm:w-80",
-            Self::Emerald => "pointer-events-auto absolute bottom-full left-1/2 z-50 mb-2 w-72 max-w-[90vw] -translate-x-1/2 rounded-xl border border-emerald-400/40 bg-slate-950/95 p-3 text-left text-[11px] font-normal leading-relaxed text-slate-100 shadow-2xl shadow-black/60 backdrop-blur sm:w-80",
+            Self::Cyan => "pointer-events-auto absolute bottom-full left-1/2 z-50 mb-2 w-72 max-w-[90vw] -translate-x-1/2 rounded-xl border border-cyan-400/40 bg-slate-950/95 p-3 text-start text-[11px] font-normal leading-relaxed text-slate-100 shadow-2xl shadow-black/60 backdrop-blur sm:w-80",
+            Self::Emerald => "pointer-events-auto absolute bottom-full left-1/2 z-50 mb-2 w-72 max-w-[90vw] -translate-x-1/2 rounded-xl border border-emerald-400/40 bg-slate-950/95 p-3 text-start text-[11px] font-normal leading-relaxed text-slate-100 shadow-2xl shadow-black/60 backdrop-blur sm:w-80",
         }
     }
 }
@@ -337,6 +339,7 @@ fn render_citation_badge(
     scope: &str,
     context_text: &str,
 ) -> impl IntoView {
+    let locale = use_locale();
     let open = RwSignal::new(false);
     let anchor = record_anchor_id(anchor_prefix, &record.id);
     let href = format!("#{anchor}");
@@ -441,7 +444,19 @@ fn render_citation_badge(
                     </span>
                 })}
                 <span class="mt-2 block text-[11px] leading-relaxed text-slate-200">{excerpt}</span>
-                <span class=accent.tooltip_cta_class()>"Click to jump to source record ↓"</span>
+                {move || {
+                    let loc = locale.get();
+                    (loc != Locale::En).then(|| {
+                        view! {
+                            <span class="mt-1.5 block text-[10px] italic text-slate-400">
+                                {t(loc, Msg::CitationSourceLanguageNote)}
+                            </span>
+                        }
+                    })
+                }}
+                <span class=accent.tooltip_cta_class()>
+                    {move || t(locale.get(), Msg::CitationClickToJump)}
+                </span>
             </span>
         </span>
     }
@@ -558,6 +573,7 @@ pub fn CitationCardLink(
     #[prop(optional)] on_select: Option<Callback<String>>,
     #[prop(optional)] scope: &'static str,
 ) -> impl IntoView {
+    let locale = use_locale();
     let open = RwSignal::new(false);
     let anchor = record_anchor_id(anchor_prefix, &citation.record_id);
     let href = format!("#{anchor}");
@@ -635,16 +651,28 @@ pub fn CitationCardLink(
                 </div>
                 <p class="mt-1.5 text-xs font-semibold text-white">
                     {title_card}
-                    <span class="ml-1.5 font-mono font-normal text-slate-400">
+                    <span class="ms-1.5 font-mono font-normal text-slate-400">
                         {recorded_at_card}
                     </span>
                 </p>
                 <p class="mt-1 text-xs leading-relaxed text-slate-300">{excerpt}</p>
+                {move || {
+                    let loc = locale.get();
+                    (loc != Locale::En).then(|| {
+                        view! {
+                            <p class="mt-1.5 text-[10px] italic text-slate-400">
+                                {t(loc, Msg::CitationSourceLanguageNote)}
+                            </p>
+                        }
+                    })
+                }}
                 <div class="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-1.5">
                     <span class="font-mono text-[10px] text-slate-400">
                         {source_label_card.unwrap_or_else(|| kind_label.to_string())}
                     </span>
-                    <span class=accent.card_cta_class()>"Jump to source record ↓"</span>
+                    <span class=accent.card_cta_class()>
+                        {move || t(locale.get(), Msg::CitationJumpToSource)}
+                    </span>
                 </div>
             </a>
 
@@ -686,7 +714,19 @@ pub fn CitationCardLink(
                             .collect_view()}
                     </div>
                 })}
-                <p class=accent.tooltip_cta_class()>"Click to jump to source record ↓"</p>
+                {move || {
+                    let loc = locale.get();
+                    (loc != Locale::En).then(|| {
+                        view! {
+                            <p class="mt-1.5 text-[10px] italic text-slate-400">
+                                {t(loc, Msg::CitationSourceLanguageNote)}
+                            </p>
+                        }
+                    })
+                }}
+                <p class=accent.tooltip_cta_class()>
+                    {move || t(locale.get(), Msg::CitationClickToJump)}
+                </p>
             </div>
         </div>
     }
@@ -977,5 +1017,62 @@ mod tests {
             tooltip_ids.len(),
             "tooltip DOM IDs must be unique across all rendered citation components: {tooltip_ids:?}"
         );
+    }
+
+    #[test]
+    fn non_english_locale_shows_source_language_note_and_localized_actions() {
+        let nadia = synthetic_panel().into_iter().next().expect("nadia chart");
+        let rec = nadia.records[0].clone();
+        let cite = ChatCitation {
+            record_id: rec.id.clone(),
+            title: rec.title.clone(),
+            recorded_at: rec.recorded_at.clone(),
+            kind: rec.kind,
+            excerpt: rec.body.clone(),
+        };
+
+        let en_owner = Owner::new();
+        let en_html = en_owner.with(|| {
+            provide_context(RwSignal::new(Locale::En));
+            view! {
+                <div>
+                    <CitationBadgeLink record=rec.clone() anchor_prefix="chart-record" />
+                    <CitationCardLink
+                        citation=cite.clone()
+                        record=Some(rec.clone())
+                        anchor_prefix="patient-record"
+                        accent=CitationAccent::Emerald
+                    />
+                </div>
+            }
+            .to_html()
+        });
+        drop(en_owner);
+        assert!(!en_html.contains(t(Locale::En, Msg::CitationSourceLanguageNote)));
+        assert!(en_html.contains(t(Locale::En, Msg::CitationClickToJump)));
+        assert!(en_html.contains(t(Locale::En, Msg::CitationJumpToSource)));
+        assert!(en_html.contains("text-start"));
+        assert!(!en_html.contains("text-left"));
+
+        let ar_owner = Owner::new();
+        let ar_html = ar_owner.with(|| {
+            provide_context(RwSignal::new(Locale::Ar));
+            view! {
+                <div>
+                    <CitationBadgeLink record=rec.clone() anchor_prefix="chart-record" />
+                    <CitationCardLink
+                        citation=cite
+                        record=Some(rec)
+                        anchor_prefix="patient-record"
+                        accent=CitationAccent::Emerald
+                    />
+                </div>
+            }
+            .to_html()
+        });
+        drop(ar_owner);
+        assert!(ar_html.contains(t(Locale::Ar, Msg::CitationSourceLanguageNote)));
+        assert!(ar_html.contains(t(Locale::Ar, Msg::CitationClickToJump)));
+        assert!(ar_html.contains(t(Locale::Ar, Msg::CitationJumpToSource)));
     }
 }
