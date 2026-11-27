@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-27T02:06:23Z",
+  "generated_at": "2026-11-27T04:39:47Z",
   "website": {
     "repo": "DabneyMoeWebsite",
     "revision": "8251e2c46a9a0ca5668d48803de33fee0459c7a7",
@@ -14,29 +14,29 @@
   },
   "upstream": {
     "name": "dabney-moe",
-    "revision": "ad5951c746ac3bb3483061b63daa63e4f23f4d40",
-    "short_revision": "ad5951c74",
-    "commit_timestamp": "2026-11-27T01:59:52Z",
-    "source_files": 1878,
-    "source_lines": 690643,
-    "source_tyler_lines": 690643,
+    "revision": "ea5e400a528a3e437b352a1ed3adf870dfb8fd19",
+    "short_revision": "ea5e400a5",
+    "commit_timestamp": "2026-11-27T04:39:47Z",
+    "source_files": 1882,
+    "source_lines": 701047,
+    "source_tyler_lines": 701047,
     "source_tyler_pct": 100.0,
     "source_provenance_adjusted_pct": 100.0,
     "patients_files": 469,
-    "patients_lines": 467796,
-    "patients_tyler_lines": 467796,
-    "combined_files": 2347,
-    "combined_lines": 1158439,
-    "combined_tyler_lines": 1158439,
+    "patients_lines": 681307,
+    "patients_tyler_lines": 681307,
+    "combined_files": 2351,
+    "combined_lines": 1382354,
+    "combined_tyler_lines": 1382354,
     "combined_tyler_pct": 100.0,
     "authors": [
       {
         "author": "Tyler Port",
-        "label": "Tyler Port — Combined Surviving Lines (ad5951c74)",
-        "detail": "690,643 source lines (100.0%) + 467,796 clean-room patient lines (1,158,439 combined; 100.0% provenance-adjusted source)",
-        "source_lines": 690643,
-        "patients_lines": 467796,
-        "combined_lines": 1158439,
+        "label": "Tyler Port — Combined Surviving Lines (ea5e400a5)",
+        "detail": "701,047 source lines (100.0%) + 681,307 clean-room patient lines (1,382,354 combined; 100.0% provenance-adjusted source)",
+        "source_lines": 701047,
+        "patients_lines": 681307,
+        "combined_lines": 1382354,
         "pct": 100.0,
         "color": "#22d3ee"
       }
@@ -53,7 +53,7 @@
         "key": "tier1_2",
         "label": "Tier 1 & 2 · >=90% Tyler-authored crates & ops",
         "count": 52,
-        "examples": "local-product, physician-sample, workspace-tools, mobile-api, physician-app, infra/, .agents/, scripts/, root configs, front-door, physician-demo-api, physician-demo-db, +40 more",
+        "examples": "local-product, physician-sample, workspace-tools, mobile-api, physician-app, infra/, .agents/, scripts/, ancestry, root configs, physician-demo-api, front-door, +40 more",
         "color": "#34d399"
       },
       {
