@@ -209,7 +209,7 @@ async fn fetch_page_cached(client: &reqwest::Client, cache: &DiskCache, url: &st
     let resp = match req.send().await {
         Ok(r) => r,
         Err(_) => {
-            // Cache negative fetch briefly as status 0? No — fall back to stale if available.
+            // Cache negative fetch briefly as status 0? No, fall back to stale if available.
             if let Some(prev) = stale {
                 return PageFetch::Hit(prev.value);
             }
@@ -481,7 +481,7 @@ pub fn extract_staff_credentials_from_text(text: &str) -> Vec<StaffLicense> {
         };
     }
 
-    // Check DO credential suffixes (e.g. "John Doe, D.O." or "John Doe, DO" — strictly separate from MD!)
+    // Check DO credential suffixes (e.g. "John Doe, D.O." or "John Doe, DO", strictly separate from MD!)
     for m in re_cred_do().find_iter(text) {
         let matched = m.as_str();
         let broad = context_window(text, m.start(), m.end(), 140).to_ascii_lowercase();

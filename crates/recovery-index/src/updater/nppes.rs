@@ -14,8 +14,11 @@ use std::time::Duration;
 use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 
-use crate::schema::{DataSource, EnrichmentMeta, Facility, StaffLicense};
+use crate::schema::{
+    DataSource, EnrichmentMeta, Facility, ProviderRole, StaffArrangement, StaffLicense,
+};
 use crate::updater::cache::{CacheMode, DiskCache};
+use crate::updater::network::ProviderObservation;
 
 const NPPES_API_URL: &str = "https://npiregistry.cms.hhs.gov/api/";
 const NPPES_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
@@ -28,11 +31,19 @@ const NPPES_PACE_DELAY: Duration = Duration::from_millis(150);
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CachedNppesProvider {
     pub npi: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_name: Option<String>,
     pub credential: String,
     pub taxonomies: Vec<String>,
     pub taxonomy_descs: Vec<String>,
     pub street_norm: Option<(String, String)>,
     pub phone_digits: Option<String>,
+    /// Additional secondary practice addresses from NPPES `practiceLocations` / `addresses`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_streets: Vec<(String, String)>,
+    /// Additional practice phone numbers from NPPES `practiceLocations` / `addresses`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_phones: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,12 +62,18 @@ struct NppesResult {
     basic: NppesBasic,
     #[serde(default)]
     addresses: Vec<NppesAddress>,
+    #[serde(default, rename = "practiceLocations")]
+    practice_locations: Vec<NppesAddress>,
     #[serde(default)]
     taxonomies: Vec<NppesTaxonomy>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct NppesBasic {
+    #[serde(default)]
+    first_name: Option<String>,
+    #[serde(default)]
+    last_name: Option<String>,
     #[serde(default)]
     credential: Option<String>,
     #[serde(default)]
@@ -85,15 +102,20 @@ struct NppesTaxonomy {
 pub struct NppesMatchSummary {
     pub licenses: Vec<StaffLicense>,
     pub matched_providers: u32,
+    pub matched_records: Vec<(String, Option<String>, String, StaffLicense)>,
 }
 
-/// Enriches a slice of facilities using cached ZIP-level NPPES queries.
-/// Returns `(cache_hits, network_fetches, facilities_enriched)`.
+/// Enriches a slice of facilities using cached ZIP-level NPPES queries and returns
+/// `(cache_hits, network_fetches, facilities_enriched, provider_observations)`.
+///
+/// For any NPI matched across 2+ facilities whose display name wasn't present in an older ZIP cache,
+/// performs a polite cached NPI detail lookup (`?version=2.1&number=<NPI>`) to resolve the
+/// clinician's full name and secondary `practiceLocations` across the state.
 pub async fn enrich_facilities_with_nppes(
     client: &reqwest::Client,
     cache: &DiskCache,
     facilities: &mut [Facility],
-) -> (usize, usize, usize) {
+) -> (usize, usize, usize, Vec<ProviderObservation>) {
     // Deduplicate `(state, zip)` pairs across all facilities so each ZIP is queried at most once.
     let mut zip_providers: HashMap<(String, String), Vec<CachedNppesProvider>> = HashMap::new();
     let mut unique_zips: Vec<(String, String)> = Vec::new();
@@ -160,11 +182,16 @@ pub async fn enrich_facilities_with_nppes(
     let net_fetches = net_fetches.load(Ordering::Relaxed);
 
     let mut enriched_count = 0usize;
+    let mut observations: Vec<ProviderObservation> = Vec::new();
+    let mut npi_facility_counts: HashMap<String, (BTreeSet<String>, StaffLicense)> = HashMap::new();
+    let mut npi_missing_name: BTreeSet<String> = BTreeSet::new();
+
     for f in facilities.iter_mut() {
         let key = (f.address.state.clone(), f.address.zip.clone());
         let Some(providers) = zip_providers.get(&key) else {
             continue;
         };
+        let fid = f.stable_id();
         let summary = match_facility_providers(f, providers);
         if summary.matched_providers > 0 && !summary.licenses.is_empty() {
             for lic in summary.licenses {
@@ -178,10 +205,160 @@ pub async fn enrich_facilities_with_nppes(
             meta.add_source(DataSource::Nppes);
             meta.nppes_provider_count = Some(summary.matched_providers);
             enriched_count += 1;
+
+            for (npi, full_name, cred, lic) in summary.matched_records {
+                npi_facility_counts
+                    .entry(npi.clone())
+                    .or_insert_with(|| (BTreeSet::new(), lic))
+                    .0
+                    .insert(fid.clone());
+                if full_name.is_none() {
+                    npi_missing_name.insert(npi.clone());
+                }
+                let display_name = match full_name {
+                    Some(name) if !cred.trim().is_empty() => format!("{name}, {}", cred.trim()),
+                    Some(name) => name,
+                    None => format!("NPI {npi}"),
+                };
+                observations.push(ProviderObservation {
+                    id: format!("npi-{npi}"),
+                    name: display_name,
+                    organization: None,
+                    npi: Some(npi),
+                    role: ProviderRole::Clinical(lic),
+                    arrangement_hint: StaffArrangement::Dedicated,
+                    facility_id: fid.clone(),
+                    source: DataSource::Nppes,
+                    notes: None,
+                });
+            }
         }
     }
 
-    (cache_hits, net_fetches, enriched_count)
+    // Prioritize resolving human-readable display names for the highest-impact shared prescribers
+    // and multi-site clinicians first (most sites served, prescribers ahead of non-prescribers).
+    let mut shared_ranked: Vec<(usize, bool, String)> = npi_facility_counts
+        .iter()
+        .filter(|(npi, (fids, _))| fids.len() >= 2 && npi_missing_name.contains(*npi))
+        .map(|(npi, (fids, lic))| (fids.len(), lic.is_prescriber(), npi.clone()))
+        .collect();
+    shared_ranked.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| b.1.cmp(&a.1))
+            .then_with(|| a.2.cmp(&b.2))
+    });
+    let shared_needing_names: Vec<String> =
+        shared_ranked.into_iter().map(|(_, _, npi)| npi).collect();
+
+    if !shared_needing_names.is_empty() {
+        let resolved_names = resolve_shared_npi_details(client, cache, &shared_needing_names).await;
+        for obs in &mut observations {
+            if let Some(npi) = &obs.npi {
+                if let Some((name, cred)) = resolved_names.get(npi) {
+                    obs.name = if cred.trim().is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{name}, {}", cred.trim())
+                    };
+                }
+            }
+        }
+    }
+
+    (cache_hits, net_fetches, enriched_count, observations)
+}
+
+async fn resolve_shared_npi_details(
+    client: &reqwest::Client,
+    cache: &DiskCache,
+    npis: &[String],
+) -> HashMap<String, (String, String)> {
+    let mut out = HashMap::new();
+    let mut to_fetch = Vec::new();
+    for npi in npis {
+        let key = format!("npi-detail-{npi}");
+        if let Some(hit) = cache.get::<(String, String)>("nppes", &key, NPPES_TTL) {
+            out.insert(npi.clone(), hit.value);
+        } else if cache.mode() != CacheMode::Offline {
+            to_fetch.push(npi.clone());
+        }
+    }
+    // Keep name resolution fast & polite even on large states.
+    const MAX_DETAIL_LOOKUPS_PER_RUN: usize = 120;
+    to_fetch.truncate(MAX_DETAIL_LOOKUPS_PER_RUN);
+
+    let fetched: Vec<(String, Option<(String, String)>)> = stream::iter(to_fetch)
+        .map(|npi| async move {
+            tokio::time::sleep(NPPES_PACE_DELAY).await;
+            let key = format!("npi-detail-{npi}");
+            let res = fetch_single_npi_name(client, &npi).await.ok().flatten();
+            if let Some(pair) = &res {
+                let _ = cache.put("nppes", &key, pair, None, None);
+            }
+            (npi, res)
+        })
+        .buffer_unordered(NPPES_CONCURRENCY)
+        .collect()
+        .await;
+
+    for (npi, pair) in fetched {
+        if let Some(pair) = pair {
+            out.insert(npi, pair);
+        }
+    }
+    out
+}
+
+async fn fetch_single_npi_name(
+    client: &reqwest::Client,
+    npi: &str,
+) -> Result<Option<(String, String)>, String> {
+    let url = url::Url::parse_with_params(NPPES_API_URL, &[("version", "2.1"), ("number", npi)])
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|e| e.to_string())?;
+    let body = resp.bytes().await.map_err(|e| e.to_string())?;
+    let parsed: NppesResponse = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
+    let Some(first) = parsed.results.into_iter().next() else {
+        return Ok(None);
+    };
+    let Some(name) = format_person_name(&first.basic) else {
+        return Ok(None);
+    };
+    Ok(Some((name, first.basic.credential.unwrap_or_default())))
+}
+
+fn format_person_name(basic: &NppesBasic) -> Option<String> {
+    let first = basic
+        .first_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+    let last = basic
+        .last_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+    Some(format!("{} {}", title_case(first), title_case(last)))
+}
+
+fn title_case(word: &str) -> String {
+    word.split_whitespace()
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => {
+                    first.to_uppercase().collect::<String>() + &chars.as_str().to_ascii_lowercase()
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 async fn fetch_zip_providers(
@@ -231,6 +408,20 @@ async fn fetch_zip_providers(
             let phone_digits = location
                 .and_then(|a| a.telephone_number.as_deref())
                 .and_then(normalize_phone10);
+            let mut extra_streets = Vec::new();
+            let mut extra_phones = Vec::new();
+            for addr in r.addresses.iter().chain(r.practice_locations.iter()) {
+                if let Some(st) = addr.address_1.as_deref().and_then(normalize_street_key) {
+                    if Some(&st) != street_norm.as_ref() && !extra_streets.contains(&st) {
+                        extra_streets.push(st);
+                    }
+                }
+                if let Some(ph) = addr.telephone_number.as_deref().and_then(normalize_phone10) {
+                    if Some(&ph) != phone_digits.as_ref() && !extra_phones.contains(&ph) {
+                        extra_phones.push(ph);
+                    }
+                }
+            }
             let taxonomies: Vec<String> =
                 r.taxonomies.iter().filter_map(|t| t.code.clone()).collect();
             let taxonomy_descs: Vec<String> =
@@ -238,11 +429,14 @@ async fn fetch_zip_providers(
 
             all.push(CachedNppesProvider {
                 npi: r.number,
+                full_name: format_person_name(&r.basic),
                 credential: r.basic.credential.unwrap_or_default(),
                 taxonomies,
                 taxonomy_descs,
                 street_norm,
                 phone_digits,
+                extra_streets,
+                extra_phones,
             });
         }
 
@@ -271,17 +465,29 @@ pub fn match_facility_providers(
 
     let mut matched_npis = BTreeSet::new();
     let mut licenses = BTreeSet::new();
+    let mut matched_records = Vec::new();
 
     for prov in providers {
-        let street_match = fac_street.is_some() && prov.street_norm == fac_street;
-        let phone_match = fac_phone.is_some() && prov.phone_digits == fac_phone;
+        let street_match = fac_street.as_ref().is_some_and(|fs| {
+            prov.street_norm.as_ref() == Some(fs) || prov.extra_streets.contains(fs)
+        });
+        let phone_match = fac_phone.as_ref().is_some_and(|fp| {
+            prov.phone_digits.as_ref() == Some(fp) || prov.extra_phones.contains(fp)
+        });
         if !street_match && !phone_match {
             continue;
         }
         if let Some(lic) =
             classify_nppes_provider(&prov.credential, &prov.taxonomies, &prov.taxonomy_descs)
         {
-            matched_npis.insert(prov.npi.as_str());
+            if matched_npis.insert(prov.npi.as_str()) {
+                matched_records.push((
+                    prov.npi.clone(),
+                    prov.full_name.clone(),
+                    prov.credential.clone(),
+                    lic,
+                ));
+            }
             licenses.insert(lic);
         }
     }
@@ -289,6 +495,7 @@ pub fn match_facility_providers(
     NppesMatchSummary {
         licenses: licenses.into_iter().collect(),
         matched_providers: u32::try_from(matched_npis.len()).unwrap_or(u32::MAX),
+        matched_records,
     }
 }
 

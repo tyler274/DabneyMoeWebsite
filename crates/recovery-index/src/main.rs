@@ -9,18 +9,19 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use recovery_index::schema::{
-    Amenity, DietaryOption, ElectronicsPolicy, FoodSituation, SmokingPolicy, StaffLicense,
-    VapingPolicy,
+    Amenity, DietaryOption, ElectronicsPolicy, FoodSituation, ProviderRole, SmokingPolicy,
+    StaffArrangement, StaffLicense, VapingPolicy, WellnessRole,
 };
 use recovery_index::updater::cache::CacheMode;
 use recovery_index::updater::llm::{LlmBackend, LlmConfig};
 use recovery_index::updater::{
-    run_enrich, run_find, run_import, run_rebuild, run_set_override, run_stats, EnrichOptions,
-    ImportOptions, PathsConfig, SetOverrideOptions, UpdaterError,
+    run_add_provider, run_enrich, run_find, run_import, run_network, run_rebuild, run_set_override,
+    run_stats, AddProviderOptions, EnrichOptions, ImportOptions, PathsConfig, SetOverrideOptions,
+    UpdaterError,
 };
 
 const USAGE: &str = "\
-recovery-index — Cached in-repo updater for dabney.moe/tools/recovery
+recovery-index: Cached in-repo updater for dabney.moe/tools/recovery
 
 USAGE:
   cargo run -p recovery-index --features cli -- <command> [options]
@@ -54,6 +55,16 @@ COMMANDS:
             [--add-staff CODE]... [--remove-staff CODE]...
             [--notes TEXT] [--evidence-url URL]... [--verify]
 
+  add-provider
+            Map a shared clinician or visiting/contracted specialist (e.g. a visiting PMHNP or
+            local yoga instructor) across facilities in data/recovery/overrides/<ST>.toml.
+            --state ST --name NAME (--clinical CODE | --wellness CODE) --facilities ID1,ID2
+            [--id ID] [--org STUDIO_OR_GROUP] [--npi 10DIGITS]
+            [--arrangement dedicated|shared|visiting] [--notes TEXT]
+
+  network   Inspect the cross-facility shared-staff & visiting-provider network for a state.
+            --state ST [--top N] [--role CODE]
+
   find      Search facilities in a state shard to inspect stable IDs & current enrichment.
             --state ST [--query TEXT] [--limit N]
 
@@ -77,6 +88,8 @@ async fn main() -> ExitCode {
         "enrich" => cmd_enrich(&args[1..]).await,
         "rebuild" => cmd_rebuild(&args[1..]),
         "set" => cmd_set(&args[1..]),
+        "add-provider" => cmd_add_provider(&args[1..]),
+        "network" => cmd_network(&args[1..]),
         "find" => cmd_find(&args[1..]),
         "stats" => cmd_stats(&args[1..]),
         "codes" => {
@@ -343,6 +356,117 @@ fn cmd_set(args: &[String]) -> Result<(), UpdaterError> {
     run_set_override(opts)
 }
 
+fn cmd_add_provider(args: &[String]) -> Result<(), UpdaterError> {
+    let mut paths = PathsConfig::default();
+    let mut state = String::new();
+    let mut id: Option<String> = None;
+    let mut name = String::new();
+    let mut organization: Option<String> = None;
+    let mut npi: Option<String> = None;
+    let mut role: Option<ProviderRole> = None;
+    let mut arrangement = StaffArrangement::Visiting;
+    let mut facility_ids: Vec<String> = Vec::new();
+    let mut notes: Option<String> = None;
+
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--state" => state = next_val(&mut it, "--state")?.to_string(),
+            "--id" => id = Some(next_val(&mut it, "--id")?.to_string()),
+            "--name" => name = next_val(&mut it, "--name")?.to_string(),
+            "--org" => organization = Some(next_val(&mut it, "--org")?.to_string()),
+            "--npi" => npi = Some(next_val(&mut it, "--npi")?.to_string()),
+            "--clinical" => {
+                let code = next_val(&mut it, "--clinical")?;
+                let lic = StaffLicense::from_code(code).ok_or_else(|| {
+                    UpdaterError::Usage(format!("Unknown clinical license `{code}`."))
+                })?;
+                role = Some(ProviderRole::Clinical(lic));
+            }
+            "--wellness" => {
+                let code = next_val(&mut it, "--wellness")?;
+                let w = WellnessRole::from_code(code).ok_or_else(|| {
+                    UpdaterError::Usage(format!("Unknown wellness role `{code}`."))
+                })?;
+                role = Some(ProviderRole::Wellness(w));
+            }
+            "--arrangement" => {
+                let code = next_val(&mut it, "--arrangement")?;
+                arrangement = StaffArrangement::from_code(code).ok_or_else(|| {
+                    UpdaterError::Usage(format!(
+                        "Unknown arrangement `{code}`. Use dedicated, shared, or visiting."
+                    ))
+                })?;
+            }
+            "--facilities" => {
+                for fid in next_val(&mut it, "--facilities")?.split(',') {
+                    let trimmed = fid.trim();
+                    if !trimmed.is_empty() {
+                        facility_ids.push(trimmed.to_string());
+                    }
+                }
+            }
+            "--notes" => notes = Some(next_val(&mut it, "--notes")?.to_string()),
+            "--out" => paths.out_dir = PathBuf::from(next_val(&mut it, "--out")?),
+            "--overrides" => paths.overrides_dir = PathBuf::from(next_val(&mut it, "--overrides")?),
+            other => return Err(UpdaterError::Usage(format!("Unknown flag `{other}`"))),
+        }
+    }
+
+    if state.is_empty() || name.is_empty() || facility_ids.is_empty() {
+        return Err(UpdaterError::Usage(
+            "`add-provider` requires --state ST, --name NAME, --facilities ID1,ID2, and --clinical CODE or --wellness CODE.".to_string(),
+        ));
+    }
+    let role = role.ok_or_else(|| {
+        UpdaterError::Usage(
+            "`add-provider` requires either --clinical CODE or --wellness CODE.".to_string(),
+        )
+    })?;
+
+    run_add_provider(AddProviderOptions {
+        paths,
+        state,
+        id,
+        name,
+        organization,
+        npi,
+        role,
+        arrangement,
+        facility_ids,
+        notes,
+    })
+}
+
+fn cmd_network(args: &[String]) -> Result<(), UpdaterError> {
+    let mut paths = PathsConfig::default();
+    let mut state = String::new();
+    let mut top = 25usize;
+    let mut role: Option<String> = None;
+
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--state" => state = next_val(&mut it, "--state")?.to_string(),
+            "--top" => {
+                let raw = next_val(&mut it, "--top")?;
+                top = raw
+                    .parse()
+                    .map_err(|_| UpdaterError::Usage(format!("Invalid --top `{raw}`")))?;
+            }
+            "--role" => role = Some(next_val(&mut it, "--role")?.to_string()),
+            "--out" => paths.out_dir = PathBuf::from(next_val(&mut it, "--out")?),
+            other => return Err(UpdaterError::Usage(format!("Unknown flag `{other}`"))),
+        }
+    }
+    if state.is_empty() {
+        return Err(UpdaterError::Usage(
+            "`network` requires --state ST.".to_string(),
+        ));
+    }
+    run_network(&paths, &state, top, role.as_deref())
+}
+
 fn cmd_find(args: &[String]) -> Result<(), UpdaterError> {
     let mut paths = PathsConfig::default();
     let mut state = String::new();
@@ -410,8 +534,14 @@ fn print_codes() {
     for v in VapingPolicy::ALL {
         println!("  {:22} {}", v.code(), v.label());
     }
-    println!("\nStaff license types (--add-staff — strictly distinct, never conflated):");
+    println!(
+        "\nStaff license types (--add-staff / --clinical, strictly distinct, never conflated):"
+    );
     for v in StaffLicense::ALL {
+        println!("  {:22} {}", v.code(), v.label());
+    }
+    println!("\nVisiting / wellness roles (--wellness for add-provider):");
+    for v in WellnessRole::ALL {
         println!("  {:22} {}", v.code(), v.label());
     }
 }

@@ -918,8 +918,8 @@ impl StaffLicenseTier {
 
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Physicians => "Physicians (MD vs DO — distinct)",
-            Self::AdvancedPractice => "Advanced Practice (NP / PMHNP / PA — not physicians)",
+            Self::Physicians => "Physicians (MD vs DO, distinct)",
+            Self::AdvancedPractice => "Advanced Practice (NP / PMHNP / PA, not physicians)",
             Self::Psychologists => "Doctoral Psychologists (PhD vs PsyD)",
             Self::TherapistsAndSocialWorkers => "Master's Therapists & Clinical Social Workers",
             Self::NursingAndAddictionSupport => "Nursing & Addiction Support",
@@ -936,7 +936,7 @@ impl StaffLicenseTier {
 /// - `Lcsw`, `LpcLmhc`, and `Lmft` remain separate licenses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum StaffLicense {
-    // Physicians — MD vs DO strictly separated, and psychiatry/addiction separated from general medical
+    // Physicians: MD vs DO strictly separated, and psychiatry/addiction separated from general medical
     #[serde(rename = "md-psychiatrist")]
     MdPsychiatrist,
     #[serde(rename = "do-psychiatrist")]
@@ -950,7 +950,7 @@ pub enum StaffLicense {
     #[serde(rename = "do-physician")]
     DoPhysician,
 
-    // Advanced Practice — strictly distinct from MD/DO psychiatrists and physicians
+    // Advanced Practice: strictly distinct from MD/DO psychiatrists and physicians
     #[serde(rename = "pmhnp")]
     Pmhnp,
     #[serde(rename = "np")]
@@ -1030,23 +1030,23 @@ impl StaffLicense {
 
     pub const fn label(self) -> &'static str {
         match self {
-            Self::MdPsychiatrist => "MD — Psychiatrist",
-            Self::DoPsychiatrist => "DO — Psychiatrist",
-            Self::MdAddiction => "MD — Addiction Medicine",
-            Self::DoAddiction => "DO — Addiction Medicine",
-            Self::MdPhysician => "MD — Physician (Other)",
-            Self::DoPhysician => "DO — Physician (Other)",
-            Self::Pmhnp => "PMHNP — Psychiatric Nurse Practitioner",
-            Self::Np => "NP / APRN — Nurse Practitioner",
-            Self::Pa => "PA / PA-C — Physician Assistant",
-            Self::PhdPsychologist => "PhD — Psychologist",
-            Self::PsydPsychologist => "PsyD — Psychologist",
-            Self::Lcsw => "LCSW — Clinical Social Worker",
-            Self::LpcLmhc => "LPC / LMHC — Professional Counselor",
-            Self::Lmft => "LMFT — Marriage & Family Therapist",
-            Self::Rn => "RN — Registered Nurse",
-            Self::Lpn => "LPN / LVN — Licensed Practical Nurse",
-            Self::AddictionCounselor => "LADC / CADC — Addiction Counselor",
+            Self::MdPsychiatrist => "MD (Psychiatrist)",
+            Self::DoPsychiatrist => "DO (Psychiatrist)",
+            Self::MdAddiction => "MD (Addiction Medicine)",
+            Self::DoAddiction => "DO (Addiction Medicine)",
+            Self::MdPhysician => "MD (Physician, Other)",
+            Self::DoPhysician => "DO (Physician, Other)",
+            Self::Pmhnp => "PMHNP (Psychiatric Nurse Practitioner)",
+            Self::Np => "NP / APRN (Nurse Practitioner)",
+            Self::Pa => "PA / PA-C (Physician Assistant)",
+            Self::PhdPsychologist => "PhD (Psychologist)",
+            Self::PsydPsychologist => "PsyD (Psychologist)",
+            Self::Lcsw => "LCSW (Clinical Social Worker)",
+            Self::LpcLmhc => "LPC / LMHC (Professional Counselor)",
+            Self::Lmft => "LMFT (Marriage & Family Therapist)",
+            Self::Rn => "RN (Registered Nurse)",
+            Self::Lpn => "LPN / LVN (Licensed Practical Nurse)",
+            Self::AddictionCounselor => "LADC / CADC (Addiction Counselor)",
             Self::PeerSupport => "Peer Support Specialist",
         }
     }
@@ -1095,6 +1095,225 @@ impl StaffLicense {
         let trimmed = code.trim();
         Self::ALL.iter().copied().find(|v| v.code() == trimmed)
     }
+
+    pub const fn is_physician(self) -> bool {
+        matches!(
+            self,
+            Self::MdPsychiatrist
+                | Self::DoPsychiatrist
+                | Self::MdAddiction
+                | Self::DoAddiction
+                | Self::MdPhysician
+                | Self::DoPhysician
+        )
+    }
+
+    pub const fn is_prescriber(self) -> bool {
+        self.is_physician() || matches!(self, Self::Pmhnp | Self::Np | Self::Pa)
+    }
+}
+
+/// Non-clinical / wellness / contracted specialty roles often shared across clinics and rehabs
+/// in a metro area (e.g. a local yoga studio instructor serving multiple Phoenix/Scottsdale programs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum WellnessRole {
+    #[serde(rename = "yoga-instructor")]
+    YogaInstructor,
+    #[serde(rename = "fitness-trainer")]
+    FitnessTrainer,
+    #[serde(rename = "equine-specialist")]
+    EquineSpecialist,
+    #[serde(rename = "art-music-therapist")]
+    ArtMusicTherapist,
+    #[serde(rename = "culinary-chef")]
+    CulinaryChef,
+    #[serde(rename = "dietitian")]
+    DietitianNutritionist,
+    #[serde(rename = "bodywork")]
+    AcupuncturistMassage,
+    #[serde(rename = "recreation-therapist")]
+    RecreationTherapist,
+    #[serde(rename = "chaplain")]
+    SpiritualChaplain,
+}
+
+impl WellnessRole {
+    pub const ALL: &'static [Self] = &[
+        Self::YogaInstructor,
+        Self::FitnessTrainer,
+        Self::EquineSpecialist,
+        Self::ArtMusicTherapist,
+        Self::CulinaryChef,
+        Self::DietitianNutritionist,
+        Self::AcupuncturistMassage,
+        Self::RecreationTherapist,
+        Self::SpiritualChaplain,
+    ];
+
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::YogaInstructor => "yoga-instructor",
+            Self::FitnessTrainer => "fitness-trainer",
+            Self::EquineSpecialist => "equine-specialist",
+            Self::ArtMusicTherapist => "art-music-therapist",
+            Self::CulinaryChef => "culinary-chef",
+            Self::DietitianNutritionist => "dietitian",
+            Self::AcupuncturistMassage => "bodywork",
+            Self::RecreationTherapist => "recreation-therapist",
+            Self::SpiritualChaplain => "chaplain",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::YogaInstructor => "Yoga / Meditation Instructor",
+            Self::FitnessTrainer => "Fitness / Personal Trainer",
+            Self::EquineSpecialist => "Equine / Animal Specialist",
+            Self::ArtMusicTherapist => "Art / Music Therapist",
+            Self::CulinaryChef => "Chef / Culinary Service",
+            Self::DietitianNutritionist => "Dietitian / Nutritionist",
+            Self::AcupuncturistMassage => "Acupuncture / Massage",
+            Self::RecreationTherapist => "Recreation / Adventure Guide",
+            Self::SpiritualChaplain => "Spiritual / Chaplaincy",
+        }
+    }
+
+    pub fn from_code(code: &str) -> Option<Self> {
+        let trimmed = code.trim();
+        Self::ALL.iter().copied().find(|v| v.code() == trimmed)
+    }
+}
+
+/// Strictly separated provider role: either an exact clinical license or a wellness/specialty role.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "code")]
+pub enum ProviderRole {
+    #[serde(rename = "clinical")]
+    Clinical(StaffLicense),
+    #[serde(rename = "wellness")]
+    Wellness(WellnessRole),
+}
+
+impl ProviderRole {
+    pub const fn short_label(self) -> &'static str {
+        match self {
+            Self::Clinical(lic) => lic.short_label(),
+            Self::Wellness(w) => w.label(),
+        }
+    }
+
+    pub const fn is_clinical(self) -> bool {
+        matches!(self, Self::Clinical(_))
+    }
+
+    pub const fn is_prescriber(self) -> bool {
+        matches!(self, Self::Clinical(lic) if lic.is_prescriber())
+    }
+}
+
+/// How a clinician or wellness provider works with the facilities they serve.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
+pub enum StaffArrangement {
+    /// Practices exclusively at one facility.
+    #[default]
+    #[serde(rename = "dedicated")]
+    Dedicated,
+    /// Practices at two or more facilities in the region.
+    #[serde(rename = "shared")]
+    Shared,
+    /// Visiting or contracted provider rotating across multiple clinics/rehabs.
+    #[serde(rename = "visiting")]
+    Visiting,
+}
+
+impl StaffArrangement {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Dedicated => "dedicated",
+            Self::Shared => "shared",
+            Self::Visiting => "visiting",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Dedicated => "Dedicated",
+            Self::Shared => "Shared across sites",
+            Self::Visiting => "Visiting / contracted",
+        }
+    }
+
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code.trim().to_ascii_lowercase().as_str() {
+            "dedicated" => Some(Self::Dedicated),
+            "shared" => Some(Self::Shared),
+            "visiting" | "contracted" => Some(Self::Visiting),
+            _ => None,
+        }
+    }
+}
+
+/// A shared, visiting, or curated provider/instructor in a state's cross-facility network.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkProvider {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub npi: Option<String>,
+    pub role: ProviderRole,
+    pub arrangement: StaffArrangement,
+    #[serde(default)]
+    pub facility_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<DataSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+}
+
+/// Per-facility summary of dedicated vs shared/visiting staff so families can compare care models.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StaffingProfile {
+    /// Matched clinical staff who only appear at this single facility.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub dedicated_clinicians: u32,
+    /// Matched clinical staff who also practice at other facilities in the state.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub shared_clinicians: u32,
+    /// Single-site MD/DO physicians (psychiatrists, addiction med, or general physicians).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub dedicated_physicians: u32,
+    /// Shared/visiting prescribers (MD/DO/PMHNP/NP/PA practicing across 2+ facilities).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub shared_prescribers: u32,
+    /// Visiting/contracted wellness or specialty providers (yoga, equine, culinary, etc.).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub visiting_specialists: u32,
+    /// Provider IDs in `StateCatalog::staff_network` linked to this facility.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub network_provider_ids: Vec<String>,
+    /// Count of distinct peer facilities in this state that share at least one provider with this facility.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub shared_with_facilities: u32,
+}
+
+impl StaffingProfile {
+    pub fn is_empty(&self) -> bool {
+        self.dedicated_clinicians == 0
+            && self.shared_clinicians == 0
+            && self.dedicated_physicians == 0
+            && self.shared_prescribers == 0
+            && self.visiting_specialists == 0
+            && self.network_provider_ids.is_empty()
+            && self.shared_with_facilities == 0
+    }
+}
+
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
 }
 
 /// Where an enriched attribute came from.
@@ -1303,6 +1522,9 @@ pub struct Facility {
     /// Exact clinical staff license types present at this facility.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub staff_licenses: Vec<StaffLicense>,
+    /// Dedicated vs shared/visiting staffing summary and links into `StateCatalog::staff_network`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staffing_profile: Option<StaffingProfile>,
     /// Provenance & freshness metadata for enriched fields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enrichment: Option<EnrichmentMeta>,
@@ -1431,6 +1653,9 @@ pub struct StateCatalog {
     pub state: String,
     pub retrieved: String,
     pub facilities: Vec<Facility>,
+    /// Cross-facility network of shared clinicians and visiting/contracted specialists in this state.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub staff_network: Vec<NetworkProvider>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
