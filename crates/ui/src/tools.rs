@@ -77,18 +77,23 @@ pub fn ToolsMenu(open: RwSignal<OpenNavMenu>) -> impl IntoView {
 
 #[component]
 pub fn InvestmentAccountPage() -> impl IntoView {
-    use crate::sections::NavBar;
+    use crate::sections::{CrestSize, DabneyCrestBadge, NavBar};
 
     view! {
         <NavBar />
         <section class="border-b border-white/5 px-6 py-20">
             <div class="mx-auto max-w-4xl">
-                <p class="mb-2 text-sm font-semibold uppercase tracking-widest text-cyan-400">
-                    "Tools"
-                </p>
-                <h1 class="mb-3 text-3xl font-bold tracking-tight text-white sm:text-4xl">
-                    "Investment Account Calculator"
-                </h1>
+                <div class="mb-4 flex items-center gap-3.5">
+                    <DabneyCrestBadge size=CrestSize::Md decorative=true />
+                    <div>
+                        <p class="text-sm font-semibold uppercase tracking-widest text-cyan-400">
+                            "Tools"
+                        </p>
+                        <h1 class="text-3xl font-bold tracking-tight text-white sm:text-4xl">
+                            "Investment Account Calculator"
+                        </h1>
+                    </div>
+                </div>
                 <p class="mb-10 max-w-2xl text-lg leading-relaxed text-slate-300">
                     "Upload a Raymond James portfolio CSV. Choose sell, buy, or quarterly rebalance-"
                     "everything runs in your browser and your file never leaves this device."

@@ -134,6 +134,10 @@ pub struct PersonalVaultSnapshotUi {
     pub checkins_json: Option<String>,
     pub notes_json: Option<String>,
     pub chat_history_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passport_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roi_requests_json: Option<String>,
 }
 
 /// Partial update merged into `personal_vault_save`.
@@ -152,6 +156,10 @@ pub struct PersonalVaultSaveUi {
     pub notes_json: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_history_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passport_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roi_requests_json: Option<String>,
 }
 
 /// Availability classification of the native on-device LLM backend.
@@ -212,6 +220,16 @@ pub struct LocalLlmGenerateUi {
     pub latency_ms: u64,
 }
 
+/// One executed local tool step attached to a [`LocalChatTurn`] so the user can
+/// inspect exactly which local computations grounded a CGM & mood answer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalToolTraceStep {
+    pub tool_name: String,
+    pub label: String,
+    pub status: String,
+    pub summary: String,
+}
+
 /// A single local chat exchange persisted inside the encrypted personal vault.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalChatTurn {
@@ -221,6 +239,127 @@ pub struct LocalChatTurn {
     pub engine_label: String,
     pub latency_ms: Option<u64>,
     pub grounding_facts: Vec<String>,
+    /// Ordered trace of local Rust tools executed to ground this turn.
+    /// Defaults to empty when restoring older encrypted vault snapshots.
+    #[serde(default)]
+    pub tool_steps: Vec<LocalToolTraceStep>,
+}
+
+/// Produce a deterministic, auditable tool-execution trace describing which
+/// local CGM & mood computations grounded a `/mental-health` chat turn.
+#[must_use]
+pub fn build_cgm_agent_steps(
+    question: &str,
+    monitor: GlucoseMonitor,
+    summary: Option<&ClinicalGlucoseSummary>,
+    diagnostics: Option<&GlucoseImportDiagnostics>,
+    checkins: &[MentalHealthCheckIn],
+    used_aicore: bool,
+) -> Vec<LocalToolTraceStep> {
+    let q = question.to_ascii_lowercase();
+    let mut steps = Vec::new();
+
+    if let Some(s) = summary {
+        steps.push(LocalToolTraceStep {
+            tool_name: "cgm_window_metrics".to_string(),
+            label: "Compute CGM window metrics".to_string(),
+            status: "ok".to_string(),
+            summary: format!(
+                "{} · {} readings · Mean {:.0} mg/dL · GMI {:.1}% · TIR {:.0}% · CV {:.1}%",
+                monitor.display_name(),
+                s.reading_count,
+                s.mean_mg_dl,
+                s.gmi_percent,
+                s.tir_70_180_pct,
+                s.cv_percent,
+            ),
+        });
+
+        let mut peak_hours: Vec<_> = s.agp_hourly.iter().filter(|h| h.count > 0).collect();
+        peak_hours.sort_by(|a, b| b.p50.total_cmp(&a.p50));
+        if let Some(top) = peak_hours.first() {
+            steps.push(LocalToolTraceStep {
+                tool_name: "agp_24h_peaks".to_string(),
+                label: "Scan 24h AGP hourly peaks".to_string(),
+                status: "ok".to_string(),
+                summary: format!(
+                    "Peak {:02}:00 local (median {:.0}, p95 {:.0} mg/dL) · {} spike(s) >140 mg/dL",
+                    top.hour, top.p50, top.p95, s.spike_readings_gt_140
+                ),
+            });
+        }
+    } else {
+        steps.push(LocalToolTraceStep {
+            tool_name: "cgm_window_metrics".to_string(),
+            label: "Compute CGM window metrics".to_string(),
+            status: "empty".to_string(),
+            summary: "No glucose readings loaded yet.".to_string(),
+        });
+    }
+
+    if let Some(d) = diagnostics {
+        steps.push(LocalToolTraceStep {
+            tool_name: "import_validation".to_string(),
+            label: "Check sensor cadence & caps".to_string(),
+            status: "ok".to_string(),
+            summary: format!(
+                "{} parsed across {:.1}d · median {:.1}m · {} cap sentinel(s)",
+                d.parsed_readings,
+                d.span_hours / 24.0,
+                d.median_interval_minutes.unwrap_or(0.0),
+                d.bounded_sentinels,
+            ),
+        });
+    }
+
+    let mentions_mood = q.contains("mood")
+        || q.contains("anxiety")
+        || q.contains("sleep")
+        || q.contains("phq")
+        || q.contains("gad")
+        || q.contains("mental")
+        || q.contains("doctor")
+        || q.contains("visit");
+    if mentions_mood || !checkins.is_empty() {
+        let status = if checkins.is_empty() { "empty" } else { "ok" };
+        let summary_text = if checkins.is_empty() {
+            "No local mood or anxiety check-ins logged yet.".to_string()
+        } else {
+            let avg_mood =
+                checkins.iter().map(|c| f64::from(c.mood)).sum::<f64>() / checkins.len() as f64;
+            let avg_anx =
+                checkins.iter().map(|c| f64::from(c.anxiety)).sum::<f64>() / checkins.len() as f64;
+            format!(
+                "Correlated {} check-in(s) · avg mood {:.1}/10 · avg anxiety {:.1}/10",
+                checkins.len(),
+                avg_mood,
+                avg_anx
+            )
+        };
+        steps.push(LocalToolTraceStep {
+            tool_name: "mood_checkin_lookup".to_string(),
+            label: "Correlate local mood check-ins".to_string(),
+            status: status.to_string(),
+            summary: summary_text,
+        });
+    }
+
+    steps.push(LocalToolTraceStep {
+        tool_name: if used_aicore {
+            "aicore_gemini_nano".to_string()
+        } else {
+            "rust_grounded_synth".to_string()
+        },
+        label: if used_aicore {
+            "Synthesize on-device with Gemini Nano".to_string()
+        } else {
+            "Synthesize grounded answer in local Rust".to_string()
+        },
+        status: "ok".to_string(),
+        summary: "Zero cloud egress; numbers restricted to computed local metrics.".to_string(),
+    });
+
+    steps
 }
 
 /// Build a compact, strictly factual on-device LLM prompt grounded in the user's
@@ -884,6 +1023,33 @@ mod tests {
             &checkins,
         );
         assert!(mood_ans.contains("average mood"));
+
+        let steps = build_cgm_agent_steps(
+            "How do mood and anxiety line up?",
+            import.monitor,
+            Some(&summary),
+            Some(&import.diagnostics),
+            &checkins,
+            false,
+        );
+        assert!(steps.iter().any(|s| s.tool_name == "cgm_window_metrics"));
+        assert!(steps.iter().any(|s| s.tool_name == "agp_24h_peaks"));
+        assert!(steps.iter().any(|s| s.tool_name == "mood_checkin_lookup"));
+        assert!(steps.iter().any(|s| s.tool_name == "rust_grounded_synth"));
+
+        // Older encrypted vault turns serialized without `tool_steps` still deserialize cleanly.
+        let legacy_turn: LocalChatTurn = serde_json::from_str(
+            r#"{
+                "id": "cgm-chat-1",
+                "question": "Summarize my glucose",
+                "answer": "Mean 104 mg/dL",
+                "engine_label": "Grounded Rust · On-Device",
+                "latency_ms": null,
+                "grounding_facts": ["TIR 96%"]
+            }"#,
+        )
+        .unwrap();
+        assert!(legacy_turn.tool_steps.is_empty());
     }
 
     #[test]

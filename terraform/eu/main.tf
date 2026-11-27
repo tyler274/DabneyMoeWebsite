@@ -4,7 +4,7 @@
 #           SSR site, the forge, Radicle, Postgres, Valkey, Attic, Pocket ID).
 #   Tier 0: a scale-to-zero Scaleway (FR) Serverless Container for dabney-web,
 #           with images in Scaleway Container Registry.
-# coda-rust's infra/eu adds the Coda records (app, api, coda via git-pages,
+# dabney-moe's infra/eu adds the Curie records (app, api, curie via git-pages,
 # mail) to the zone this root creates; the host lists must stay disjoint.
 
 locals {
@@ -13,7 +13,7 @@ locals {
     root       = "dabney-moe-website-terraform-eu"
   }
 
-  hosts      = distinct(concat(var.vps_hosts, var.coda_on_vps ? ["coda"] : []))
+  hosts      = distinct(concat(var.vps_hosts, var.curie_on_vps ? ["curie"] : []))
   vps_hosts  = var.enable_vps ? toset(local.hosts) : toset([])
   serverless = var.serverless_image != ""
 

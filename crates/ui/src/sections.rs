@@ -276,6 +276,64 @@ fn close_nav_menus_on_dismiss(open: RwSignal<OpenNavMenu>, mobile_open: RwSignal
     }
 }
 
+/// Canonical path to the crisp 512x512 Dabney.moe minimalist heraldic crest app icon.
+pub const DABNEY_APP_ICON: &str = "/favicon.png";
+
+/// Typed size scale for [`DabneyCrestBadge`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CrestSize {
+    /// Compact `24x24` mark for footers and inline pills.
+    Xs,
+    /// `32x32` squircle for sticky navigation bars.
+    Sm,
+    /// `44x44` squircle for project cards and floating showcase pills.
+    Md,
+    /// `64x64` hero emblem for page headers and 404 states.
+    Lg,
+}
+
+impl CrestSize {
+    const fn frame_class(self) -> &'static str {
+        match self {
+            Self::Xs => "h-6 w-6 rounded-md",
+            Self::Sm => "h-8 w-8 rounded-lg",
+            Self::Md => "h-11 w-11 rounded-xl",
+            Self::Lg => "h-16 w-16 rounded-2xl",
+        }
+    }
+}
+
+/// Framed squircle badge displaying the new Dabney.moe minimalist heraldic crest
+/// app icon on its native `#01081b` midnight field with emerald rim lighting.
+#[component]
+pub fn DabneyCrestBadge(
+    size: CrestSize,
+    #[prop(default = true)] decorative: bool,
+    #[prop(default = DABNEY_APP_ICON)] src: &'static str,
+) -> impl IntoView {
+    let frame_cls = format!(
+        "inline-flex shrink-0 items-center justify-center overflow-hidden border border-emerald-400/40 bg-[#01081b] shadow-sm shadow-emerald-500/20 transition group-hover:border-cyan-300/60 {}",
+        size.frame_class()
+    );
+    let alt = if decorative {
+        ""
+    } else {
+        "Dabney.moe heraldic elephant crest"
+    };
+    let aria_hidden = decorative.then_some("true");
+
+    view! {
+        <span class=frame_cls aria-hidden=aria_hidden>
+            <img
+                src=src
+                alt=alt
+                class="h-full w-full object-cover"
+                decoding="async"
+            />
+        </span>
+    }
+}
+
 #[component]
 pub fn NavBar() -> impl IntoView {
     let app_mode = use_context::<AppShellMode>().unwrap_or(AppShellMode::Website);
@@ -290,24 +348,31 @@ pub fn NavBar() -> impl IntoView {
     close_nav_menus_on_dismiss(open_menu, mobile_open);
 
     view! {
-        <header class="sticky top-0 z-50 border-b border-white/5 bg-slate-950/70 backdrop-blur">
-            <nav class="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-                <a href="/#top" class="text-lg font-semibold tracking-tight text-white" on:click=close_mobile>
-                    "Tyler Port"
-                    <span class="text-cyan-400">"."</span>
+        <header class="sticky top-0 z-50 border-b border-white/5 bg-slate-950/75 backdrop-blur">
+            <nav class="mx-auto flex max-w-5xl items-center justify-between gap-4 px-6 py-3.5">
+                <a
+                    href="/#top"
+                    class="group inline-flex shrink-0 items-center gap-2.5 whitespace-nowrap text-lg font-semibold tracking-tight text-white"
+                    on:click=close_mobile
+                >
+                    <DabneyCrestBadge size=CrestSize::Sm decorative=true />
+                    <span class="whitespace-nowrap">
+                        "Tyler Port"
+                        <span class="text-cyan-400">"."</span>
+                    </span>
                 </a>
-                <div class="hidden items-center gap-8 text-sm text-slate-300 md:flex">
-                    <a href="/#about" class="transition hover:text-white">"About"</a>
-                    <a href="/#expertise" class="transition hover:text-white">"Expertise"</a>
-                    <a href="/#services" class="transition hover:text-white">"Services"</a>
-                    <a href="/#projects" class="transition hover:text-white">"Projects"</a>
-                    <a href="/#experience" class="transition hover:text-white">"Experience"</a>
-                    <a href="/#skills" class="transition hover:text-white">"Skills"</a>
+                <div class="hidden items-center gap-4 text-sm text-slate-300 md:flex lg:gap-6">
+                    <a href="/#about" class="whitespace-nowrap transition hover:text-white">"About"</a>
+                    <a href="/#expertise" class="whitespace-nowrap transition hover:text-white">"Expertise"</a>
+                    <a href="/#services" class="whitespace-nowrap transition hover:text-white">"Services"</a>
+                    <a href="/#projects" class="whitespace-nowrap transition hover:text-white">"Projects"</a>
+                    <a href="/#experience" class="whitespace-nowrap transition hover:text-white">"Experience"</a>
+                    <a href="/#skills" class="whitespace-nowrap transition hover:text-white">"Skills"</a>
                     <CommissionsMenu open=open_menu />
                     <ToolsMenu open=open_menu />
                     <a
                         href="/#contact"
-                        class="rounded-full bg-cyan-500 px-4 py-1.5 font-medium text-slate-950 transition hover:bg-cyan-400"
+                        class="shrink-0 whitespace-nowrap rounded-full bg-cyan-500 px-4 py-1.5 font-medium text-slate-950 transition hover:bg-cyan-400"
                     >
                         "Hire me"
                     </a>
@@ -426,7 +491,7 @@ pub fn Hero() -> impl IntoView {
             id="top"
             class="scroll-mt-20 relative overflow-hidden border-b border-white/5 px-6 py-24 sm:py-32"
         >
-            <div class="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60%_50%_at_50%_0%,rgba(34,211,238,0.18),transparent)]"></div>
+            <div class="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(60%_50%_at_50%_0%,rgba(34,211,238,0.16),transparent),radial-gradient(45%_40%_at_82%_60%,rgba(16,185,129,0.12),transparent)]"></div>
             <div class="mx-auto grid max-w-5xl items-center gap-12 lg:grid-cols-[1fr_auto] lg:gap-16">
                 <div>
                     <p class="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-medium uppercase tracking-widest text-cyan-300">
@@ -467,13 +532,30 @@ pub fn Hero() -> impl IntoView {
                     </div>
                 </div>
                 <div class="relative mx-auto w-full max-w-sm lg:max-w-none lg:w-80 xl:w-96">
-                    <div class="absolute -inset-4 rounded-3xl bg-gradient-to-br from-cyan-400/20 to-transparent blur-2xl"></div>
+                    <div class="absolute -inset-4 rounded-3xl bg-gradient-to-br from-emerald-400/20 via-cyan-400/20 to-transparent blur-2xl"></div>
                     <img
                         src=PROFILE_PHOTO
                         alt="Tyler Port standing on sand dunes"
                         class="relative aspect-[3/4] w-full rounded-2xl border border-white/10 object-cover shadow-2xl shadow-cyan-500/10"
                         loading="eager"
                     />
+                    <a
+                        href="/clinical"
+                        class="group relative -mt-8 mx-3 flex items-center gap-3 rounded-2xl border border-emerald-400/35 bg-[#01081b]/95 px-3.5 py-2.5 shadow-xl shadow-black/50 backdrop-blur transition hover:border-cyan-300/60"
+                    >
+                        <DabneyCrestBadge size=CrestSize::Md decorative=true />
+                        <div class="min-w-0 flex-1">
+                            <p class="text-xs font-semibold tracking-tight text-white">
+                                "Dabney.moe"
+                            </p>
+                            <p class="truncate text-[11px] text-slate-300">
+                                "Clinical Workspace & Agentic Demo"
+                            </p>
+                        </div>
+                        <span class="text-xs font-semibold text-emerald-300 transition group-hover:translate-x-0.5 group-hover:text-cyan-300">
+                            "Explore →"
+                        </span>
+                    </a>
                 </div>
             </div>
         </section>
@@ -583,9 +665,14 @@ pub fn Projects() -> impl IntoView {
                     .iter()
                     .map(|p| {
                         view! {
-                            <article class="rounded-2xl border border-white/10 bg-white/[0.02] p-6 transition hover:border-cyan-400/40 hover:bg-white/[0.04]">
-                                <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
-                                    <h3 class="text-lg font-semibold text-white">{p.name}</h3>
+                            <article class="group rounded-2xl border border-white/10 bg-white/[0.02] p-6 transition hover:border-cyan-400/40 hover:bg-white/[0.04]">
+                                <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                                    <div class="flex items-center gap-3">
+                                        {p.icon.map(|icon_src| view! {
+                                            <DabneyCrestBadge size=CrestSize::Md src=icon_src decorative=true />
+                                        })}
+                                        <h3 class="text-lg font-semibold text-white">{p.name}</h3>
+                                    </div>
                                     <div class="flex flex-wrap items-baseline gap-4">
                                         {p.demo_href.map(|demo| {
                                             view! {
@@ -771,7 +858,10 @@ pub fn Footer() -> impl IntoView {
         <footer class="border-t border-white/5 px-6 py-10">
             <div class="mx-auto flex max-w-5xl flex-col items-center gap-2 text-center text-sm text-slate-400">
                 <div class="flex flex-col items-center gap-2 sm:flex-row sm:justify-between sm:gap-4 w-full">
-                    <span>"© 2026 Tyler Port · dabney.moe"</span>
+                    <span class="inline-flex shrink-0 items-center gap-2 whitespace-nowrap">
+                        <DabneyCrestBadge size=CrestSize::Xs decorative=true />
+                        <span>"© 2026 Tyler Port · dabney.moe"</span>
+                    </span>
                     <span class="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
                         <A href="/privacy" attr:class="hover:text-slate-300">"Privacy"</A>
                         <span class="text-slate-700">"·"</span>
@@ -1121,5 +1211,33 @@ mod nav_render_tests {
         assert!(html.contains(r#"aria-expanded="false""#));
         assert!(html.contains(r#"id="nav-trigger-commissions""#));
         assert!(html.contains(r#"id="nav-trigger-tools""#));
+    }
+
+    #[test]
+    fn app_icon_crest_renders_in_navbar_hero_projects_and_footer() {
+        let owner = Owner::new();
+        let html = owner.with(|| {
+            provide_context(RequestUrl::new("/"));
+            crate::consent::provide_consent_context();
+            view! {
+                <Router>
+                    <NavBar />
+                    <Hero />
+                    <Projects />
+                    <Footer />
+                </Router>
+            }
+            .to_html()
+        });
+        drop(owner);
+        // Crest app icon appears in NavBar, Hero showcase pill, Dabney.moe project card, and Footer.
+        assert!(
+            html.matches(DABNEY_APP_ICON).count() >= 4,
+            "expected app icon in NavBar, Hero, Projects, and Footer"
+        );
+        assert!(
+            html.contains("Clinical Workspace &amp; Agentic Demo")
+                || html.contains("Clinical Workspace & Agentic Demo")
+        );
     }
 }

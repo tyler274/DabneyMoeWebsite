@@ -9,6 +9,7 @@
 pub mod activity_snapshot;
 #[cfg(feature = "ssr")]
 pub mod activity_source;
+pub mod agent_chat;
 pub mod analytics;
 pub mod clinical;
 pub mod commissions;
@@ -29,6 +30,7 @@ pub mod mental_health_lingo;
 pub mod mental_health_support;
 pub mod ownership;
 pub mod patient_demo;
+pub mod patient_ehr;
 pub mod portfolio;
 pub mod portfolio_chart;
 pub mod privacy;
@@ -49,7 +51,8 @@ use privacy::PrivacyPage;
 use tools::InvestmentAccountPage;
 
 use sections::{
-    About, Contact, Experience, Expertise, Footer, Hero, NavBar, Projects, Services, Skills,
+    About, Contact, CrestSize, DabneyCrestBadge, Experience, Expertise, Footer, Hero, NavBar,
+    Projects, Services, Skills,
 };
 
 /// Presentation mode shared between the full dabney.moe website and the
@@ -104,6 +107,8 @@ pub fn AppWithMode(mode: AppShellMode) -> impl IntoView {
     view! {
         <Link rel="icon" href="/favicon.svg" type_="image/svg+xml" />
         <Link rel="icon" href="/favicon.png" type_="image/png" />
+        <Link rel="apple-touch-icon" href="/favicon.png" />
+        <Meta name="theme-color" content="#01081b" />
 
         {(!is_demo_app).then(|| view! { <ConsentBanner /> })}
 
@@ -193,7 +198,7 @@ fn OwnerMetadata() -> impl IntoView {
         <Title text="Tyler Port - Freelance Software Engineer" />
         <Meta
             name="description"
-            content="Tyler Port is a Caltech-trained freelance software engineer specializing in Rust, GPU computing, and high-performance systems. Available for contract work."
+            content="Tyler Port is a Caltech-trained software engineer and former Founding Senior Software Engineer at Coda Health (built platform to MVP), specializing in Rust, GPU computing, and high-performance systems."
         />
         <Meta name="author" content="Tyler Alamo Port" />
         <Link rel="canonical" href="https://dabney.moe/" />
@@ -201,7 +206,7 @@ fn OwnerMetadata() -> impl IntoView {
         <Meta property="og:title" content="Tyler Port - Freelance Software Engineer" />
         <Meta
             property="og:description"
-            content="Rust, GPU computing, and high-performance systems. Available for freelance and contract work."
+            content="Former Founding Senior Software Engineer at Coda Health (built platform to MVP). Rust, GPU computing, and high-performance systems. Available for freelance and contract work."
         />
         <Meta property="og:url" content="https://dabney.moe/" />
         <Meta property="og:site_name" content="dabney.moe" />
@@ -211,7 +216,7 @@ fn OwnerMetadata() -> impl IntoView {
         <Meta name="twitter:title" content="Tyler Port - Freelance Software Engineer" />
         <Meta
             name="twitter:description"
-            content="Rust, GPU computing, and high-performance systems. Available for freelance and contract work."
+            content="Former Founding Senior Software Engineer at Coda Health (built platform to MVP). Rust, GPU computing, and high-performance systems. Available for freelance and contract work."
         />
     }
 }
@@ -227,6 +232,9 @@ fn NotFoundPage() -> impl IntoView {
         <NavBar />
         <section class="border-b border-white/5 px-6 py-24">
             <div class="mx-auto max-w-2xl text-center">
+                <div class="mb-5 flex justify-center">
+                    <DabneyCrestBadge size=CrestSize::Lg decorative=false />
+                </div>
                 <p class="text-sm font-semibold uppercase tracking-widest text-cyan-400">"404"</p>
                 <h1 class="mt-2 text-3xl font-bold tracking-tight text-white sm:text-4xl">
                     "Page not found"

@@ -85,8 +85,8 @@ variable "vps_hosts" {
   default     = ["", "www", "git", "cache", "auth"]
 }
 
-variable "coda_on_vps" {
-  description = "Serve coda.dabney.moe from the VPS (selfhost/eu Caddy). Leave false while coda-rust infra/eu points coda at Codeberg git-pages; the two must not both own the name."
+variable "curie_on_vps" {
+  description = "Serve curie.dabney.moe from the VPS (selfhost/eu Caddy). Leave false while dabney-moe infra/eu points curie at Codeberg git-pages; the two must not both own the name."
   type        = bool
   default     = false
 }

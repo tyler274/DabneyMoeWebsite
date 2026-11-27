@@ -575,7 +575,7 @@ async fn multi_repo_shared_secret_routes_second_repo_and_distinct_secret_isolate
                 },
                 RepoConfig {
                     forge: Forge::Dabney,
-                    path: RepoPath::parse("tyler/coda-rust").unwrap(),
+                    path: RepoPath::parse("tyler/dabney-moe").unwrap(),
                     authority: Authority::Canonical,
                     default_branch: "main".into(),
                     secrets: vec![shared.clone()],
@@ -636,7 +636,7 @@ async fn multi_repo_shared_secret_routes_second_repo_and_distinct_secret_isolate
     // Repo 1 and Repo 2 share the same secret; BOTH must sync cleanly.
     for (repo, num, title, delivery) in [
         ("tyler/site", 1, "COD-1: first repo", "mr-1"),
-        ("tyler/coda-rust", 2, "COD-2: second repo", "mr-2"),
+        ("tyler/dabney-moe", 2, "COD-2: second repo", "mr-2"),
     ] {
         let req = send(make_body(repo, num, title), delivery, &shared);
         assert_eq!(

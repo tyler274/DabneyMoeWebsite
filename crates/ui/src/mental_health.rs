@@ -4,16 +4,16 @@ use leptos::prelude::*;
 use leptos_meta::{Link, Meta, Title};
 use leptos_router::components::A;
 
+use crate::health_bridge::{
+    build_cgm_agent_steps, collect_cgm_grounding_facts, synthesize_grounded_cgm_answer,
+    HealthBridgeStatusUi, LocalChatTurn, LocalLlmStatusUi, PersonalVaultStatusUi,
+};
 #[cfg(any(feature = "hydrate", feature = "csr"))]
 use crate::health_bridge::{
     build_personal_cgm_chat_prompt, generate_local_llm, invoke_tauri_command, load_personal_vault,
     prepare_local_llm, probe_local_llm, probe_personal_health_bridge, probe_personal_vault,
     save_personal_vault, wipe_personal_vault, HealthBridgePermissionUi, HealthBridgeReadUi,
     PersonalVaultSaveUi,
-};
-use crate::health_bridge::{
-    collect_cgm_grounding_facts, synthesize_grounded_cgm_answer, HealthBridgeStatusUi,
-    LocalChatTurn, LocalLlmStatusUi, PersonalVaultStatusUi,
 };
 use crate::local_ai_chat::{PersonalCgmAiChatSection, PersonalVaultBar};
 use crate::mental_health_3d::LingoMood3DChart;
@@ -39,7 +39,7 @@ use crate::mental_health_lingo::{
 };
 use crate::mental_health_support::SupportAndClinicianBriefSection;
 use crate::patient_demo::ClinicalSuiteSwitcher;
-use crate::sections::{Footer, NavBar};
+use crate::sections::{CrestSize, DabneyCrestBadge, Footer, NavBar};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ChartViewMode {
@@ -438,6 +438,14 @@ pub fn MentalHealthPage() -> impl IntoView {
             current_diag.as_ref(),
             &current_checkins,
         );
+        let fallback_steps = build_cgm_agent_steps(
+            &trimmed,
+            current_monitor,
+            summary.as_ref(),
+            current_diag.as_ref(),
+            &current_checkins,
+            false,
+        );
 
         let turn_id = format!("cgm-chat-{}", next_chat_seq.get_untracked());
         next_chat_seq.update(|n| *n += 1);
@@ -450,6 +458,14 @@ pub fn MentalHealthPage() -> impl IntoView {
         #[cfg(any(feature = "hydrate", feature = "csr"))]
         if try_aicore {
             let recent = chat_turns.get_untracked();
+            let aicore_steps = build_cgm_agent_steps(
+                &trimmed,
+                current_monitor,
+                summary.as_ref(),
+                current_diag.as_ref(),
+                &current_checkins,
+                true,
+            );
             let prompt = build_personal_cgm_chat_prompt(
                 &trimmed,
                 current_monitor,
@@ -469,6 +485,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                         engine_label: format!("{} · On-Device", gen.model_name),
                         latency_ms: Some(gen.latency_ms),
                         grounding_facts: facts,
+                        tool_steps: aicore_steps,
                     },
                     Err(err) => {
                         chat_error.set(Some(format!(
@@ -481,6 +498,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                             engine_label: "Grounded Rust (AICore fallback)".to_string(),
                             latency_ms: None,
                             grounding_facts: facts,
+                            tool_steps: fallback_steps,
                         }
                     }
                 };
@@ -512,6 +530,7 @@ pub fn MentalHealthPage() -> impl IntoView {
             engine_label: "Grounded Rust · On-Device".to_string(),
             latency_ms: None,
             grounding_facts: facts,
+            tool_steps: fallback_steps,
         };
         chat_turns.update(|list| {
             list.push(turn);
@@ -741,16 +760,19 @@ pub fn MentalHealthPage() -> impl IntoView {
         <div class="mx-auto max-w-5xl px-6 py-12">
             // Hero
             <div class="mb-10 flex flex-col gap-6 border-b border-white/10 pb-8 md:flex-row md:items-end md:justify-between">
-                <div class="max-w-2xl">
-                    <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-cyan-400">
-                        "Dabney.moe · Metabolic Psychiatry & All Commercial CGMs"
-                    </p>
-                    <h1 class="text-3xl font-bold tracking-tight text-white sm:text-4xl">
-                        "Mental Health & Comprehensive Glucose Tracking"
-                    </h1>
-                    <p class="mt-3 text-base leading-relaxed text-slate-300">
-                        "Auto-detect and analyze exports from Abbott Lingo, FreeStyle Libre (LibreView), Dexcom G6/G7/Stelo (Clarity), Medtronic CareLink, Senseonics Eversense, Tandem, Omnipod/Glooko/Tidepool, and fingerstick BGMs in mg/dL or mmol/L—paired with mood, anxiety, PHQ-9, GAD-7, and ASRM locally in pure Rust."
-                    </p>
+                <div class="flex max-w-2xl items-start gap-4">
+                    <DabneyCrestBadge size=CrestSize::Lg decorative=false />
+                    <div>
+                        <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-cyan-400">
+                            "Dabney.moe · Metabolic Psychiatry & All Commercial CGMs"
+                        </p>
+                        <h1 class="text-3xl font-bold tracking-tight text-white sm:text-4xl">
+                            "Mental Health & Comprehensive Glucose Tracking"
+                        </h1>
+                        <p class="mt-3 text-base leading-relaxed text-slate-300">
+                            "Auto-detect and analyze exports from Abbott Lingo, FreeStyle Libre (LibreView), Dexcom G6/G7/Stelo (Clarity), Medtronic CareLink, Senseonics Eversense, Tandem, Omnipod/Glooko/Tidepool, and fingerstick BGMs in mg/dL or mmol/L—paired with mood, anxiety, PHQ-9, GAD-7, and ASRM locally in pure Rust."
+                        </p>
+                    </div>
                 </div>
                 <div class="flex flex-wrap gap-3">
                     <A

@@ -83,7 +83,7 @@
         "key": "tier1_2",
         "label": "Tier 1 & 2 · >=90% Tyler-authored crates & ops",
         "count": 31,
-        "examples": "local-product, physician-sample, workspace-tools, duet-api, physician-app, infra/, front-door, physician-demo-api, physician-demo-db, duet-app, duet-client, duet-health, +19 more",
+        "examples": "local-product, physician-sample, workspace-tools, mobile-api, physician-app, infra/, front-door, physician-demo-api, physician-demo-db, mobile-app, mobile-client, mobile-health, +19 more",
         "color": "#34d399"
       },
       {

@@ -21,15 +21,28 @@ use crate::repo::{self, PathContent, TreeEntryKind};
 pub fn routes() -> Router<App> {
     Router::new()
         .route("/", get(index))
+        .route("/favicon.svg", get(favicon_svg))
         .route("/{owner}/{repo}", get(repository))
         .route("/{owner}/{repo}/pulls", get(pulls))
         .route("/{owner}/{repo}/pull/{number}", get(pull))
 }
 
+const CREST_FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Dabney.moe crest"><rect width="64" height="64" rx="14" fill="#01081b"/><g transform="translate(5.5 3) scale(0.21)"><g fill="none" stroke="#167a3c" stroke-linecap="round" stroke-linejoin="round"><path stroke-width="17" d="M 64 56 C 64 82 88 86 105 80 C 118 75 123 36 154 36 C 180 36 188 54 184 72 C 179 90 152 94 140 82 C 134 75 136 65 144 64"/><path stroke-width="15" d="M 103 82 C 114 88 121 97 123 108"/><path stroke-width="15" d="M 164 87 L 157 108"/></g><path d="M 111 84 C 107 93 97 96 89 94 C 96 99 111 98 117 90 Z" fill="#f8f5e6"/><circle cx="122" cy="65" r="8" fill="#01081b" stroke="#e5c158" stroke-width="3"/><rect x="54" y="27" width="20" height="21" rx="3" fill="#f8f5e6"/><path d="M 50 104 H 206 V 150 C 206 202 170 233 128 248 C 86 233 50 202 50 150 Z" fill="#167a3c"/><path d="M 62 114 H 194 V 150 C 194 194 163 222 128 236 C 93 222 62 194 62 150 Z" fill="#b92d1f"/><polyline points="76,178 112,178 119,169 127,192 135,164 142,178 180,178" fill="none" stroke="#38d9f0" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/></g></svg>"##;
+
+async fn favicon_svg() -> impl axum::response::IntoResponse {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "image/svg+xml; charset=utf-8",
+        )],
+        CREST_FAVICON_SVG,
+    )
+}
+
 const STYLE: &str = r#"
 :root{--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--bg:#f6f8fa;--add:#dafbe1;--del:#ffebe9;--accent:#0969da;--ok:#1a7f37;--bad:#cf222e}
 *{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--fg)}
-header{border-bottom:1px solid var(--line);background:var(--bg);padding:12px 24px}header a{font-weight:600;color:var(--fg);text-decoration:none}
+header{border-bottom:1px solid var(--line);background:var(--bg);padding:12px 24px}header a{display:inline-flex;align-items:center;gap:8px;font-weight:600;color:var(--fg);text-decoration:none}header img.crest{width:24px;height:24px;border-radius:6px;border:1px solid #167a3c55;background:#01081b}
 main{max-width:1100px;margin:0 auto;padding:24px}a{color:var(--accent)}h1{font-size:22px;margin:0 0 8px}h2{font-size:16px;margin:24px 0 8px}
 .muted{color:var(--muted)}.box{border:1px solid var(--line);border-radius:6px;margin:12px 0;overflow:hidden}
 .box>.head{background:var(--bg);border-bottom:1px solid var(--line);padding:8px 12px;font-weight:600}
@@ -51,11 +64,18 @@ fn page(title: &str, body: Markup) -> Markup {
             head {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
+                meta name="theme-color" content="#01081b";
+                link rel="icon" type="image/svg+xml" href="/favicon.svg";
                 title { (title) " · git.dabney.moe" }
                 style { (PreEscaped(STYLE)) }
             }
             body {
-                header { a href="/" { "git.dabney.moe" } }
+                header {
+                    a href="/" {
+                        img class="crest" src="/favicon.svg" alt="" width="24" height="24";
+                        "git.dabney.moe"
+                    }
+                }
                 main { (body) }
             }
         }

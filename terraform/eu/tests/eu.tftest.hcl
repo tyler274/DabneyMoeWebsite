@@ -29,8 +29,8 @@ run "tier1_vps_owns_the_site_hosts" {
     error_message = "The apex, www, git, cache and auth must resolve to the VPS."
   }
   assert {
-    condition     = !contains(keys(desec_rrset.a), "coda") && !contains(keys(desec_rrset.a), "app")
-    error_message = "coda (git-pages) and app/api belong to coda-rust infra/eu by default."
+    condition     = !contains(keys(desec_rrset.a), "curie") && !contains(keys(desec_rrset.a), "app")
+    error_message = "curie (git-pages) and app/api belong to dabney-moe infra/eu by default."
   }
   assert {
     condition     = contains(desec_rrset.caa.rdata, "0 issue \"letsencrypt.org\"") && contains(desec_rrset.caa.rdata, "0 issuewild \";\"")
@@ -38,14 +38,14 @@ run "tier1_vps_owns_the_site_hosts" {
   }
 }
 
-run "coda_moves_to_the_vps_only_when_asked" {
+run "curie_moves_to_the_vps_only_when_asked" {
   command = plan
   variables {
-    coda_on_vps = true
+    curie_on_vps = true
   }
   assert {
-    condition     = contains(keys(desec_rrset.aaaa), "coda")
-    error_message = "coda_on_vps must add coda to the VPS hosts."
+    condition     = contains(keys(desec_rrset.aaaa), "curie")
+    error_message = "curie_on_vps must add curie to the VPS hosts."
   }
 }
 

@@ -34,7 +34,7 @@ EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 DEFAULT_OUTPUT_REL = Path("crates/ui/data/ownership-metrics.json")
 
 # Generated OpenAPI wire crate excluded from manual authorship blame.
-EXCLUDED_UPSTREAM_PREFIXES = ("crates/duet-wire/",)
+EXCLUDED_UPSTREAM_PREFIXES = ("crates/mobile-wire/",)
 
 # Areas reclaimed via two-stage Chinese-wall REA clean-room rewrites.
 RECLAIMED_CLEAN_ROOM_AREAS = frozenset(
@@ -62,7 +62,7 @@ PRE_RECLAMATION_DEV_SOURCE_LINES = 122_840
 PRE_RECLAMATION_ELIJAH_SOURCE_LINES = 14_865
 
 # Legacy brand tokens that must never appear in generated public JSON.
-FORBIDDEN_OUTPUT_TOKENS = ("co" + "da", "hoyo" + "verse")
+FORBIDDEN_OUTPUT_TOKENS = ("co" + "da", "du" + "et", "cho" + "rds", "hoyo" + "verse")
 
 DEFAULT_REPLACEMENT_LEDGER: list[dict[str, str]] = [
     {

@@ -11,7 +11,7 @@ server_type    = "cx23"
 ssh_public_key = "ssh-ed25519 AAAA... deploy@dabney.moe"
 # ssh_source_ips = ["198.51.100.7/32"]
 vps_hosts   = ["", "www", "git", "cache", "auth"]
-coda_on_vps = false # coda.dabney.moe stays on Codeberg git-pages (coda-rust infra/eu)
+curie_on_vps = false # curie.dabney.moe stays on Codeberg git-pages (dabney-moe infra/eu)
 
 caa_issuers = ["letsencrypt.org"]
 # caa_iodef = "mailto:security@dabney.moe"
