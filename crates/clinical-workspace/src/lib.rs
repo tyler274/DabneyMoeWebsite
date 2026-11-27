@@ -6,37 +6,127 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod ccda;
 pub mod ehr_portal;
 pub mod harness;
+pub mod hl7v2;
+pub mod kipu;
 pub mod passport;
 pub mod roi;
 
+pub use ccda::{ingest_ccda_xml, sandbox_ccda_xml_for_patient};
 pub use ehr_portal::{
-    build_smart_authorize_url, data_download_uri, default_allergies_for_patient,
-    find_portal_organization, html_escape, ingest_fhir_r4_bundle, merge_fhir_import_into_chart,
-    percent_encode, pkce_s256_challenge, portal_directory, sandbox_fhir_bundle_for_org,
-    search_portal_directory, sha256_hex, validate_smart_endpoint_url, AllergyEntry,
-    FhirImportResult, FhirResourceWarning, LinkedPortalConnection, MergeCounts,
-    PortalConnectionMode, PortalConnectionStatus, PortalOrganization, PortalVendor,
-    SmartPkceSession, SMART_READ_ONLY_SCOPES,
+    base64_encode_standard, base64url_decode_strict, build_shlink_manifest_request_body,
+    build_shlink_uri, build_smart_authorize_url, data_download_uri, default_allergies_for_patient,
+    find_portal_organization, html_escape, ingest_clinical_document, ingest_fhir_r4_bundle,
+    merge_fhir_import_into_chart, parse_smart_health_link, percent_encode, pkce_s256_challenge,
+    portal_directory, sandbox_fhir_bundle_for_org, sandbox_smart_health_link_uri,
+    search_portal_directory, sha256_hex, smart_scopes_are_read_only, validate_public_https_url,
+    validate_smart_endpoint_url, AllergyEntry, ClinicalDocumentFormat, ClinicalDocumentIngest,
+    EhrTransportProfile, FhirImportResult, FhirResourceWarning, IntegrationCapability,
+    LinkedPortalConnection, MergeCounts, PortalConnectionMode, PortalConnectionStatus,
+    PortalOrganization, PortalVendor, SmartHealthLinkFlag, SmartHealthLinkPayload,
+    SmartPkceSession, SmartScopeVersion, MEDICARE_BLUE_BUTTON_SCOPES, SMART_READ_ONLY_SCOPES,
+    SMART_V1_READ_ONLY_SCOPES,
 };
 pub use harness::{
     build_harness_llm_prompt, format_sse_events, run_agent_turn, tool_catalog, AgentAudience,
     AgentChatRequest, AgentEvent, AgentRunOptions, AgentStep, AgentThread, AgentTool, AgentTurn,
     CitedValue, HarnessOutcome, RunBudget, ToolExecutionStatus, ToolSpec, WorkingNote,
 };
+pub use hl7v2::{ingest_hl7v2_message, sandbox_hl7v2_message_for_patient};
+pub use kipu::{
+    content_md5_base64, hmac_sha1, hmac_sha256, ingest_kipu_payload, md5_bytes,
+    sandbox_kipu_payload_for_patient, sha1_bytes, sign_kipu_request, KipuAuthScheme, KipuEndpoint,
+    KipuSignedRequest, KIPU_API_V3_ACCEPT, KIPU_API_V4_ACCEPT, KIPU_DEFAULT_BASE_URL,
+};
 pub use passport::{
-    build_health_passport, parse_health_passport_json, render_passport_fhir_ips_bundle,
-    render_passport_html, render_passport_markdown, HealthPassport, PassportAudience,
-    PassportPortalSummary, HEALTH_PASSPORT_SCHEMA,
+    build_health_passport, build_health_passport_with_options, parse_health_passport_json,
+    render_passport_fhir_ips_bundle, render_passport_html, render_passport_markdown,
+    HealthPassport, PassportAudience, PassportExportOptions, PassportPortalSummary,
+    HEALTH_PASSPORT_SCHEMA,
 };
 pub use roi::{
     build_roi_mailto_uri, default_roi_requests_for_patient, dispatch_roi_batch,
     dispatch_roi_request, render_roi_cover_text, render_roi_followup_letter, render_roi_form_html,
-    revoke_roi_request, sign_roi_request, validate_roi_request, RoiBatchDispatchReport,
-    RoiDateRange, RoiDeliveryChannel, RoiDispatchItemOutcome, RoiElectronicFormat, RoiLegalBasis,
-    RoiRecipient, RoiRecordCategory, RoiRequest, RoiStatus,
+    revoke_roi_request, roi_draft_for_portal_org, sign_roi_request, validate_roi_request,
+    RoiAuthorizationKind, RoiBatchDispatchReport, RoiDateRange, RoiDeliveryChannel,
+    RoiDispatchItemOutcome, RoiElectronicFormat, RoiLegalBasis, RoiRecipient, RoiRecordCategory,
+    RoiRequest, RoiStatus,
 };
+
+/// Verbatim 42 CFR § 2.32(a)(1) Prohibition on Redisclosure statutory notice
+/// (2024 Final Rule, 89 FR 12626) that must accompany every disclosure of
+/// Substance Use Disorder (SUD) records made with written patient consent.
+pub const PART2_REDISCLOSURE_NOTICE_LONG: &str = "This record which has been disclosed to you is \
+protected by Federal confidentiality rules (42 CFR part 2). These rules prohibit you from using or \
+disclosing this record, or testimony that describes the information contained in this record, in \
+any civil, criminal, administrative, or legislative proceedings by any Federal, State, or local \
+authority, against the patient, unless authorized by the consent of the patient, except as \
+provided at 42 CFR 2.12(c)(5) or as authorized by a court in accordance with 42 CFR 2.64 or 2.65. \
+In addition, the Federal rules prohibit you from making any other use or disclosure of this record \
+unless at least one of the following applies: (i) Further use or disclosure is expressly permitted \
+by the written consent of the individual whose information is being disclosed in this record or as \
+otherwise permitted by 42 CFR part 2. (ii) You are a covered entity or business associate and have \
+received the record for treatment, payment, or health care operations, or. (iii) You have received \
+the record from a covered entity or business associate as permitted by 45 CFR part 164, subparts A \
+and E. A general authorization for the release of medical or other information is NOT sufficient \
+to meet the required elements of written consent to further use or redisclose the record (see 42 \
+CFR 2.31).";
+
+/// Verbatim 42 CFR § 2.32(a)(2) short-form Prohibition on Redisclosure notice.
+pub const PART2_REDISCLOSURE_NOTICE_SHORT: &str =
+    "42 CFR part 2 prohibits unauthorized use or disclosure of these records.";
+
+/// Statutory confidentiality class attached to a clinical record, medication,
+/// problem, or allergy.
+///
+/// Defaults to [`ConfidentialityClass::StandardHipaa`] so existing serialized
+/// charts, vaults, and passports remain 100% backward-compatible.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfidentialityClass {
+    /// Standard HIPAA-protected record (45 CFR Part 164).
+    #[default]
+    StandardHipaa,
+    /// Substance Use Disorder (SUD) program record protected by 42 CFR Part 2.
+    Part2Sud,
+    /// Separately maintained SUD counseling notes requiring separate written
+    /// consent under 42 CFR § 2.31(b) (never disclosed under general TPO or
+    /// general Part 2 opt-in).
+    Part2SudCounselingNotes,
+}
+
+impl ConfidentialityClass {
+    #[allow(clippy::trivially_copy_pass_by_ref)]
+    pub const fn is_standard(&self) -> bool {
+        matches!(self, Self::StandardHipaa)
+    }
+
+    pub const fn is_part2_sud(self) -> bool {
+        matches!(self, Self::Part2Sud | Self::Part2SudCounselingNotes)
+    }
+
+    pub const fn is_part2_counseling_notes(self) -> bool {
+        matches!(self, Self::Part2SudCounselingNotes)
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::StandardHipaa => "Standard HIPAA (45 CFR Part 164)",
+            Self::Part2Sud => "42 CFR Part 2 (SUD Protected)",
+            Self::Part2SudCounselingNotes => "42 CFR § 2.31(b) SUD Counseling Notes",
+        }
+    }
+
+    pub const fn short_badge(self) -> &'static str {
+        match self {
+            Self::StandardHipaa => "HIPAA",
+            Self::Part2Sud => "42 CFR Part 2",
+            Self::Part2SudCounselingNotes => "42 CFR § 2.31(b) Counseling",
+        }
+    }
+}
 
 /// Category of an individual record inside a synthetic patient chart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +196,8 @@ pub struct Medication {
     pub dose: String,
     pub schedule: String,
     pub indication: String,
+    #[serde(default, skip_serializing_if = "ConfidentialityClass::is_standard")]
+    pub confidentiality: ConfidentialityClass,
 }
 
 /// Active clinical problem entry.
@@ -114,6 +206,8 @@ pub struct Problem {
     pub code: String,
     pub label: String,
     pub status: String,
+    #[serde(default, skip_serializing_if = "ConfidentialityClass::is_standard")]
+    pub confidentiality: ConfidentialityClass,
 }
 
 /// Individual longitudinal source record with stable ID for verbatim citation.
@@ -126,6 +220,8 @@ pub struct ChartRecord {
     pub source_label: String,
     pub body: String,
     pub key_values: Vec<(String, String)>,
+    #[serde(default, skip_serializing_if = "ConfidentialityClass::is_standard")]
+    pub confidentiality: ConfidentialityClass,
 }
 
 /// Scheduled appointment slot for the synthetic clinic day.
@@ -268,11 +364,13 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                     code: "E11.9".into(),
                     label: "Type 2 diabetes mellitus without complications".into(),
                     status: "Active · improving".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 Problem {
                     code: "E78.5".into(),
                     label: "Hyperlipidemia".into(),
                     status: "Active · stable on diet".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
             ],
             medications: vec![Medication {
@@ -280,6 +378,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                 dose: "1000 mg".into(),
                 schedule: "Once daily with dinner".into(),
                 indication: "Glycemic control".into(),
+                confidentiality: ConfidentialityClass::StandardHipaa,
             }],
             records: vec![
                 ChartRecord {
@@ -298,6 +397,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                         ("GMI".into(), "6.6%".into()),
                         ("CV".into(), "23.4%".into()),
                     ],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 ChartRecord {
                     id: "nk-lab-02".into(),
@@ -313,6 +413,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                         ("Fasting glucose".into(), "134 mg/dL".into()),
                         ("eGFR".into(), ">90".into()),
                     ],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 ChartRecord {
                     id: "nk-msg-03".into(),
@@ -325,6 +426,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                            shift when I take metformin or wait for our visit?"
                         .into(),
                     key_values: vec![("Reported fasting peak".into(), "~145 mg/dL".into())],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
             ],
             follow_ups: vec![FollowUp {
@@ -365,11 +467,13 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                     code: "I10".into(),
                     label: "Essential hypertension".into(),
                     status: "Active · above target (<130/80)".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 Problem {
                     code: "N18.2".into(),
                     label: "Chronic kidney disease, stage 2".into(),
                     status: "Active · stable".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
             ],
             medications: vec![
@@ -378,12 +482,14 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                     dose: "20 mg".into(),
                     schedule: "Once daily in morning".into(),
                     indication: "Hypertension & renal protection".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 Medication {
                     name: "Amlodipine".into(),
                     dose: "5 mg".into(),
                     schedule: "Once daily in morning".into(),
                     indication: "Hypertension".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
             ],
             records: vec![
@@ -401,6 +507,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                         ("14-day mean BP".into(), "138/84 mmHg".into()),
                         ("Ankle edema".into(), "None".into()),
                     ],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 ChartRecord {
                     id: "cm-lab-02".into(),
@@ -416,6 +523,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                         ("Potassium".into(), "4.3 mEq/L".into()),
                         ("Urine ACR".into(), "22 mg/g".into()),
                     ],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
             ],
             follow_ups: vec![FollowUp {
@@ -445,12 +553,14 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                 code: "F32.1".into(),
                 label: "Major depressive episode, improving".into(),
                 status: "Active · responding".into(),
+                confidentiality: ConfidentialityClass::StandardHipaa,
             }],
             medications: vec![Medication {
                 name: "Sertraline".into(),
                 dose: "50 mg".into(),
                 schedule: "Once daily in morning".into(),
                 indication: "Mood & anxiety".into(),
+                confidentiality: ConfidentialityClass::StandardHipaa,
             }],
             records: vec![
                 ChartRecord {
@@ -467,6 +577,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                         ("GAD-7".into(), "6".into()),
                         ("ASRM".into(), "3".into()),
                     ],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 ChartRecord {
                     id: "pn-cgm-02".into(),
@@ -483,6 +594,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                         ("CV".into(), "19.2%".into()),
                         ("Mean glucose".into(), "104 mg/dL".into()),
                     ],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
             ],
             follow_ups: vec![FollowUp {
@@ -508,6 +620,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                 code: "I48.0".into(),
                 label: "Paroxysmal atrial fibrillation".into(),
                 status: "Active · rate controlled".into(),
+                confidentiality: ConfidentialityClass::StandardHipaa,
             }],
             medications: vec![
                 Medication {
@@ -515,12 +628,14 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                     dose: "5 mg".into(),
                     schedule: "Twice daily".into(),
                     indication: "Stroke prophylaxis".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 Medication {
                     name: "Metoprolol succinate".into(),
                     dose: "25 mg".into(),
                     schedule: "Once daily".into(),
                     indication: "Rate control".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
             ],
             records: vec![
@@ -538,6 +653,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                         ("LVEF".into(), "60%".into()),
                         ("LAVI".into(), "36 mL/m2".into()),
                     ],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
                 ChartRecord {
                     id: "do-lab-02".into(),
@@ -552,6 +668,7 @@ pub fn synthetic_panel() -> Vec<PatientChart> {
                         ("Hemoglobin".into(), "14.2 g/dL".into()),
                         ("eGFR".into(), "86".into()),
                     ],
+                    confidentiality: ConfidentialityClass::StandardHipaa,
                 },
             ],
             follow_ups: vec![FollowUp {
@@ -1383,15 +1500,16 @@ pub mod api {
     use tower_http::limit::RequestBodyLimitLayer;
 
     use crate::{
-        answer_chart_question, build_doctor_share_preview, build_health_passport,
+        answer_chart_question, build_doctor_share_preview, build_health_passport_with_options,
         build_roi_mailto_uri, build_smart_authorize_url, default_allergies_for_patient,
         default_patient_demo_state, dispatch_roi_batch, find_patient, find_portal_organization,
-        format_sse_events, ingest_fhir_r4_bundle, render_passport_fhir_ips_bundle,
-        render_passport_html, render_passport_markdown, render_roi_cover_text,
-        render_roi_form_html, run_agent_turn, search_portal_directory, synthetic_panel,
-        today_overview, tool_catalog, validate_roi_request, AgentAudience, AgentChatRequest,
-        AgentRunOptions, ChatRequest, DemoSessionResponse, HealthResponse, PassportAudience,
-        PatientDemoSnapshot, PortalOrganization, PortalVendor, RoiRequest, RunBudget,
+        format_sse_events, ingest_clinical_document, ingest_fhir_r4_bundle,
+        render_passport_fhir_ips_bundle, render_passport_html, render_passport_markdown,
+        render_roi_cover_text, render_roi_form_html, run_agent_turn, search_portal_directory,
+        synthetic_panel, today_overview, tool_catalog, validate_roi_request, AgentAudience,
+        AgentChatRequest, AgentRunOptions, ChatRequest, DemoSessionResponse, HealthResponse,
+        PassportAudience, PassportExportOptions, PatientDemoSnapshot, PortalOrganization,
+        PortalVendor, RoiRequest, RunBudget,
     };
 
     const CHAT_BODY_LIMIT: usize = 64 * 1024;
@@ -1432,6 +1550,13 @@ pub mod api {
     }
 
     #[derive(Deserialize)]
+    struct ClinicalDocumentIngestRequest {
+        source_label: String,
+        portal_id: String,
+        document: String,
+    }
+
+    #[derive(Deserialize)]
     struct PassportExportRequest {
         patient_id: String,
         #[serde(default)]
@@ -1440,6 +1565,10 @@ pub mod api {
         emergency_note: String,
         #[serde(default)]
         selected_record_ids: Option<Vec<String>>,
+        #[serde(default)]
+        include_part2_sud_records: bool,
+        #[serde(default)]
+        include_part2_sud_counseling_notes: bool,
     }
 
     #[derive(Deserialize)]
@@ -1477,6 +1606,7 @@ pub mod api {
 
         let fhir_ingest = Router::new()
             .route("/portals/ingest-fhir", post(portal_ingest_fhir))
+            .route("/portals/ingest-document", post(portal_ingest_document))
             .layer(RequestBodyLimitLayer::new(FHIR_BODY_LIMIT));
 
         standard.merge(fhir_ingest).with_state(state)
@@ -1736,6 +1866,44 @@ pub mod api {
         }
     }
 
+    async fn portal_ingest_document(Json(req): Json<ClinicalDocumentIngestRequest>) -> Response {
+        match ingest_clinical_document(&req.source_label, &req.portal_id, &req.document) {
+            Ok(ingested) => {
+                // Never echo raw 32-byte SHLink AES-256 decryption keys over HTTP.
+                let sanitized_shl = ingested.smart_health_link.map(|shl| {
+                    serde_json::json!({
+                        "valid": true,
+                        "version": shl.v,
+                        "manifest_host": shl.host(),
+                        "manifest_url": shl.url,
+                        "key_bytes": 32,
+                        "key_valid": true,
+                        "exp": shl.exp,
+                        "flag": shl.flag,
+                        "flags": shl.flags,
+                        "label": shl.label,
+                        "viewer_origin": shl.viewer_origin,
+                        "passcode_required": shl.requires_passcode(),
+                        "direct_file_url": shl.is_direct_file_url(),
+                        "long_term": shl.is_long_term(),
+                    })
+                });
+                json_no_store(
+                    StatusCode::OK,
+                    &serde_json::json!({
+                        "format": ingested.format,
+                        "import": ingested.import,
+                        "smart_health_link": sanitized_shl,
+                    }),
+                )
+            }
+            Err(err) => json_no_store(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({ "error": err }),
+            ),
+        }
+    }
+
     async fn passport_export(Json(req): Json<PassportExportRequest>) -> Response {
         let Some(patient) = find_patient(&req.patient_id) else {
             return error_no_store((StatusCode::NOT_FOUND, "patient not found"));
@@ -1745,7 +1913,7 @@ pub mod api {
             state.selected_record_ids = ids;
         }
         let allergies = default_allergies_for_patient(&patient.id);
-        let passport = build_health_passport(
+        let passport = build_health_passport_with_options(
             &patient,
             &state,
             &allergies,
@@ -1753,6 +1921,10 @@ pub mod api {
             req.audience,
             &req.emergency_note,
             "2026-11-26T04:30:00Z",
+            PassportExportOptions {
+                include_part2_sud_records: req.include_part2_sud_records,
+                include_part2_sud_counseling_notes: req.include_part2_sud_counseling_notes,
+            },
         );
         let fhir_ips = render_passport_fhir_ips_bundle(&passport);
         let html = render_passport_html(&passport);
@@ -1923,6 +2095,7 @@ mod tests {
             source_label: "Patient Portal".into(),
             body: "Should I eat bananas for potassium before my visit?".into(),
             key_values: vec![],
+            confidentiality: ConfidentialityClass::StandardHipaa,
         });
         let answer = answer_chart_question(&chart, "What is his potassium?");
         let ids: Vec<_> = answer

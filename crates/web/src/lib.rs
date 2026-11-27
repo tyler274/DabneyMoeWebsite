@@ -122,6 +122,21 @@ where
     }
 }
 
+/// Computes the Leptos Axum route list once per test process.
+///
+/// `leptos_axum::generate_route_list` constructs `leptos_server::SuppressResourceLoad`,
+/// which toggles a process-global `AtomicBool` (`IS_SUPPRESSING_RESOURCE_LOAD`) while
+/// walking routes. Calling `generate_route_list` concurrently from parallel tests races
+/// with SSR `<Suspense>`/`Resource` loads on other threads and can stall them forever.
+#[cfg(all(test, feature = "ssr"))]
+pub(crate) fn test_route_list() -> Vec<leptos_axum::AxumRouteListing> {
+    static ROUTES: std::sync::OnceLock<Vec<leptos_axum::AxumRouteListing>> =
+        std::sync::OnceLock::new();
+    ROUTES
+        .get_or_init(|| leptos_axum::generate_route_list(ui::App))
+        .clone()
+}
+
 #[cfg(all(test, feature = "ssr"))]
 mod tests {
     use axum::body::{to_bytes, Body};
@@ -131,17 +146,15 @@ mod tests {
     use axum::routing::{get, post};
     use axum::{Json, Router};
     use futures_util::stream;
-    use leptos_axum::generate_route_list;
     use std::convert::Infallible;
     use tower::ServiceExt;
-    use ui::App;
 
     use super::clinical_proxy::ClinicalApiProxyConfig;
     use super::mount_clinical_api_routes;
 
     #[test]
     fn app_exposes_at_least_one_route() {
-        let routes = generate_route_list(App);
+        let routes = crate::test_route_list();
         assert!(
             !routes.is_empty(),
             "expected the router to expose at least one route"
@@ -155,7 +168,7 @@ mod tests {
 
         let options = LeptosOptions::builder().output_name("dabney").build();
         let app = super::mount_legacy_redirects(Router::new())
-            .leptos_routes(&options, generate_route_list(App), {
+            .leptos_routes(&options, crate::test_route_list(), {
                 let options = options.clone();
                 move || ui::shell(options.clone())
             })
@@ -217,7 +230,7 @@ mod tests {
             .site_root("target/site-test-does-not-exist")
             .build();
         let app = Router::new()
-            .leptos_routes(&options, generate_route_list(App), {
+            .leptos_routes(&options, crate::test_route_list(), {
                 let options = options.clone();
                 move || ui::shell(options.clone())
             })
@@ -251,7 +264,7 @@ mod tests {
 
         let options = LeptosOptions::builder().output_name("dabney").build();
         let app = Router::new()
-            .leptos_routes(&options, generate_route_list(App), {
+            .leptos_routes(&options, crate::test_route_list(), {
                 let options = options.clone();
                 move || ui::shell(options.clone())
             })
@@ -281,7 +294,7 @@ mod tests {
 
         let options = LeptosOptions::builder().output_name("dabney").build();
         let app = super::mount_removed_pages(Router::new())
-            .leptos_routes(&options, generate_route_list(App), {
+            .leptos_routes(&options, crate::test_route_list(), {
                 let options = options.clone();
                 move || ui::shell(options.clone())
             })
@@ -332,7 +345,7 @@ mod tests {
 
         let options = LeptosOptions::builder().output_name("dabney").build();
         let app = Router::new()
-            .leptos_routes(&options, generate_route_list(App), {
+            .leptos_routes(&options, crate::test_route_list(), {
                 let options = options.clone();
                 move || ui::shell(options.clone())
             })
@@ -415,7 +428,7 @@ mod tests {
 
         let options = LeptosOptions::builder().output_name("dabney").build();
         let app = Router::new()
-            .leptos_routes(&options, generate_route_list(App), {
+            .leptos_routes(&options, crate::test_route_list(), {
                 let options = options.clone();
                 move || ui::shell(options.clone())
             })
@@ -979,7 +992,7 @@ mod tests {
 
         let options = LeptosOptions::builder().output_name("dabney").build();
         let app = mount_clinical_api_routes(Router::new(), None)
-            .leptos_routes(&options, generate_route_list(App), {
+            .leptos_routes(&options, crate::test_route_list(), {
                 let options = options.clone();
                 move || ui::shell(options.clone())
             })
@@ -1052,7 +1065,7 @@ mod tests {
 
         let options = LeptosOptions::builder().output_name("dabney").build();
         let app = super::mount_ownership_json(Router::new())
-            .leptos_routes(&options, generate_route_list(App), {
+            .leptos_routes(&options, crate::test_route_list(), {
                 let options = options.clone();
                 move || ui::shell(options.clone())
             })
@@ -1354,5 +1367,266 @@ mod tests {
             "dispatched"
         );
         assert_eq!(dispatch_json["requests"][1]["status"]["state"], "draft");
+    }
+
+    #[tokio::test]
+    async fn shlink_inspect_kipu_verify_and_multi_format_ingest_enforce_ssrf_and_part2() {
+        let app = mount_clinical_api_routes(Router::<()>::new(), None);
+        let nadia = clinical_workspace::find_patient("pt-nadia-kulkarni").unwrap();
+
+        // 1. Valid SMART Health Link inspection (offline, never echoes raw decryption key)
+        let shl_uri = clinical_workspace::sandbox_smart_health_link_uri(&nadia);
+        let shl_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/clinical/api/ehr/shlink/inspect")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "uri": shl_uri }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(shl_resp.status(), StatusCode::OK);
+        assert_eq!(
+            shl_resp.headers()[header::CACHE_CONTROL],
+            "private, no-store, max-age=0"
+        );
+        assert_eq!(shl_resp.headers()[header::VARY], "*");
+        let shl_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(shl_resp.into_body(), 64 * 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(shl_json["valid"], true);
+        assert_eq!(shl_json["key_bytes"], 32);
+        assert_eq!(shl_json["passcode_required"], true);
+        assert!(shl_json.get("key").is_none());
+
+        // 2. SHLink SSRF guard rejects cloud metadata IP inside payload
+        let valid_key = clinical_workspace::parse_smart_health_link(&shl_uri, None)
+            .unwrap()
+            .key;
+        let ssrf_payload = serde_json::json!({
+            "url": "https://169.254.169.254/latest/meta-data",
+            "key": valid_key,
+            "v": 1
+        })
+        .to_string();
+        let bad_shl = format!(
+            "shlink:/{}",
+            clinical_workspace::ehr_portal::base64url_encode(ssrf_payload.as_bytes())
+        );
+        let ssrf_shl_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/clinical/api/ehr/shlink/inspect")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "uri": bad_shl }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ssrf_shl_resp.status(), StatusCode::BAD_REQUEST);
+
+        // 3. Kipu API v3 zero-PHI sandbox envelope verification (redacted auth)
+        let kipu_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/clinical/api/ehr/kipu/verify")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "method": "GET",
+                            "path": "/api/patients/census?app_id=demo&phi_level=low",
+                            "auth_scheme": "api_auth_hmac_sha1"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(kipu_resp.status(), StatusCode::OK);
+        assert_eq!(
+            kipu_resp.headers()[header::CACHE_CONTROL],
+            "private, no-store, max-age=0"
+        );
+        assert_eq!(kipu_resp.headers()[header::VARY], "*");
+        let kipu_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(kipu_resp.into_body(), 64 * 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(kipu_json["mode"], "sandbox_envelope");
+        assert_eq!(kipu_json["accept"], clinical_workspace::KIPU_API_V3_ACCEPT);
+        assert_eq!(kipu_json["part2_protected"], true);
+        assert!(kipu_json["authorization_redacted"]
+            .as_str()
+            .unwrap()
+            .ends_with(":[REDACTED]"));
+
+        // 4. Kipu verify fails closed on loopback/private hosts, non-Kipu live_probe hosts,
+        // non-443 ports, and non-read-only verbs on live_probe!
+        let prod_router = super::ehr_roi_api::router(None, false);
+        for bad_kipu in [
+            serde_json::json!({
+                "base_url": "http://127.0.0.1:9999",
+                "path": "/api/patients/census"
+            }),
+            serde_json::json!({
+                "base_url": "https://example.com",
+                "path": "/api/patients/census",
+                "access_id": "a",
+                "secret_key": "s",
+                "live_probe": true
+            }),
+            serde_json::json!({
+                "base_url": "https://api.kipuworks.com:8443",
+                "path": "/api/patients/census",
+                "access_id": "a",
+                "secret_key": "s",
+                "live_probe": true
+            }),
+            serde_json::json!({
+                "base_url": "https://api.kipuworks.com",
+                "method": "POST",
+                "path": "/api/v3/vital_signs",
+                "access_id": "a",
+                "secret_key": "s",
+                "body": "{}",
+                "live_probe": true
+            }),
+        ] {
+            let resp = prod_router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/ehr/kipu/verify")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(bad_kipu.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{bad_kipu}");
+        }
+
+        // 5. Kipu live probe against local mock server verifies real HMAC header + Accept v3
+        let mock_kipu = Router::new().route(
+            "/api/patients/census",
+            get(|req: AxumRequest| async move {
+                assert_eq!(
+                    req.headers()
+                        .get(header::ACCEPT)
+                        .and_then(|v| v.to_str().ok()),
+                    Some(clinical_workspace::KIPU_API_V3_ACCEPT)
+                );
+                let auth = req
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                assert!(auth.starts_with("APIAuth test-access:"));
+                (StatusCode::OK, Json(serde_json::json!({ "patients": [] })))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, mock_kipu).await.unwrap();
+        });
+        let dev_router = super::ehr_roi_api::router(None, true);
+        let live_kipu = dev_router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/ehr/kipu/verify")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "base_url": format!("http://127.0.0.1:{}", addr.port()),
+                            "path": "/api/patients/census",
+                            "access_id": "test-access",
+                            "secret_key": "test-secret",
+                            "live_probe": true
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(live_kipu.status(), StatusCode::OK);
+        let live_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(live_kipu.into_body(), 64 * 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(live_json["mode"], "live_probe");
+        assert_eq!(live_json["probe_status"], 200);
+        assert_eq!(live_json["probe_ok"], true);
+
+        // 6. Unified multi-format ingest endpoint handles C-CDA R2.1 XML & redacts SHLink keys!
+        let ccda_xml = clinical_workspace::sandbox_ccda_xml_for_patient(&nadia);
+        let doc_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/clinical/api/portals/ingest-document")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "source_label": "SimplePractice C-CDA",
+                            "portal_id": "org-simplepractice-clinic",
+                            "document": ccda_xml
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(doc_resp.status(), StatusCode::OK);
+        let doc_json: serde_json::Value =
+            serde_json::from_slice(&to_bytes(doc_resp.into_body(), 128 * 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(doc_json["format"], "ccda_r21_xml");
+        assert!(doc_json["import"]["records"]
+            .as_array()
+            .is_some_and(|r| !r.is_empty()));
+
+        // Ingesting a shlink:/ URI via `/portals/ingest-document` MUST NOT echo the raw AES key.
+        let shl_doc_resp = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/clinical/api/portals/ingest-document")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "source_label": "SHLink Paste",
+                            "portal_id": "shlink",
+                            "document": shl_uri
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(shl_doc_resp.status(), StatusCode::OK);
+        let shl_doc_bytes = to_bytes(shl_doc_resp.into_body(), 64 * 1024).await.unwrap();
+        let shl_doc_text = String::from_utf8(shl_doc_bytes.to_vec()).unwrap();
+        assert!(!shl_doc_text.contains(&valid_key));
+        let shl_doc_json: serde_json::Value = serde_json::from_str(&shl_doc_text).unwrap();
+        assert_eq!(shl_doc_json["format"], "smart_health_link_uri");
+        assert_eq!(shl_doc_json["smart_health_link"]["key_bytes"], 32);
+        assert!(shl_doc_json["smart_health_link"].get("key").is_none());
     }
 }

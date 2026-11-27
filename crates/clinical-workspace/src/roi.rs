@@ -14,8 +14,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ehr_portal::{html_escape, percent_encode, sha256_hex, PortalVendor};
-use crate::PatientChart;
+use crate::ehr_portal::{
+    html_escape, percent_encode, sha256_hex, PortalOrganization, PortalVendor,
+};
+use crate::{PatientChart, PART2_REDISCLOSURE_NOTICE_LONG};
+
+/// Alias for [`RoiLegalBasis`] representing the statutory authorization kind.
+pub type RoiAuthorizationKind = RoiLegalBasis;
 
 /// Federal legal basis for a Release of Information request.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,6 +31,8 @@ pub enum RoiLegalBasis {
     HipaaRightOfAccess164524,
     /// Patient authorization to disclose records to another person/clinician under 45 CFR § 164.508.
     ThirdPartyAuthorization164508,
+    /// Substance Use Disorder (SUD) program written consent under 42 CFR Part 2 (§ 2.31 & § 2.32).
+    Part2SudAuthorization42Cfr2,
 }
 
 impl RoiLegalBasis {
@@ -35,6 +42,9 @@ impl RoiLegalBasis {
             Self::ThirdPartyAuthorization164508 => {
                 "Third-Party ROI Authorization (45 CFR § 164.508)"
             }
+            Self::Part2SudAuthorization42Cfr2 => {
+                "42 CFR Part 2 SUD Authorization (42 CFR § 2.31 & § 2.32)"
+            }
         }
     }
 
@@ -42,7 +52,12 @@ impl RoiLegalBasis {
         match self {
             Self::HipaaRightOfAccess164524 => "Right of Access (§ 164.524)",
             Self::ThirdPartyAuthorization164508 => "Third-Party ROI (§ 164.508)",
+            Self::Part2SudAuthorization42Cfr2 => "42 CFR Part 2 SUD (§ 2.31)",
         }
+    }
+
+    pub const fn is_part2_sud(self) -> bool {
+        matches!(self, Self::Part2SudAuthorization42Cfr2)
     }
 
     pub const fn legal_summary(self) -> &'static str {
@@ -52,6 +67,9 @@ impl RoiLegalBasis {
             }
             Self::ThirdPartyAuthorization164508 => {
                 "Under 45 CFR § 164.508, this signed authorization directs the releasing clinic to disclose the selected records to the named recipient until the expiration date or earlier revocation."
+            }
+            Self::Part2SudAuthorization42Cfr2 => {
+                "Under 42 CFR § 2.31 (2024 Final Rule, 89 FR 12626), this written consent authorizes disclosure of Substance Use Disorder (SUD) records strictly as described below and must be accompanied by the statutory 42 CFR § 2.32 Prohibition on Redisclosure notice and a copy or clear explanation of the consent scope (§ 2.32(b)). Records disclosed for Treatment, Payment, or Health Care Operations (TPO) may be redisclosed by a HIPAA covered entity or business associate as permitted under HIPAA, except for use in proceedings against the patient without specific consent or court order. Refusal to sign will not condition treatment, payment, enrollment, or eligibility for benefits."
             }
         }
     }
@@ -99,8 +117,12 @@ pub enum RoiRecordCategory {
     MedicationAndAllergyLists,
     CgmAndDeviceData,
     BillingAndClaims,
-    /// Requires explicit opt-in acknowledgment per 45 CFR § 164.508(a)(2) & 42 CFR Part 2.
+    /// Requires explicit opt-in acknowledgment per 45 CFR § 164.508(a)(2).
     SensitivePsychotherapyAndBehavioral,
+    /// Substance Use Disorder (SUD) program records protected under 42 CFR Part 2.
+    Part2SubstanceUseDisorder,
+    /// Separately maintained SUD counseling notes requiring separate written consent (42 CFR § 2.31(b)).
+    Part2SudCounselingNotes,
 }
 
 impl RoiRecordCategory {
@@ -115,11 +137,29 @@ impl RoiRecordCategory {
             Self::SensitivePsychotherapyAndBehavioral => {
                 "Psychotherapy / Behavioral Health Notes (explicit opt-in)"
             }
+            Self::Part2SubstanceUseDisorder => {
+                "42 CFR Part 2 Substance Use Disorder (SUD) Program Records"
+            }
+            Self::Part2SudCounselingNotes => {
+                "42 CFR § 2.31(b) SUD Counseling Notes (separate written consent)"
+            }
         }
     }
 
     pub const fn is_sensitive_opt_in(self) -> bool {
-        matches!(self, Self::SensitivePsychotherapyAndBehavioral)
+        matches!(
+            self,
+            Self::SensitivePsychotherapyAndBehavioral
+                | Self::Part2SubstanceUseDisorder
+                | Self::Part2SudCounselingNotes
+        )
+    }
+
+    pub const fn is_part2_sud(self) -> bool {
+        matches!(
+            self,
+            Self::Part2SubstanceUseDisorder | Self::Part2SudCounselingNotes
+        )
     }
 
     pub const fn standard_default() -> &'static [Self] {
@@ -140,6 +180,8 @@ impl RoiRecordCategory {
             Self::CgmAndDeviceData,
             Self::BillingAndClaims,
             Self::SensitivePsychotherapyAndBehavioral,
+            Self::Part2SubstanceUseDisorder,
+            Self::Part2SudCounselingNotes,
         ]
     }
 }
@@ -305,6 +347,39 @@ pub struct RoiRequest {
     pub purpose_note: String,
     pub attestation_accepted: bool,
     pub status: RoiStatus,
+    /// 42 CFR § 2.31(a)(2): Specific disclosing SUD program / class authorized to disclose.
+    #[serde(default)]
+    pub part2_disclosing_program: String,
+    /// 42 CFR § 2.31(a)(3): Specific and meaningful description of SUD information to disclose.
+    #[serde(default)]
+    pub part2_specific_description: String,
+    /// 42 CFR § 2.31(a)(10): Acknowledgment of TPO redisclosure potential and refusal consequences.
+    #[serde(default)]
+    pub part2_tpo_redisclosure_acknowledged: bool,
+    /// 42 CFR § 2.31(b): Separate explicit written consent for separately maintained SUD counseling notes.
+    #[serde(default)]
+    pub part2_separate_counseling_notes_consent: bool,
+}
+
+impl RoiRequest {
+    /// Whether this ROI involves 42 CFR Part 2 Substance Use Disorder records
+    /// and therefore requires full § 2.31 elements + § 2.32 redisclosure notice.
+    #[must_use]
+    pub fn requires_part2_consent(&self) -> bool {
+        self.legal_basis.is_part2_sud()
+            || self.categories.iter().any(|c| c.is_part2_sud())
+            || self
+                .clinic_portal_vendor
+                .is_some_and(PortalVendor::is_part2_sensitive)
+    }
+
+    /// Whether this ROI requests separately maintained SUD counseling notes
+    /// (42 CFR § 2.31(b)).
+    #[must_use]
+    pub fn includes_part2_counseling_notes(&self) -> bool {
+        self.categories
+            .contains(&RoiRecordCategory::Part2SudCounselingNotes)
+    }
 }
 
 /// Outcome of dispatching a single [`RoiRequest`].
@@ -385,6 +460,44 @@ pub fn validate_roi_request(req: &RoiRequest) -> Result<(), String> {
             }
         }
     }
+
+    if req.requires_part2_consent() {
+        if !req.legal_basis.is_part2_sud() {
+            return Err(
+                "42 CFR Part 2 SUD records require a 42 CFR Part 2 SUD Authorization (§ 2.31); a general HIPAA authorization is not sufficient."
+                    .into(),
+            );
+        }
+        if req.part2_disclosing_program.trim().is_empty() && req.clinic_name.trim().is_empty() {
+            return Err(
+                "42 CFR § 2.31(a)(2) requires identifying the specific disclosing SUD program."
+                    .into(),
+            );
+        }
+        if req.part2_specific_description.trim().is_empty() {
+            return Err(
+                "42 CFR § 2.31(a)(3) requires a specific and meaningful description of the SUD information to be disclosed."
+                    .into(),
+            );
+        }
+        if req.purpose_note.trim().is_empty() {
+            return Err(
+                "42 CFR § 2.31(a)(5) requires stating the purpose of use or disclosure.".into(),
+            );
+        }
+        if req.expiration_date.trim().is_empty() {
+            return Err(
+                "42 CFR § 2.31(a)(7) requires an expiration date, event, or condition (e.g., YYYY-MM-DD or 'end of treatment')."
+                    .into(),
+            );
+        }
+        if req.includes_part2_counseling_notes() && !req.part2_separate_counseling_notes_consent {
+            return Err(
+                "42 CFR § 2.31(b): Separately maintained SUD counseling notes require separate explicit written consent."
+                    .into(),
+            );
+        }
+    }
     Ok(())
 }
 
@@ -403,6 +516,12 @@ pub fn sign_roi_request(
     if !req.attestation_accepted {
         return Err(
             "Confirm the explicit patient authorization attestation checkbox before signing."
+                .into(),
+        );
+    }
+    if req.requires_part2_consent() && !req.part2_tpo_redisclosure_acknowledged {
+        return Err(
+            "42 CFR § 2.31(a)(10): Confirm the Part 2 redisclosure & refusal-consequences notice before signing."
                 .into(),
         );
     }
@@ -536,6 +655,10 @@ pub fn default_roi_requests_for_patient(patient: &PatientChart) -> Vec<RoiReques
                 signed_by: patient.display_name.clone(),
                 signed_at: "2026-11-26T04:00:00Z".into(),
             },
+            part2_disclosing_program: String::new(),
+            part2_specific_description: String::new(),
+            part2_tpo_redisclosure_acknowledged: false,
+            part2_separate_counseling_notes_consent: false,
         },
         RoiRequest {
             id: format!("roi-{}-2", patient.id),
@@ -566,8 +689,96 @@ pub fn default_roi_requests_for_patient(patient: &PatientChart) -> Vec<RoiReques
             purpose_note: "Share recent imaging and consult notes ahead of upcoming follow-up visit.".into(),
             attestation_accepted: false,
             status: RoiStatus::Draft,
+            part2_disclosing_program: String::new(),
+            part2_specific_description: String::new(),
+            part2_tpo_redisclosure_acknowledged: false,
+            part2_separate_counseling_notes_consent: false,
         },
     ]
+}
+
+/// Builds a pre-filled ROI fallback draft targeting any directory
+/// [`PortalOrganization`] — especially non-FHIR or behavioral-health EHRs such
+/// as KipuEMR (automatically configured with 42 CFR Part 2 § 2.31 fields),
+/// SimplePractice, and Hint Health.
+#[must_use]
+pub fn roi_draft_for_portal_org(
+    patient: &PatientChart,
+    org: &PortalOrganization,
+    draft_id: &str,
+) -> RoiRequest {
+    let is_part2 = org.vendor.is_part2_sensitive() || org.transport.part2_sensitive;
+    let delivery_channel = if org.him_email.is_some() {
+        RoiDeliveryChannel::DirectEmail
+    } else if org.him_fax.is_some() {
+        RoiDeliveryChannel::EFaxAutomation
+    } else {
+        RoiDeliveryChannel::PrintableMailPacket
+    };
+    let electronic_format = if org.supports_smart_on_fhir() {
+        RoiElectronicFormat::FhirR4Json
+    } else {
+        RoiElectronicFormat::CcdaXml
+    };
+    let categories = if is_part2 {
+        vec![
+            RoiRecordCategory::Part2SubstanceUseDisorder,
+            RoiRecordCategory::MedicationAndAllergyLists,
+            RoiRecordCategory::LabResults,
+        ]
+    } else {
+        RoiRecordCategory::standard_default().to_vec()
+    };
+
+    RoiRequest {
+        id: draft_id.to_string(),
+        patient_id: patient.id.clone(),
+        patient_name: patient.display_name.clone(),
+        patient_birth_date: patient.birth_date.clone(),
+        patient_contact_email: "patient-demo@dabney-demo.invalid".into(),
+        clinic_name: format!("{} — Health Information Management", org.name),
+        clinic_him_email: org.him_email.clone().unwrap_or_default(),
+        clinic_him_fax: org.him_fax.clone().unwrap_or_default(),
+        clinic_address: org.him_address.clone().unwrap_or_default(),
+        clinic_portal_vendor: Some(org.vendor),
+        legal_basis: if is_part2 {
+            RoiLegalBasis::Part2SudAuthorization42Cfr2
+        } else {
+            RoiLegalBasis::HipaaRightOfAccess164524
+        },
+        delivery_channel,
+        electronic_format,
+        date_range: RoiDateRange::Last3Years,
+        categories,
+        recipient: RoiRecipient::PatientSelf {
+            delivery_destination: "patient-demo@dabney-demo.invalid (Dabney.moe Portable Passport)"
+                .into(),
+        },
+        expiration_date: "2027-02-24".into(),
+        purpose_note: if is_part2 {
+            "At the request of the patient for continuity of care (42 CFR Part 2 consent).".into()
+        } else {
+            format!(
+                "Patient-directed electronic copy fallback for {} ({}).",
+                org.vendor.label(),
+                org.transport.primary_capability.badge_label()
+            )
+        },
+        attestation_accepted: false,
+        status: RoiStatus::Draft,
+        part2_disclosing_program: if is_part2 {
+            org.name.clone()
+        } else {
+            String::new()
+        },
+        part2_specific_description: if is_part2 {
+            "Outpatient SUD admission summary, medication orders, vitals, lab results, and care plan (excluding separate SUD counseling notes).".into()
+        } else {
+            String::new()
+        },
+        part2_tpo_redisclosure_acknowledged: false,
+        part2_separate_counseling_notes_consent: false,
+    }
 }
 
 /// Renders a plain-text HIPAA ROI cover letter ready for HIM email, e-fax cover
@@ -605,6 +816,30 @@ pub fn render_roi_cover_text(req: &RoiRequest) -> String {
         RoiStatus::Draft => "Status: DRAFT (not yet signed by patient)".into(),
     };
 
+    let part2_block = if req.requires_part2_consent() {
+        let program = if req.part2_disclosing_program.trim().is_empty() {
+            req.clinic_name.as_str()
+        } else {
+            req.part2_disclosing_program.as_str()
+        };
+        let counseling_line = if req.includes_part2_counseling_notes() {
+            "SEPARATE SUD COUNSELING NOTES CONSENT (42 CFR § 2.31(b)): Expressly granted separately."
+        } else {
+            "SEPARATE SUD COUNSELING NOTES (42 CFR § 2.31(b)): EXCLUDED (not covered by this consent)."
+        };
+        format!(
+            "\n42 CFR PART 2 CONSENT SCOPE (§ 2.31 & § 2.32(b))\n\
+             - Disclosing Program: {program}\n\
+             - Specific SUD Information Description: {}\n\
+             - {counseling_line}\n\n\
+             42 CFR § 2.32(a) PROHIBITION ON REDISCLOSURE:\n\
+             {PART2_REDISCLOSURE_NOTICE_LONG}\n",
+            req.part2_specific_description
+        )
+    } else {
+        String::new()
+    };
+
     format!(
         "TO: Health Information Management / Medical Records — {clinic}\n\
          CHANNEL: {channel}\n\
@@ -618,7 +853,8 @@ pub fn render_roi_cover_text(req: &RoiRequest) -> String {
          REQUESTED ELECTRONIC FORMAT: {format}\n\
          SEND RECORDS TO: {recipient}\n\
          PURPOSE: {purpose}\n\
-         AUTHORIZATION EXPIRATION: {expires}\n\n\
+         AUTHORIZATION EXPIRATION: {expires}\n\
+         {part2_block}\n\
          STATUTORY NOTICE:\n\
          {legal_notice}\n\
          I understand I may revoke this authorization in writing at any time, except to the extent action has already been taken in reliance on it.\n\n\
@@ -636,6 +872,7 @@ pub fn render_roi_cover_text(req: &RoiRequest) -> String {
         recipient = req.recipient.summary(),
         purpose = req.purpose_note,
         expires = req.expiration_date,
+        part2_block = part2_block,
         legal_notice = req.legal_basis.legal_summary(),
         sig_line = sig_line,
     )
@@ -751,6 +988,34 @@ pub fn render_roi_form_html(req: &RoiRequest) -> String {
         other => format!("<strong>Status:</strong> {}", html_escape(other.label())),
     };
 
+    let part2_html_block = if req.requires_part2_consent() {
+        let program = if req.part2_disclosing_program.trim().is_empty() {
+            req.clinic_name.as_str()
+        } else {
+            req.part2_disclosing_program.as_str()
+        };
+        let counseling_status = if req.includes_part2_counseling_notes() {
+            "Separately consented under 42 CFR § 2.31(b)."
+        } else {
+            "Excluded — separate written consent required under 42 CFR § 2.31(b)."
+        };
+        format!(
+            r#"<div class="part2-box">
+    <h2>42 CFR Part 2 Written Consent Scope (§ 2.31 &amp; § 2.32(b))</h2>
+    <div><strong>Disclosing Program (§ 2.31(a)(2)):</strong> {program}</div>
+    <div><strong>Specific SUD Information (§ 2.31(a)(3)):</strong> {desc}</div>
+    <div><strong>SUD Counseling Notes (§ 2.31(b)):</strong> {counseling}</div>
+    <p class="part2-notice"><strong>42 CFR § 2.32(a) Prohibition on Redisclosure:</strong> {notice}</p>
+  </div>"#,
+            program = html_escape(program),
+            desc = html_escape(&req.part2_specific_description),
+            counseling = html_escape(counseling_status),
+            notice = html_escape(PART2_REDISCLOSURE_NOTICE_LONG),
+        )
+    } else {
+        String::new()
+    };
+
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -773,6 +1038,9 @@ ul.checks li {{ padding: 4px 0; }}
 ul.checks li.sensitive {{ border-top: 1px dashed #cbd5e1; margin-top: 6px; padding-top: 8px; font-weight: 600; color: #7c2d12; }}
 .chk {{ font-size: 15px; margin-right: 6px; }}
 .legal {{ background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; font-size: 12px; color: #334155; margin-top: 14px; }}
+.part2-box {{ background: #fff7ed; border: 2px solid #c2410c; border-radius: 8px; padding: 14px; font-size: 12px; color: #431407; margin-top: 14px; }}
+.part2-box h2 {{ color: #9a3412; margin-top: 0; }}
+.part2-notice {{ margin: 10px 0 0 0; padding-top: 8px; border-top: 1px solid #fdba74; font-size: 11px; line-height: 1.5; }}
 .sig {{ border-top: 2px solid #01081b; margin-top: 16px; padding-top: 12px; font-size: 13px; }}
 @media print {{ body {{ padding: 0; }} .sheet {{ border: 0; padding: 0; }} }}
 </style>
@@ -819,6 +1087,8 @@ ul.checks li.sensitive {{ border-top: 1px dashed #cbd5e1; margin-top: 6px; paddi
     </div>
   </div>
 
+  {part2_html_block}
+
   <div class="legal">
     <strong>Federal Right &amp; Revocation Notice:</strong> {legal_summary}
     I understand that I have the right to revoke this authorization in writing at any time (except to the extent the releasing entity has already acted on it), and that treatment, payment, enrollment, or eligibility for benefits may not be conditioned on signing this authorization.
@@ -843,6 +1113,7 @@ ul.checks li.sensitive {{ border-top: 1px dashed #cbd5e1; margin-top: 6px; paddi
         expires = html_escape(&req.expiration_date),
         recipient = html_escape(&req.recipient.summary()),
         purpose = html_escape(&req.purpose_note),
+        part2_html_block = part2_html_block,
         legal_summary = html_escape(req.legal_basis.legal_summary()),
         sig_block = sig_block,
     )
@@ -914,5 +1185,47 @@ mod tests {
         let day30 = render_roi_followup_letter(&reqs[0], 30);
         assert!(day30.contains("45 CFR § 164.524(b)(2)"));
         assert!(day30.contains(&ref_id));
+    }
+
+    #[test]
+    fn part2_sud_roi_enforces_231_elements_232_notice_and_separate_counseling_consent() {
+        let nadia = find_patient("pt-nadia-kulkarni").expect("nadia");
+        let kipu = crate::ehr_portal::find_portal_organization("org-kipu-sandbox").expect("kipu");
+        let mut req = roi_draft_for_portal_org(&nadia, &kipu, "roi-kipu-1");
+        assert!(req.requires_part2_consent());
+        assert_eq!(req.legal_basis, RoiLegalBasis::Part2SudAuthorization42Cfr2);
+
+        // General HIPAA authorization is rejected for Part 2 SUD records.
+        let mut bad_basis = req.clone();
+        bad_basis.legal_basis = RoiLegalBasis::HipaaRightOfAccess164524;
+        assert!(validate_roi_request(&bad_basis).is_err());
+
+        // Missing specific description (§ 2.31(a)(3)) fails closed.
+        let mut missing_desc = req.clone();
+        missing_desc.part2_specific_description.clear();
+        assert!(validate_roi_request(&missing_desc).is_err());
+
+        // Requesting SUD counseling notes without separate consent (§ 2.31(b)) fails closed.
+        let mut with_notes = req.clone();
+        with_notes
+            .categories
+            .push(RoiRecordCategory::Part2SudCounselingNotes);
+        assert!(validate_roi_request(&with_notes).is_err());
+        with_notes.part2_separate_counseling_notes_consent = true;
+        assert!(validate_roi_request(&with_notes).is_ok());
+
+        // Signing without § 2.31(a)(10) TPO redisclosure acknowledgment fails closed.
+        req.attestation_accepted = true;
+        assert!(sign_roi_request(&mut req, "Nadia Kulkarni", "2026-11-26T04:31:00Z").is_err());
+
+        req.part2_tpo_redisclosure_acknowledged = true;
+        sign_roi_request(&mut req, "Nadia Kulkarni", "2026-11-26T04:31:00Z").unwrap();
+
+        let cover = render_roi_cover_text(&req);
+        assert!(cover.contains("42 CFR § 2.32(a) PROHIBITION ON REDISCLOSURE"));
+        assert!(cover.contains("protected by Federal confidentiality rules (42 CFR part 2)"));
+        let html = render_roi_form_html(&req);
+        assert!(html.contains("42 CFR Part 2 Written Consent Scope"));
+        assert!(html.contains("42 CFR part 2"));
     }
 }
