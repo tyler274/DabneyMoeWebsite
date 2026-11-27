@@ -918,8 +918,8 @@ impl StaffLicenseTier {
 
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Physicians => "Physicians (MD vs DO — distinct)",
-            Self::AdvancedPractice => "Advanced Practice (NP / PMHNP / PA — not physicians)",
+            Self::Physicians => "Physicians (MD vs DO, distinct)",
+            Self::AdvancedPractice => "Advanced Practice (NP / PMHNP / PA, not physicians)",
             Self::Psychologists => "Doctoral Psychologists (PhD vs PsyD)",
             Self::TherapistsAndSocialWorkers => "Master's Therapists & Clinical Social Workers",
             Self::NursingAndAddictionSupport => "Nursing & Addiction Support",
@@ -936,7 +936,7 @@ impl StaffLicenseTier {
 /// - `Lcsw`, `LpcLmhc`, and `Lmft` remain separate licenses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum StaffLicense {
-    // Physicians — MD vs DO strictly separated, and psychiatry/addiction separated from general medical
+    // Physicians: MD vs DO strictly separated, and psychiatry/addiction separated from general medical
     #[serde(rename = "md-psychiatrist")]
     MdPsychiatrist,
     #[serde(rename = "do-psychiatrist")]
@@ -950,7 +950,7 @@ pub enum StaffLicense {
     #[serde(rename = "do-physician")]
     DoPhysician,
 
-    // Advanced Practice — strictly distinct from MD/DO psychiatrists and physicians
+    // Advanced Practice: strictly distinct from MD/DO psychiatrists and physicians
     #[serde(rename = "pmhnp")]
     Pmhnp,
     #[serde(rename = "np")]
@@ -1030,23 +1030,23 @@ impl StaffLicense {
 
     pub const fn label(self) -> &'static str {
         match self {
-            Self::MdPsychiatrist => "MD — Psychiatrist",
-            Self::DoPsychiatrist => "DO — Psychiatrist",
-            Self::MdAddiction => "MD — Addiction Medicine",
-            Self::DoAddiction => "DO — Addiction Medicine",
-            Self::MdPhysician => "MD — Physician (Other)",
-            Self::DoPhysician => "DO — Physician (Other)",
-            Self::Pmhnp => "PMHNP — Psychiatric Nurse Practitioner",
-            Self::Np => "NP / APRN — Nurse Practitioner",
-            Self::Pa => "PA / PA-C — Physician Assistant",
-            Self::PhdPsychologist => "PhD — Psychologist",
-            Self::PsydPsychologist => "PsyD — Psychologist",
-            Self::Lcsw => "LCSW — Clinical Social Worker",
-            Self::LpcLmhc => "LPC / LMHC — Professional Counselor",
-            Self::Lmft => "LMFT — Marriage & Family Therapist",
-            Self::Rn => "RN — Registered Nurse",
-            Self::Lpn => "LPN / LVN — Licensed Practical Nurse",
-            Self::AddictionCounselor => "LADC / CADC — Addiction Counselor",
+            Self::MdPsychiatrist => "MD (Psychiatrist)",
+            Self::DoPsychiatrist => "DO (Psychiatrist)",
+            Self::MdAddiction => "MD (Addiction Medicine)",
+            Self::DoAddiction => "DO (Addiction Medicine)",
+            Self::MdPhysician => "MD (Physician, Other)",
+            Self::DoPhysician => "DO (Physician, Other)",
+            Self::Pmhnp => "PMHNP (Psychiatric Nurse Practitioner)",
+            Self::Np => "NP / APRN (Nurse Practitioner)",
+            Self::Pa => "PA / PA-C (Physician Assistant)",
+            Self::PhdPsychologist => "PhD (Psychologist)",
+            Self::PsydPsychologist => "PsyD (Psychologist)",
+            Self::Lcsw => "LCSW (Clinical Social Worker)",
+            Self::LpcLmhc => "LPC / LMHC (Professional Counselor)",
+            Self::Lmft => "LMFT (Marriage & Family Therapist)",
+            Self::Rn => "RN (Registered Nurse)",
+            Self::Lpn => "LPN / LVN (Licensed Practical Nurse)",
+            Self::AddictionCounselor => "LADC / CADC (Addiction Counselor)",
             Self::PeerSupport => "Peer Support Specialist",
         }
     }

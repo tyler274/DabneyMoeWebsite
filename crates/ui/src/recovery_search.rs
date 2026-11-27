@@ -364,8 +364,8 @@ fn request_browser_location(
         let msg = match err.code() {
             1 => "Location permission was denied. You can still search by city, ZIP, or typed coordinates.",
             2 => "Your device couldn't determine your location right now.",
-            3 => "Location lookup timed out — try again or search by city/ZIP.",
-            _ => "Location lookup failed — you can still search by city or ZIP.",
+            3 => "Location lookup timed out. Try again or search by city/ZIP.",
+            _ => "Location lookup failed. You can still search by city or ZIP.",
         };
         on_error_cb(msg.to_string());
     });
@@ -433,7 +433,7 @@ pub fn RecoveryToolPage() -> impl IntoView {
                             }}
                         </h1>
                         <p class="mt-2 max-w-3xl text-sm leading-relaxed text-slate-300">
-                            "Moved from dei.dabney.moe into dabney.moe Tools. Compare U.S. treatment facilities privately on your device — including everything aside from the care (pools, hot tubs, rooms, food situation, electronic device rules, smoking/vaping) and exact clinical staff licensure (MD vs DO, Psychiatrist vs Nurse Practitioner)."
+                            "Moved from dei.dabney.moe into dabney.moe Tools. Compare U.S. treatment facilities privately on your device, including everything aside from the care (pools, hot tubs, rooms, food situation, electronic device rules, smoking/vaping) and exact clinical staff licensure (MD vs DO, Psychiatrist vs Nurse Practitioner)."
                         </p>
                     </div>
                     <div class="flex flex-wrap items-center gap-2 text-xs">
@@ -855,7 +855,7 @@ pub fn RecoverySearchSection(
                         />
                     </h2>
                     <p class="mt-1.5 text-sm leading-relaxed text-slate-300">
-                        "Filter privately on your device by care setting, insurance, living amenities (pools, hot tubs, food situation, phone/laptop policies), and exact staff licensure — without conflating MDs, DOs, psychiatrists, or nurse practitioners."
+                        "Filter privately on your device by care setting, insurance, living amenities (pools, hot tubs, food situation, phone/laptop policies), and exact staff licensure, without conflating MDs, DOs, psychiatrists, or nurse practitioners."
                     </p>
                 </div>
                 <div class="rounded-xl border border-white/10 bg-slate-950/70 px-3.5 py-2.5 text-xs text-slate-300">
@@ -956,7 +956,7 @@ pub fn RecoverySearchSection(
                                     String::new()
                                 };
                                 let label = format!(
-                                    "{} — {} ({}{})",
+                                    "{} - {} ({}{})",
                                     entry.state,
                                     state_full_name(&entry.state),
                                     entry.facilities,
@@ -1700,7 +1700,7 @@ pub fn RecoverySearchSection(
                                         .map(|o| format!(" · {o}"))
                                         .unwrap_or_default();
                                     let label = format!(
-                                        "{}{} — {} ({} sites)",
+                                        "{}{} · {} ({} sites)",
                                         prov.name,
                                         org_part,
                                         prov.role.short_label(),
@@ -1754,7 +1754,7 @@ pub fn RecoverySearchSection(
                     .map(|o| format!(" ({o})"))
                     .unwrap_or_default();
                 let summary = format!(
-                    "{}{org_text} — {} · {} · {} facilities",
+                    "{}{org_text} · {} · {} · {} facilities",
                     prov.name,
                     prov.role.short_label(),
                     prov.arrangement.label(),
@@ -2172,7 +2172,7 @@ fn render_facility_card(
         || vaping.is_some();
 
     let save_name = match &f.site_name {
-        Some(site) if !site.trim().is_empty() => format!("{} — {}", f.name, site),
+        Some(site) if !site.trim().is_empty() => format!("{} ({})", f.name, site),
         _ => f.name.clone(),
     };
     let save_phone = f.phone.clone().unwrap_or_default();

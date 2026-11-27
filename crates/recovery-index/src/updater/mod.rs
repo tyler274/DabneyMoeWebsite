@@ -801,7 +801,7 @@ pub fn run_find(
             f.name,
             f.site_name
                 .as_deref()
-                .map(|s| format!(" — {s}"))
+                .map(|s| format!(" ({s})"))
                 .unwrap_or_default()
         );
         println!("  addr: {}", f.address.display_line());

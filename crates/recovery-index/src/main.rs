@@ -21,7 +21,7 @@ use recovery_index::updater::{
 };
 
 const USAGE: &str = "\
-recovery-index — Cached in-repo updater for dabney.moe/tools/recovery
+recovery-index: Cached in-repo updater for dabney.moe/tools/recovery
 
 USAGE:
   cargo run -p recovery-index --features cli -- <command> [options]
@@ -535,7 +535,7 @@ fn print_codes() {
         println!("  {:22} {}", v.code(), v.label());
     }
     println!(
-        "\nStaff license types (--add-staff / --clinical — strictly distinct, never conflated):"
+        "\nStaff license types (--add-staff / --clinical, strictly distinct, never conflated):"
     );
     for v in StaffLicense::ALL {
         println!("  {:22} {}", v.code(), v.label());
