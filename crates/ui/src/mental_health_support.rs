@@ -517,8 +517,9 @@ pub fn SupportAndClinicianBriefSection(
     cadence_summary: Signal<EpisodeCadenceSummary>,
     asrm_score: Signal<Option<u8>>,
     sleep_hours: Signal<f32>,
+    #[prop(optional)] external_card: Option<RwSignal<PersonalSupportCard>>,
 ) -> impl IntoView {
-    let card = RwSignal::new(PersonalSupportCard::default());
+    let card = external_card.unwrap_or_else(|| RwSignal::new(PersonalSupportCard::default()));
     let new_warning = RwSignal::new(String::new());
     let new_step = RwSignal::new(String::new());
     let include_card_in_brief = RwSignal::new(false);

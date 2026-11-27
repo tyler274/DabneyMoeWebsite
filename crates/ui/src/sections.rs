@@ -176,7 +176,10 @@ pub fn NavBar() -> impl IntoView {
                             <span class=MOBILE_NAV_SUBLINK>"Physician Workspace Demo"</span>
                         </A>
                         <A href="/mental-health" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Mental Health & Lingo CGM"</span>
+                            <span class=MOBILE_NAV_SUBLINK>"Mental Health & CGM"</span>
+                        </A>
+                        <A href="/tools/recovery" on:click=close_mobile>
+                            <span class=MOBILE_NAV_SUBLINK>"Recovery Care Finder"</span>
                         </A>
                         <A href="/android" on:click=close_mobile>
                             <span class=MOBILE_NAV_SUBLINK>"Android App (F-Droid / APK)"</span>

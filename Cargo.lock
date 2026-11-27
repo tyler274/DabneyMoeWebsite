@@ -4202,6 +4202,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "recovery-index"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "futures-util",
+ "regex",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "tokio",
+ "toml 0.8.2",
+ "url",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5723,6 +5740,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",
@@ -6148,10 +6166,12 @@ dependencies = [
  "leptos",
  "leptos_meta",
  "leptos_router",
+ "recovery-index",
  "serde",
  "serde_json",
  "tokio",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
 ]
 

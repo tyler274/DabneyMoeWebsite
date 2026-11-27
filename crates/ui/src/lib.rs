@@ -11,6 +11,7 @@ pub mod activity_snapshot;
 pub mod activity_source;
 pub mod analytics;
 pub mod android_download;
+pub mod chart_citations;
 pub mod clinical;
 pub mod commissions;
 pub mod commissions_data;
@@ -18,6 +19,7 @@ pub mod community_activity;
 pub mod community_policy;
 pub mod consent;
 pub mod creators;
+pub mod dashboard_layout;
 pub mod data;
 pub mod health_bridge;
 pub mod info_tip;
@@ -38,6 +40,7 @@ pub mod patient_demo;
 pub mod portfolio;
 pub mod portfolio_chart;
 pub mod privacy;
+pub mod recovery_search;
 pub mod sections;
 pub mod tools;
 
@@ -152,6 +155,10 @@ pub fn AppWithMode(mode: AppShellMode) -> impl IntoView {
                     <Route path=StaticSegment("creators") view=creators::CreatorsPage />
                     <Route path=StaticSegment("community-policy") view=CommunityPolicyPage />
                     <Route path=StaticSegment("community-activity") view=community_activity::CommunityActivityPage ssr=leptos_router::SsrMode::Async />
+                    <Route
+                        path=(StaticSegment("tools"), StaticSegment("recovery"))
+                        view=recovery_search::RecoveryToolPage
+                    />
                     <Route
                         path=(StaticSegment("tools"), StaticSegment("investment-account"))
                         view=InvestmentAccountPage

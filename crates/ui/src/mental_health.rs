@@ -3,7 +3,13 @@
 use leptos::prelude::*;
 use leptos_meta::{Link, Meta, Title};
 use leptos_router::components::A;
+use leptos_router::hooks::use_location;
 
+#[cfg(any(feature = "hydrate", feature = "csr"))]
+use crate::dashboard_layout::{load_layout_prefs, STORAGE_KEY_MENTAL_HEALTH_LAYOUT};
+use crate::dashboard_layout::{
+    MentalHealthLayoutCustomizer, MentalHealthLayoutPrefs, MentalHealthTab,
+};
 #[cfg(any(feature = "hydrate", feature = "csr"))]
 use crate::health_bridge::{
     build_personal_cgm_chat_prompt_with_analytics, generate_local_llm, invoke_tauri_command,
@@ -57,8 +63,9 @@ use crate::mental_health_lingo::{
     csv_data_uri, export_correlations_csv, sample_assessment_history, sample_checkins,
     AssessmentPoint, LingoReading, MentalHealthCheckIn, SAMPLE_LINGO_CSV,
 };
-use crate::mental_health_support::SupportAndClinicianBriefSection;
+use crate::mental_health_support::{PersonalSupportCard, SupportAndClinicianBriefSection};
 use crate::patient_demo::ClinicalSuiteSwitcher;
+use crate::recovery_search::{RecoverySearchSection, SavedCareTeamFacility};
 use crate::sections::{Footer, NavBar};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -295,6 +302,60 @@ pub fn MentalHealthPage() -> impl IntoView {
     let activity_events = RwSignal::new(load_synthetic_4platform_synthesis());
     let synthesized_events = Memo::new(move |_| {
         activity_events.with(|ev| synthesize_opted_in_events(ev, &platform_consent.get()))
+    });
+
+    // Customizable dashboard layout, focused section tabs, and shared Stanley-Brown support card.
+    let location = use_location();
+    let initial_url_tab = MentalHealthTab::from_query_search(&location.search.get_untracked());
+    let layout_prefs = RwSignal::new(MentalHealthLayoutPrefs::default());
+    let active_tab = RwSignal::new(initial_url_tab.unwrap_or(MentalHealthTab::Overview));
+    let layout_open = RwSignal::new(false);
+    let layout_notice = RwSignal::new(Option::<String>::None);
+    let support_card = RwSignal::new(PersonalSupportCard::default());
+
+    let on_save_care_team = Callback::new(move |fac: SavedCareTeamFacility| {
+        support_card.update(|c| {
+            c.clinician_name = fac.name.clone();
+            if !fac.phone.is_empty() {
+                c.clinician_contact = fac.phone.clone();
+            }
+            c.urgent_clinic_note = if fac.phone.is_empty() {
+                format!("{} — {}", fac.name, fac.address)
+            } else {
+                format!("{} ({}) — {}", fac.name, fac.phone, fac.address)
+            };
+        });
+    });
+
+    // Sync active tab when navigating via URL query (e.g. `/mental-health?tab=recovery`).
+    Effect::new(move |_| {
+        let search = location.search.get();
+        if let Some(tab) = MentalHealthTab::from_query_search(&search) {
+            active_tab.set(tab);
+        }
+    });
+
+    // Hydrate saved layout preferences from localStorage on client mount.
+    #[cfg(any(feature = "hydrate", feature = "csr"))]
+    Effect::new(move |_| {
+        if let Some(saved) =
+            load_layout_prefs::<MentalHealthLayoutPrefs>(STORAGE_KEY_MENTAL_HEALTH_LAYOUT)
+        {
+            let url_override = MentalHealthTab::from_query_search(&location.search.get_untracked());
+            if url_override.is_none() {
+                active_tab.set(saved.default_tab);
+            }
+            layout_prefs.set(saved);
+        }
+    });
+
+    let recovery_search_active = Signal::derive(move || {
+        let prefs = layout_prefs.get();
+        prefs.show_recovery_search
+            && matches!(
+                active_tab.get(),
+                MentalHealthTab::Recovery | MentalHealthTab::All
+            )
     });
 
     // Form state for adding a new mental health check-in.
@@ -1316,7 +1377,12 @@ pub fn MentalHealthPage() -> impl IntoView {
 
         <NavBar />
 
-        <div class="print-brief-page mx-auto max-w-5xl px-6 py-12">
+        <div class=move || {
+            format!(
+                "print-brief-page mx-auto {} px-6 py-12",
+                layout_prefs.get().density.container_width_class()
+            )
+        }>
             // Hero
             <div class="print-hide print:hidden mb-10 flex flex-col gap-6 border-b border-white/10 pb-8 md:flex-row md:items-end md:justify-between">
                 <div class="max-w-2xl">
@@ -1379,9 +1445,71 @@ pub fn MentalHealthPage() -> impl IntoView {
                 </div>
             </div>
 
-            <div class="print-hide print:hidden mb-6">
+            <div class="print-hide print:hidden mb-4">
                 <ClinicalSuiteSwitcher />
             </div>
+
+            // Focused section navigation + saved layout switcher
+            <div
+                role="navigation"
+                aria-label="Mental health dashboard sections"
+                class="print-hide print:hidden mb-6 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-white/10 bg-slate-900/75 px-3 py-2.5"
+            >
+                <div class="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Dashboard sections">
+                    {MentalHealthTab::ALL
+                        .iter()
+                        .copied()
+                        .map(|tab| {
+                            let is_active = move || active_tab.get() == tab;
+                            view! {
+                                <button
+                                    type="button"
+                                    role="tab"
+                                    aria-selected=move || is_active().to_string()
+                                    on:click=move |_| active_tab.set(tab)
+                                    class=move || {
+                                        if is_active() {
+                                            match tab {
+                                                MentalHealthTab::Recovery => {
+                                                    "min-h-[38px] rounded-full bg-violet-400 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition"
+                                                }
+                                                _ => {
+                                                    "min-h-[38px] rounded-full bg-cyan-400 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition"
+                                                }
+                                            }
+                                        } else {
+                                            "min-h-[38px] rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5 text-xs font-medium text-slate-200 transition hover:border-white/25 hover:bg-white/[0.08] hover:text-white"
+                                        }
+                                    }
+                                >
+                                    {tab.label()}
+                                </button>
+                            }
+                        })
+                        .collect_view()}
+                </div>
+                <button
+                    type="button"
+                    aria-expanded=move || layout_open.get().to_string()
+                    on:click=move |_| layout_open.update(|v| *v = !*v)
+                    class=move || {
+                        if layout_open.get() {
+                            "min-h-[38px] shrink-0 rounded-full border border-cyan-400/60 bg-cyan-500/20 px-3.5 py-1.5 text-xs font-semibold text-cyan-100 transition"
+                        } else {
+                            "min-h-[38px] shrink-0 rounded-full border border-white/15 bg-slate-950/60 px-3.5 py-1.5 text-xs font-medium text-slate-200 transition hover:border-cyan-400/40 hover:text-white"
+                        }
+                    }
+                >
+                    {move || format!("Layout: {} ▾", layout_prefs.get().active_label())}
+                </button>
+            </div>
+
+            <MentalHealthLayoutCustomizer
+                prefs=layout_prefs
+                active_tab=active_tab
+                open=layout_open
+                saved_notice=layout_notice
+            />
 
             // Opt-in personal mobile health bridge card (Android Health Connect / iOS Apple HealthKit).
             // Shown above the fold ONLY when running inside `moe.dabney.personal` (`enabled == true`);
@@ -1492,6 +1620,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                             </div>
                             <a
                                 href="#cgm-import"
+                                on:click=move |_| active_tab.set(MentalHealthTab::LogImport)
                                 class="inline-flex min-h-[38px] shrink-0 items-center rounded-full bg-cyan-400 px-4 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-300"
                             >
                                 "Upload your CGM file ↓"
@@ -1503,6 +1632,16 @@ pub fn MentalHealthPage() -> impl IntoView {
             }}
 
             // KPI summary strip (ADA/ATTD clinical metrics across all commercial monitors)
+            <div
+                class="print-hide print:hidden"
+                class:hidden=move || {
+                    !(layout_prefs.get().show_kpi_strip
+                        && matches!(
+                            active_tab.get(),
+                            MentalHealthTab::Overview | MentalHealthTab::All
+                        ))
+                }
+            >
             {move || {
                 let summary = glucose_summary.get();
                 let analytics = glucose_analytics.get();
@@ -1621,45 +1760,108 @@ pub fn MentalHealthPage() -> impl IntoView {
                     </div>
                 }
             }}
+            </div>
 
             // Window-specific sensor floor/ceiling saturation & Out-of-Range caveat banner
-            {move || {
-                glucose_summary.get().map(|summary| view! {
-                    <SensorSaturationBanner summary=summary diagnostics=import_diagnostics.get() />
-                })
-            }}
+            <div
+                class="print-hide print:hidden"
+                class:hidden=move || {
+                    !matches!(
+                        active_tab.get(),
+                        MentalHealthTab::Overview | MentalHealthTab::All
+                    )
+                }
+            >
+                {move || {
+                    glucose_summary.get().map(|summary| view! {
+                        <SensorSaturationBanner summary=summary diagnostics=import_diagnostics.get() />
+                    })
+                }}
+            </div>
 
             // User-configurable automated glucose target-range alerts, live status & notification channels
-            <GlucoseRangeAlertsCard
-                config=alert_config
-                summary=range_alert_summary.into()
-                browser_permission=browser_notif_perm.into()
-                app_alert_status=app_alert_status.into()
-                health_connect_ready=health_connect_ready
-                personal_data_loaded=personal_data_loaded
-                alert_feedback=alert_feedback.into()
-                on_request_browser_permission=request_browser_alerts_permission
-                on_request_app_permission=request_native_app_alerts_permission
-                on_send_test_alert=send_test_glucose_alert
-            />
+            <div
+                class="print-hide print:hidden"
+                class:hidden=move || {
+                    !(layout_prefs.get().show_alerts
+                        && matches!(
+                            active_tab.get(),
+                            MentalHealthTab::AlertsAi | MentalHealthTab::All
+                        ))
+                }
+            >
+                <GlucoseRangeAlertsCard
+                    config=alert_config
+                    summary=range_alert_summary.into()
+                    browser_permission=browser_notif_perm.into()
+                    app_alert_status=app_alert_status.into()
+                    health_connect_ready=health_connect_ready
+                    personal_data_loaded=personal_data_loaded
+                    alert_feedback=alert_feedback.into()
+                    on_request_browser_permission=request_browser_alerts_permission
+                    on_request_app_permission=request_native_app_alerts_permission
+                    on_send_test_alert=send_test_glucose_alert
+                />
+            </div>
 
             // On-device AI chat grounded in loaded CGM metrics & mood check-ins
             // (Android AICore / Gemini Nano on supported personal devices, grounded Rust fallback elsewhere)
-            <PersonalCgmAiChatSection
-                llm_status=llm_status
-                use_local_llm=use_local_llm
-                llm_preparing=llm_preparing
-                llm_prepare_notice=llm_prepare_notice
-                chat_input=chat_input
-                chat_turns=chat_turns
-                chat_busy=chat_busy
-                chat_error=chat_error
-                on_prepare_llm=prepare_local_llm_now
-                on_send_question=send_cgm_chat
-                on_clear_chat=clear_cgm_chat
-            />
+            <div
+                class="print-hide print:hidden"
+                class:hidden=move || {
+                    !(layout_prefs.get().show_ai_chat
+                        && matches!(
+                            active_tab.get(),
+                            MentalHealthTab::AlertsAi | MentalHealthTab::All
+                        ))
+                }
+            >
+                <PersonalCgmAiChatSection
+                    llm_status=llm_status
+                    use_local_llm=use_local_llm
+                    llm_preparing=llm_preparing
+                    llm_prepare_notice=llm_prepare_notice
+                    chat_input=chat_input
+                    chat_turns=chat_turns
+                    chat_busy=chat_busy
+                    chat_error=chat_error
+                    on_prepare_llm=prepare_local_llm_now
+                    on_send_question=send_cgm_chat
+                    on_clear_chat=clear_cgm_chat
+                />
+            </div>
 
-            // Interactive 3D / 2D dual-axis chart
+            {move || {
+                let prefs = layout_prefs.get();
+                (active_tab.get() == MentalHealthTab::AlertsAi
+                    && !prefs.show_alerts
+                    && !prefs.show_ai_chat)
+                    .then(|| {
+                        view! {
+                            <div class="print-hide print:hidden mb-8 rounded-2xl border border-white/10 bg-slate-900/70 p-5 text-xs text-slate-300 flex flex-wrap items-center justify-between gap-3">
+                                <span>"Alerts and AI Chat are currently hidden in your saved layout."</span>
+                                <button
+                                    type="button"
+                                    on:click=move |_| layout_open.set(true)
+                                    class="min-h-[36px] rounded-full border border-cyan-400/40 bg-cyan-500/15 px-3.5 py-1 font-semibold text-cyan-200 hover:bg-cyan-500/25"
+                                >
+                                    "Customize Layout"
+                                </button>
+                            </div>
+                        }
+                    })
+            }}
+
+            // Interactive 3D / 2D dual-axis chart & longitudinal analytics (Overview tab)
+            <div
+                class="print-hide print:hidden"
+                class:hidden=move || {
+                    !matches!(
+                        active_tab.get(),
+                        MentalHealthTab::Overview | MentalHealthTab::All
+                    )
+                }
+            >
             <section class="print-hide print:hidden mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
                 <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <div>
@@ -1877,8 +2079,18 @@ pub fn MentalHealthPage() -> impl IntoView {
                     }
                 }}
             </section>
+            </div>
 
-            // Two-column workspace: Check-in Logger + Commercial CGM Import
+            // Two-column workspace: Check-in Logger + Commercial CGM Import + Correlation Log (Log & Import tab)
+            <div
+                class="print-hide print:hidden"
+                class:hidden=move || {
+                    !matches!(
+                        active_tab.get(),
+                        MentalHealthTab::LogImport | MentalHealthTab::All
+                    )
+                }
+            >
             <div class="print-hide print:hidden mb-8 grid gap-6 lg:grid-cols-2">
                 <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
                     <h2 class="mb-1 text-lg font-semibold text-white">"Log Mental Health Check-In"</h2>
@@ -2285,9 +2497,18 @@ pub fn MentalHealthPage() -> impl IntoView {
                     </table>
                 </div>
             </section>
+            </div>
 
-            // Local-first Opt-In Multi-Platform Synthesizer, Actogram & Cool-Down Plan
-            <div class="print-hide print:hidden">
+            // Local-first Opt-In Multi-Platform Synthesizer, Actogram & Cool-Down Plan (Care & Brief tab)
+            <div
+                class="print-hide print:hidden"
+                class:hidden=move || {
+                    !matches!(
+                        active_tab.get(),
+                        MentalHealthTab::CareBrief | MentalHealthTab::All
+                    )
+                }
+            >
                 <EpisodeActivationSection
                     events=activity_events
                     consent=platform_consent
@@ -2297,20 +2518,70 @@ pub fn MentalHealthPage() -> impl IntoView {
             </div>
 
             // On-Device Personal Crisis & Support Card + 1-Page Printable Clinician Visit Brief
-            <SupportAndClinicianBriefSection
-                glucose_summary=glucose_summary.into()
-                analytics=Signal::derive(move || Some(glucose_analytics.get()))
-                checkins=checkins.into()
-                cadence_summary=Signal::derive(move || {
-                    summarize_episode_cadence(
-                        &synthesized_events.get(),
-                        asrm_score.get(),
-                        parsed_sleep_hours.get(),
+            <div class=move || {
+                if layout_prefs.get().show_support_brief
+                    && matches!(
+                        active_tab.get(),
+                        MentalHealthTab::CareBrief | MentalHealthTab::All
                     )
-                })
-                asrm_score=asrm_score.into()
-                sleep_hours=parsed_sleep_hours.into()
-            />
+                {
+                    "block"
+                } else {
+                    "hidden print:block"
+                }
+            }>
+                <SupportAndClinicianBriefSection
+                    glucose_summary=glucose_summary.into()
+                    analytics=Signal::derive(move || Some(glucose_analytics.get()))
+                    checkins=checkins.into()
+                    cadence_summary=Signal::derive(move || {
+                        summarize_episode_cadence(
+                            &synthesized_events.get(),
+                            asrm_score.get(),
+                            parsed_sleep_hours.get(),
+                        )
+                    })
+                    asrm_score=asrm_score.into()
+                    sleep_hours=parsed_sleep_hours.into()
+                    external_card=support_card
+                />
+            </div>
+
+            // SAMHSA Recovery & Mental Health Facility Finder (Find Recovery Care tab)
+            <div
+                class="print-hide print:hidden"
+                class:hidden=move || {
+                    !(layout_prefs.get().show_recovery_search
+                        && matches!(
+                            active_tab.get(),
+                            MentalHealthTab::Recovery | MentalHealthTab::All
+                        ))
+                }
+            >
+                <RecoverySearchSection
+                    on_save_care_team=on_save_care_team
+                    active=recovery_search_active
+                />
+            </div>
+
+            {move || {
+                let prefs = layout_prefs.get();
+                (active_tab.get() == MentalHealthTab::Recovery && !prefs.show_recovery_search)
+                    .then(|| {
+                        view! {
+                            <div class="print-hide print:hidden mb-8 rounded-2xl border border-white/10 bg-slate-900/70 p-5 text-xs text-slate-300 flex flex-wrap items-center justify-between gap-3">
+                                <span>"Recovery Care Finder is hidden in your saved layout."</span>
+                                <button
+                                    type="button"
+                                    on:click=move |_| layout_open.set(true)
+                                    class="min-h-[36px] rounded-full border border-violet-400/40 bg-violet-500/15 px-3.5 py-1 font-semibold text-violet-200 hover:bg-violet-500/25"
+                                >
+                                    "Customize Layout"
+                                </button>
+                            </div>
+                        }
+                    })
+            }}
         </div>
 
         <Footer />
