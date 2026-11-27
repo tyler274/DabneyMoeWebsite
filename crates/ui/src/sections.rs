@@ -8,6 +8,7 @@ use crate::data::{
     ABOUT, ABOUT_PHOTO, EXPERIENCE, EXPERTISE, PROFILE_PHOTO, PROJECTS, SERVICES, SKILLS, SUMMARY,
     TAGLINE,
 };
+use crate::i18n::{t, use_locale, LanguageSwitcher, Msg};
 use crate::tools::ToolsMenu;
 use crate::AppShellMode;
 
@@ -87,7 +88,7 @@ pub(crate) fn open_site_or_external(path_or_url: &str) -> bool {
 const MOBILE_NAV_LINK: &str =
     "block rounded-lg px-3 py-2.5 text-slate-300 transition hover:bg-white/5 hover:text-white";
 const MOBILE_NAV_SUBLINK: &str =
-    "block rounded-lg py-2 pl-6 pr-3 text-sm text-slate-400 transition hover:bg-white/5 hover:text-white";
+    "block rounded-lg py-2 ps-6 pe-3 text-sm text-slate-400 transition hover:bg-white/5 hover:text-white";
 
 #[component]
 pub fn NavBar() -> impl IntoView {
@@ -96,6 +97,7 @@ pub fn NavBar() -> impl IntoView {
         return view! { <DemoAppTopBar /> }.into_any();
     }
 
+    let locale = use_locale();
     let mobile_open = RwSignal::new(false);
     let toggle_mobile = move |_| mobile_open.update(|open| *open = !*open);
     let close_mobile = move |_| mobile_open.set(false);
@@ -107,20 +109,21 @@ pub fn NavBar() -> impl IntoView {
                     "Tyler Port"
                     <span class="text-cyan-400">"."</span>
                 </a>
-                <div class="hidden items-center gap-8 text-sm text-slate-300 md:flex">
-                    <a href="/#about" class="transition hover:text-white">"About"</a>
-                    <a href="/#expertise" class="transition hover:text-white">"Expertise"</a>
-                    <a href="/#services" class="transition hover:text-white">"Services"</a>
-                    <a href="/#projects" class="transition hover:text-white">"Projects"</a>
-                    <a href="/#experience" class="transition hover:text-white">"Experience"</a>
-                    <a href="/#skills" class="transition hover:text-white">"Skills"</a>
+                <div class="hidden items-center gap-6 text-sm text-slate-300 md:flex">
+                    <a href="/#about" class="transition hover:text-white">{move || t(locale.get(), Msg::NavAbout)}</a>
+                    <a href="/#expertise" class="transition hover:text-white">{move || t(locale.get(), Msg::NavExpertise)}</a>
+                    <a href="/#services" class="transition hover:text-white">{move || t(locale.get(), Msg::NavServices)}</a>
+                    <a href="/#projects" class="transition hover:text-white">{move || t(locale.get(), Msg::NavProjects)}</a>
+                    <a href="/#experience" class="transition hover:text-white">{move || t(locale.get(), Msg::NavExperience)}</a>
+                    <a href="/#skills" class="transition hover:text-white">{move || t(locale.get(), Msg::NavSkills)}</a>
                     <CommissionsMenu />
                     <ToolsMenu />
+                    <LanguageSwitcher compact=true />
                     <a
                         href="/#contact"
                         class="rounded-full bg-cyan-500 px-4 py-1.5 font-medium text-slate-950 transition hover:bg-cyan-400"
                     >
-                        "Hire me"
+                        {move || t(locale.get(), Msg::NavHireMe)}
                     </a>
                 </div>
                 <button
@@ -128,10 +131,24 @@ pub fn NavBar() -> impl IntoView {
                     class="rounded-lg p-2 text-slate-300 transition hover:bg-white/5 hover:text-white md:hidden"
                     aria-expanded=move || mobile_open.get()
                     aria-controls="mobile-nav"
-                    aria-label=move || if mobile_open.get() { "Close menu" } else { "Open menu" }
+                    aria-label=move || {
+                        if mobile_open.get() {
+                            t(locale.get(), Msg::NavCloseMenu)
+                        } else {
+                            t(locale.get(), Msg::NavOpenMenu)
+                        }
+                    }
                     on:click=toggle_mobile
                 >
-                    <span class="sr-only">{move || if mobile_open.get() { "Close menu" } else { "Open menu" }}</span>
+                    <span class="sr-only">
+                        {move || {
+                            if mobile_open.get() {
+                                t(locale.get(), Msg::NavCloseMenu)
+                            } else {
+                                t(locale.get(), Msg::NavOpenMenu)
+                            }
+                        }}
+                    </span>
                     <span class="text-xl leading-none" aria-hidden="true">
                         {move || if mobile_open.get() { "✕" } else { "☰" }}
                     </span>
@@ -143,15 +160,34 @@ pub fn NavBar() -> impl IntoView {
                     class="border-t border-white/5 bg-slate-950/95 px-6 py-4 md:hidden"
                 >
                     <div class="mx-auto max-w-5xl space-y-1 text-sm">
-                        <a href="/#about" class=MOBILE_NAV_LINK on:click=close_mobile>"About"</a>
-                        <a href="/#expertise" class=MOBILE_NAV_LINK on:click=close_mobile>"Expertise"</a>
-                        <a href="/#services" class=MOBILE_NAV_LINK on:click=close_mobile>"Services"</a>
-                        <a href="/#projects" class=MOBILE_NAV_LINK on:click=close_mobile>"Projects"</a>
-                        <a href="/#experience" class=MOBILE_NAV_LINK on:click=close_mobile>"Experience"</a>
-                        <a href="/#skills" class=MOBILE_NAV_LINK on:click=close_mobile>"Skills"</a>
+                        <div class="mb-2 flex items-center justify-between border-b border-white/5 px-3 pb-3">
+                            <span class="text-xs font-semibold uppercase tracking-widest text-slate-500">
+                                {move || t(locale.get(), Msg::LanguageLabel)}
+                            </span>
+                            <LanguageSwitcher compact=true />
+                        </div>
+
+                        <a href="/#about" class=MOBILE_NAV_LINK on:click=close_mobile>
+                            {move || t(locale.get(), Msg::NavAbout)}
+                        </a>
+                        <a href="/#expertise" class=MOBILE_NAV_LINK on:click=close_mobile>
+                            {move || t(locale.get(), Msg::NavExpertise)}
+                        </a>
+                        <a href="/#services" class=MOBILE_NAV_LINK on:click=close_mobile>
+                            {move || t(locale.get(), Msg::NavServices)}
+                        </a>
+                        <a href="/#projects" class=MOBILE_NAV_LINK on:click=close_mobile>
+                            {move || t(locale.get(), Msg::NavProjects)}
+                        </a>
+                        <a href="/#experience" class=MOBILE_NAV_LINK on:click=close_mobile>
+                            {move || t(locale.get(), Msg::NavExperience)}
+                        </a>
+                        <a href="/#skills" class=MOBILE_NAV_LINK on:click=close_mobile>
+                            {move || t(locale.get(), Msg::NavSkills)}
+                        </a>
 
                         <p class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">
-                            "Commissions"
+                            {move || t(locale.get(), Msg::NavCommissions)}
                         </p>
                         <A href="/commissions/lapidary" on:click=close_mobile>
                             <span class=MOBILE_NAV_SUBLINK>"Lapidary"</span>
@@ -164,31 +200,31 @@ pub fn NavBar() -> impl IntoView {
                         </A>
 
                         <p class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">
-                            "Tools"
+                            {move || t(locale.get(), Msg::NavTools)}
                         </p>
                         <A href="/clinical" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Clinical Workspace"</span>
+                            <span class=MOBILE_NAV_SUBLINK>{move || t(locale.get(), Msg::ToolClinicalSuite)}</span>
                         </A>
                         <A href="/clinical/patient" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Patient Experience Demo"</span>
+                            <span class=MOBILE_NAV_SUBLINK>{move || t(locale.get(), Msg::ToolPatientDemo)}</span>
                         </A>
                         <A href="/clinical/physician" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Physician Workspace Demo"</span>
+                            <span class=MOBILE_NAV_SUBLINK>{move || t(locale.get(), Msg::ToolPhysicianDemo)}</span>
                         </A>
                         <A href="/mental-health" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Mental Health & CGM"</span>
+                            <span class=MOBILE_NAV_SUBLINK>{move || t(locale.get(), Msg::ToolMentalHealth)}</span>
                         </A>
                         <A href="/tools/recovery" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Recovery Care Finder"</span>
+                            <span class=MOBILE_NAV_SUBLINK>{move || t(locale.get(), Msg::ToolRecoveryFinder)}</span>
                         </A>
                         <A href="/android" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Android App (F-Droid / APK)"</span>
+                            <span class=MOBILE_NAV_SUBLINK>{move || t(locale.get(), Msg::ToolAndroidApp)}</span>
                         </A>
                         <A href="/tools/investment-account" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Investment Account Calculator"</span>
+                            <span class=MOBILE_NAV_SUBLINK>{move || t(locale.get(), Msg::ToolPortfolio)}</span>
                         </A>
                         <A href="/ownership" on:click=close_mobile>
-                            <span class=MOBILE_NAV_SUBLINK>"Code Ownership Report"</span>
+                            <span class=MOBILE_NAV_SUBLINK>{move || t(locale.get(), Msg::ToolOwnership)}</span>
                         </A>
 
                         <a
@@ -196,7 +232,7 @@ pub fn NavBar() -> impl IntoView {
                             class="mt-4 block rounded-full bg-cyan-500 px-4 py-2.5 text-center font-medium text-slate-950 transition hover:bg-cyan-400"
                             on:click=close_mobile
                         >
-                            "Hire me"
+                            {move || t(locale.get(), Msg::NavHireMe)}
                         </a>
                     </div>
                 </div>
@@ -208,6 +244,7 @@ pub fn NavBar() -> impl IntoView {
 
 #[component]
 fn DemoAppTopBar() -> impl IntoView {
+    let locale = use_locale();
     let personal_mode = RwSignal::new(false);
     Effect::new(move |_| {
         #[cfg(any(feature = "csr", feature = "hydrate"))]
@@ -221,7 +258,7 @@ fn DemoAppTopBar() -> impl IntoView {
     view! {
         <header class="sticky top-0 z-50 border-b border-white/10 bg-slate-950/90 pt-[env(safe-area-inset-top)] backdrop-blur">
             <nav
-                aria-label="Dabney.moe demo app bar"
+                aria-label=move || t(locale.get(), Msg::SuiteAriaLabel)
                 class="mx-auto flex max-w-4xl items-center justify-between gap-3 px-4 py-3 sm:px-6"
             >
                 <A href="/" attr:class="inline-flex items-center gap-2.5">
@@ -241,25 +278,26 @@ fn DemoAppTopBar() -> impl IntoView {
                                 data-personal-app-badge="true"
                                 class="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-cyan-200"
                             >
-                                "Personal · On-Device"
+                                {move || t(locale.get(), Msg::OnDeviceOnlyBadge)}
                             </span>
                         }
                         .into_any()
                     } else {
                         view! {
                             <span class="rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
-                                "Zero-PHI Demo"
+                                {move || t(locale.get(), Msg::ZeroPhiBannerBadge)}
                             </span>
                         }
                         .into_any()
                     }}
                 </A>
                 <div class="flex items-center gap-2 text-xs">
+                    <LanguageSwitcher compact=true />
                     <A
                         href="/privacy"
                         attr:class="rounded-full border border-white/15 px-3 py-1.5 font-medium text-slate-200 transition hover:bg-white/5"
                     >
-                        "Privacy"
+                        {move || t(locale.get(), Msg::FooterPrivacy)}
                     </A>
                 </div>
             </nav>
@@ -495,13 +533,13 @@ pub fn Projects() -> impl IntoView {
 pub fn Experience() -> impl IntoView {
     view! {
         <Section id="experience" eyebrow="Track record" title="Experience">
-            <ol class="relative space-y-10 border-l border-white/10 pl-6">
+            <ol class="relative space-y-10 border-s border-white/10 ps-6">
                 {EXPERIENCE
                     .iter()
                     .map(|r| {
                         view! {
                             <li class="relative">
-                                <span class="absolute -left-[31px] top-1.5 h-3 w-3 rounded-full border-2 border-cyan-400 bg-slate-950"></span>
+                                <span class="absolute -start-[31px] top-1.5 h-3 w-3 rounded-full border-2 border-cyan-400 bg-slate-950"></span>
                                 <div class="flex flex-wrap items-baseline justify-between gap-x-4">
                                     <h3 class="text-lg font-semibold text-white">
                                         {r.company}
@@ -615,25 +653,37 @@ pub fn Footer() -> impl IntoView {
         return view! { <DemoAppBottomNav /> }.into_any();
     }
 
+    let locale = use_locale();
+
     view! {
         <footer class="border-t border-white/5 px-6 py-10">
             <div class="mx-auto flex max-w-5xl flex-col items-center gap-2 text-center text-sm text-slate-500">
                 <div class="flex flex-col items-center gap-2 sm:flex-row sm:justify-between sm:gap-4 w-full">
                     <span>"© 2026 Tyler Port · dabney.moe"</span>
                     <span class="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
-                        <A href="/privacy" attr:class="hover:text-slate-300">"Privacy"</A>
+                        <A href="/privacy" attr:class="hover:text-slate-300">
+                            {move || t(locale.get(), Msg::FooterPrivacy)}
+                        </A>
                         <span class="text-slate-700">"·"</span>
-                        <A href="/community-policy" attr:class="hover:text-slate-300">"Community policy"</A>
+                        <A href="/community-policy" attr:class="hover:text-slate-300">
+                            {move || t(locale.get(), Msg::FooterCommunityPolicy)}
+                        </A>
                         <span class="text-slate-700">"·"</span>
-                        <a href="/community-activity" class="hover:text-slate-300">"Community activity"</a>
+                        <a href="/community-activity" class="hover:text-slate-300">
+                            {move || t(locale.get(), Msg::FooterCommunityActivity)}
+                        </a>
                         <span class="text-slate-700">"·"</span>
-                        <A href="/creators" attr:class="hover:text-slate-300">"Creators"</A>
+                        <A href="/creators" attr:class="hover:text-slate-300">
+                            {move || t(locale.get(), Msg::FooterCreators)}
+                        </A>
                         <span class="text-slate-700">"·"</span>
-                        <A href="/ownership" attr:class="hover:text-slate-300">"Code ownership"</A>
+                        <A href="/ownership" attr:class="hover:text-slate-300">
+                            {move || t(locale.get(), Msg::FooterCodeOwnership)}
+                        </A>
                         <span class="text-slate-700">"·"</span>
                         <OpenConsentButton />
                         <span class="text-slate-700">"·"</span>
-                        <span>"Built with Rust, Leptos & Tauri"</span>
+                        <span>{move || t(locale.get(), Msg::FooterBuiltWith)}</span>
                     </span>
                 </div>
             </div>
@@ -644,6 +694,7 @@ pub fn Footer() -> impl IntoView {
 
 #[component]
 fn DemoAppBottomNav() -> impl IntoView {
+    let locale = use_locale();
     let location = use_location();
     let personal_mode = RwSignal::new(false);
     Effect::new(move |_| {
@@ -662,9 +713,9 @@ fn DemoAppBottomNav() -> impl IntoView {
             other => trimmed == other,
         };
         if is_active {
-            "flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl bg-emerald-500/15 py-2 text-[11px] font-semibold text-emerald-300 transition"
+            "flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl bg-emerald-500/15 px-1 py-2 text-[11px] font-semibold text-emerald-300 transition"
         } else {
-            "flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-2 text-[11px] font-medium text-slate-400 transition hover:bg-white/5 hover:text-white"
+            "flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-2 text-[11px] font-medium text-slate-400 transition hover:bg-white/5 hover:text-white"
         }
     };
 
@@ -680,10 +731,13 @@ fn DemoAppBottomNav() -> impl IntoView {
     view! {
         <div class="mx-auto max-w-4xl px-4 pb-28 pt-2 text-center text-[11px] text-slate-400 sm:px-6">
             <p>
-                {move || if personal_mode.get() {
-                    "Dabney.moe Personal · Local on-device health analytics (never uploaded) · Not medical advice · "
-                } else {
-                    "Dabney.moe Clinical Demo · 100% synthetic zero-PHI sample data · Not medical advice · "
+                {move || {
+                    let loc = locale.get();
+                    if personal_mode.get() {
+                        format!("Dabney.moe · {} · ", t(loc, Msg::OnDeviceOnlyBadge))
+                    } else {
+                        format!("Dabney.moe · {} · ", t(loc, Msg::SyntheticDemoNotice))
+                    }
                 }}
                 <a
                     href="https://dabney.moe/clinical"
@@ -692,16 +746,16 @@ fn DemoAppBottomNav() -> impl IntoView {
                     on:click=open_web
                     class="text-cyan-400 underline hover:text-cyan-300"
                 >
-                    "Open dabney.moe"
+                    "dabney.moe"
                 </a>
                 " · "
                 <A href="/privacy" attr:class="text-cyan-400 underline hover:text-cyan-300">
-                    "Privacy"
+                    {move || t(locale.get(), Msg::FooterPrivacy)}
                 </A>
             </p>
         </div>
         <nav
-            aria-label="Clinical demo navigation"
+            aria-label=move || t(locale.get(), Msg::SuiteAriaLabel)
             class="fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-slate-950/95 px-2 pt-1.5 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur"
         >
             <div class="mx-auto flex max-w-4xl items-center gap-1">
@@ -710,7 +764,7 @@ fn DemoAppBottomNav() -> impl IntoView {
                         <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
                         <circle cx="12" cy="7" r="4" />
                     </svg>
-                    <span>"Patient"</span>
+                    <span class="max-w-full truncate">{move || t(locale.get(), Msg::SuitePatient)}</span>
                 </A>
                 <A href="/clinical/physician" attr:class=move || tab_cls("/clinical/physician")>
                     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
@@ -720,13 +774,13 @@ fn DemoAppBottomNav() -> impl IntoView {
                         <path d="M8 15a6 6 0 0 0 12 0v-3" />
                         <circle cx="20" cy="10" r="2" />
                     </svg>
-                    <span>"Physician"</span>
+                    <span class="max-w-full truncate">{move || t(locale.get(), Msg::SuitePhysician)}</span>
                 </A>
                 <A href="/mental-health" attr:class=move || tab_cls("/mental-health")>
                     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
                         <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
                     </svg>
-                    <span>"Mood & CGM"</span>
+                    <span class="max-w-full truncate">{move || t(locale.get(), Msg::SuiteMentalHealth)}</span>
                 </A>
                 <A href="/clinical" attr:class=move || tab_cls("/clinical")>
                     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
@@ -735,7 +789,7 @@ fn DemoAppBottomNav() -> impl IntoView {
                         <rect width="7" height="7" x="14" y="14" rx="1" />
                         <rect width="7" height="7" x="3" y="14" rx="1" />
                     </svg>
-                    <span>"Overview"</span>
+                    <span class="max-w-full truncate">{move || t(locale.get(), Msg::SuiteOverview)}</span>
                 </A>
             </div>
         </nav>
@@ -887,6 +941,42 @@ mod render_tests {
         assert!(html.contains(EMAIL), "contact missing email");
         assert!(html.contains(GITHUB), "contact missing github link");
         assert!(html.contains(LINKEDIN), "contact missing linkedin link");
+    }
+
+    #[test]
+    fn navbar_and_demo_top_bar_render_language_switcher() {
+        let owner = Owner::new();
+        let web_html = owner.with(|| {
+            provide_context(leptos_router::location::RequestUrl::new("/"));
+            view! {
+                <leptos_router::components::Router>
+                    <NavBar />
+                </leptos_router::components::Router>
+            }
+            .to_html()
+        });
+        drop(owner);
+        assert!(web_html.contains("Hire me"));
+        assert!(web_html.contains("Español"));
+        assert!(web_html.contains("العربية"));
+        assert!(web_html.contains("lang=\"ar\""));
+
+        let owner = Owner::new();
+        let app_html = owner.with(|| {
+            provide_context(AppShellMode::ClinicalDemoApp);
+            provide_context(leptos_router::location::RequestUrl::new("/"));
+            view! {
+                <leptos_router::components::Router>
+                    <NavBar />
+                </leptos_router::components::Router>
+            }
+            .to_html()
+        });
+        drop(owner);
+        assert!(app_html.contains("Zero-PHI Demo"));
+        assert!(app_html.contains("Español"));
+        assert!(app_html.contains("العربية"));
+        assert!(!app_html.contains("Hire me"));
     }
 }
 

@@ -19,6 +19,7 @@ use leptos_router::hooks::use_location;
 
 pub use recovery_index::*;
 
+use crate::i18n::{t, use_locale, Locale, Msg};
 use crate::info_tip::InfoTip;
 use crate::mental_health_support::CRISIS_RESOURCES;
 use crate::sections::{Footer, NavBar};
@@ -403,6 +404,7 @@ fn state_from_query(search: &str) -> Option<String> {
 #[component]
 pub fn RecoveryToolPage() -> impl IntoView {
     let location = use_location();
+    let locale = use_locale();
     let initial_state = state_from_query(&location.search.get_untracked());
 
     view! {
@@ -418,10 +420,17 @@ pub fn RecoveryToolPage() -> impl IntoView {
                 <div class="flex flex-wrap items-center justify-between gap-3">
                     <div>
                         <p class="text-xs font-semibold uppercase tracking-widest text-cyan-400">
-                            "Tools · Recovery Search"
+                            {move || t(locale.get(), Msg::RecoveryEyebrow)}
                         </p>
                         <h1 class="mt-1 text-2xl font-bold tracking-tight text-white sm:text-4xl">
-                            "Recovery & Mental Health Facility Finder"
+                            {move || {
+                                let loc = locale.get();
+                                if loc == Locale::En {
+                                    "Recovery & Mental Health Facility Finder"
+                                } else {
+                                    t(loc, Msg::ToolRecoveryFinder)
+                                }
+                            }}
                         </h1>
                         <p class="mt-2 max-w-3xl text-sm leading-relaxed text-slate-300">
                             "Moved from dei.dabney.moe into dabney.moe Tools. Compare U.S. treatment facilities privately on your device — including everything aside from the care (pools, hot tubs, rooms, food situation, electronic device rules, smoking/vaping) and exact clinical staff licensure (MD vs DO, Psychiatrist vs Nurse Practitioner)."
@@ -429,8 +438,9 @@ pub fn RecoveryToolPage() -> impl IntoView {
                     </div>
                     <div class="flex flex-wrap items-center gap-2 text-xs">
                         <A href="/mental-health">
-                            <span class="inline-flex min-h-[38px] items-center rounded-full border border-white/15 bg-white/[0.04] px-3.5 py-1.5 font-medium text-slate-200 transition hover:border-cyan-400/40 hover:text-white">
-                                "Open Mental Health & CGM →"
+                            <span class="inline-flex min-h-[38px] items-center gap-1 rounded-full border border-white/15 bg-white/[0.04] px-3.5 py-1.5 font-medium text-slate-200 transition hover:border-cyan-400/40 hover:text-white">
+                                <span>{move || t(locale.get(), Msg::SuiteMentalHealth)}</span>
+                                <span class="inline-block rtl:rotate-180" aria-hidden="true">"→"</span>
                             </span>
                         </A>
                     </div>
@@ -472,6 +482,7 @@ pub fn RecoverySearchSection(
     #[cfg(not(any(feature = "hydrate", feature = "csr")))]
     let _ = active;
 
+    let locale = use_locale();
     let index = recovery_index();
     let total_facilities: usize = index.states.iter().map(|s| s.facilities).sum();
     let total_enriched: usize = index.states.iter().map(|s| s.enriched_facilities).sum();
@@ -823,7 +834,7 @@ pub fn RecoverySearchSection(
                 <div class="max-w-2xl">
                     <div class="flex flex-wrap items-center gap-2">
                         <span class="rounded-full border border-emerald-400/35 bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-emerald-300">
-                            "Recovery Search · SAMHSA + NPPES + Amenities"
+                            {move || t(locale.get(), Msg::RecoveryEyebrow)}
                         </span>
                         <span class="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-0.5 text-[11px] text-slate-300">
                             {format!("{total_facilities} listings · {total_states} states & territories")}
@@ -837,7 +848,7 @@ pub fn RecoverySearchSection(
                         })}
                     </div>
                     <h2 class="mt-2 flex items-center text-xl font-bold text-white sm:text-2xl">
-                        "Find Mental Health & Recovery Care Near You"
+                        {move || t(locale.get(), Msg::RecoveryTitle)}
                         <InfoTip
                             term="Recovery Search"
                             text="SAMHSA FindTreatment.gov listings enriched with non-care amenities (pools, hot tubs, rooms, food, electronic device policies) and exact clinical staff licenses (MD vs DO, Psychiatrist vs PMHNP/NP vs PA). Versioned shards are cached in browser Cache Storage; searches and GPS lookups never leave your device."
@@ -848,7 +859,9 @@ pub fn RecoverySearchSection(
                     </p>
                 </div>
                 <div class="rounded-xl border border-white/10 bg-slate-950/70 px-3.5 py-2.5 text-xs text-slate-300">
-                    <p class="font-semibold text-emerald-300">"100% On-Device Search"</p>
+                    <p class="font-semibold text-emerald-300">
+                        {move || t(locale.get(), Msg::OnDeviceOnlyBadge)}
+                    </p>
                     <p class="mt-0.5 text-slate-400">
                         {format!("Directory snapshot: {retrieved_date}")}
                     </p>
@@ -865,11 +878,16 @@ pub fn RecoverySearchSection(
             </div>
 
             // Always-accessible 24/7 crisis quick-call strip
-            <div class="rounded-xl border border-rose-400/25 bg-rose-950/25 p-3.5">
+            <div class="rounded-xl border border-rose-400/25 bg-rose-950/25 p-3.5 space-y-2">
                 <div class="flex flex-wrap items-center justify-between gap-2">
-                    <p class="text-xs font-semibold text-rose-100">
-                        "Need immediate 24/7 confidential support right now?"
-                    </p>
+                    <div class="space-y-0.5">
+                        <p class="text-xs font-semibold text-rose-100">
+                            {move || t(locale.get(), Msg::RecoveryCrisisBannerTitle)}
+                        </p>
+                        <p class="text-[11px] text-rose-100/80">
+                            {move || t(locale.get(), Msg::RecoveryCrisis988Detail)}
+                        </p>
+                    </div>
                     <div class="flex flex-wrap items-center gap-2">
                         {CRISIS_RESOURCES
                             .iter()
@@ -902,6 +920,9 @@ pub fn RecoverySearchSection(
                             .collect_view()}
                     </div>
                 </div>
+                <p class="border-t border-rose-300/15 pt-2 text-[11px] text-rose-100/85">
+                    {move || t(locale.get(), Msg::RecoveryCrisisLanguageNote)}
+                </p>
             </div>
 
             // Primary controls: State + Keyword Search + Care Type toggles
@@ -911,7 +932,7 @@ pub fn RecoverySearchSection(
                         for="recovery-state-select"
                         class="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-300"
                     >
-                        "State or Territory"
+                        {move || t(locale.get(), Msg::RecoveryStateLabel)}
                     </label>
                     <select
                         id="recovery-state-select"
@@ -961,7 +982,7 @@ pub fn RecoverySearchSection(
                     <input
                         id="recovery-keyword-input"
                         type="search"
-                        placeholder="e.g. Denver, pool, hot tub, chef, DO psychiatrist, 80203…"
+                        placeholder=move || t(locale.get(), Msg::RecoverySearchPlaceholder)
                         prop:value=move || search_text.get()
                         on:input=move |ev| {
                             search_text.set(event_target_value(&ev));
@@ -973,7 +994,7 @@ pub fn RecoverySearchSection(
 
                 <div class="md:col-span-3">
                     <span class="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-300">
-                        "Care Focus"
+                        {move || t(locale.get(), Msg::RecoveryCareFocus)}
                     </span>
                     <div class="flex flex-wrap gap-2" role="group" aria-label="Care focus">
                         {CareType::ALL
@@ -1015,7 +1036,14 @@ pub fn RecoverySearchSection(
                         disabled=move || locating.get()
                         class="inline-flex min-h-[38px] items-center gap-1.5 rounded-full border border-cyan-400/40 bg-cyan-500/15 px-3.5 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/25 disabled:opacity-50"
                     >
-                        {move || if locating.get() { "Locating…" } else { "Use my location" }}
+                        {move || {
+                            let loc = locale.get();
+                            if locating.get() {
+                                t(loc, Msg::RecoveryLocating)
+                            } else {
+                                t(loc, Msg::RecoveryUseLocation)
+                            }
+                        }}
                     </button>
                     <div class="flex items-center gap-1.5">
                         <label for="recovery-coords" class="sr-only">"Latitude and longitude"</label>
@@ -1139,10 +1167,11 @@ pub fn RecoverySearchSection(
                         {move || {
                             let count = selected_settings.with(Vec::len) + selected_payments.with(Vec::len);
                             let arrow = if show_care_filters.get() { "▲" } else { "▼" };
+                            let label = t(locale.get(), Msg::RecoveryMoreFilters);
                             if count > 0 {
-                                format!("Settings & Insurance ({count}) {arrow}")
+                                format!("{label} ({count}) {arrow}")
                             } else {
-                                format!("Settings & Insurance {arrow}")
+                                format!("{label} {arrow}")
                             }
                         }}
                     </button>
@@ -1202,7 +1231,7 @@ pub fn RecoverySearchSection(
                             on:click=clear_all_filters
                             class="min-h-[38px] rounded-full border border-rose-400/30 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-200 transition hover:bg-rose-500/20"
                         >
-                            "Clear all"
+                            {move || t(locale.get(), Msg::RecoveryClearFilters)}
                         </button>
                     </Show>
                 </div>
@@ -1854,7 +1883,9 @@ pub fn RecoverySearchSection(
                             class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-400/35 bg-emerald-500/15 px-4 py-2.5 text-xs text-emerald-100"
                         >
                             <span>
-                                <strong>"Saved to your local Care Team card: "</strong>
+                                <strong>
+                                    {move || format!("{}: ", t(locale.get(), Msg::RecoverySavedCareTeam))}
+                                </strong>
                                 {name}
                                 " (open Care & Brief tab to review or print)."
                             </span>
@@ -1946,7 +1977,6 @@ pub fn RecoverySearchSection(
                                 }}
                             </p>
                             <div class="flex items-center gap-1.5">
-                                <span class="text-slate-400">"Sort:"</span>
                                 <button
                                     type="button"
                                     aria-pressed=move || (sort_mode.get() == RecoverySort::Name).to_string()
@@ -1962,7 +1992,7 @@ pub fn RecoverySearchSection(
                                         }
                                     }
                                 >
-                                    "Name (A–Z)"
+                                    {move || t(locale.get(), Msg::RecoverySortName)}
                                 </button>
                                 <button
                                     type="button"
@@ -1980,7 +2010,7 @@ pub fn RecoverySearchSection(
                                         }
                                     }
                                 >
-                                    "Nearest"
+                                    {move || t(locale.get(), Msg::RecoverySortDistance)}
                                 </button>
                             </div>
                         </div>
@@ -1997,7 +2027,7 @@ pub fn RecoverySearchSection(
                                         on:click=clear_all_filters
                                         class="mt-3 min-h-[38px] rounded-full border border-emerald-400/40 bg-emerald-500/15 px-4 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
                                     >
-                                        "Reset filters"
+                                        {move || t(locale.get(), Msg::RecoveryClearFilters)}
                                     </button>
                                 </div>
                             }
@@ -2044,7 +2074,7 @@ pub fn RecoverySearchSection(
                                                 on:click=move |_| page.update(|p| *p = p.saturating_sub(1))
                                                 class="min-h-[40px] rounded-full border border-white/15 px-4 py-1.5 font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
                                             >
-                                                "← Previous"
+                                                {move || t(locale.get(), Msg::RecoveryPrevPage)}
                                             </button>
                                             <span class="text-slate-400">
                                                 {format!("Page {} of {}", cur_page + 1, total_pages)}
@@ -2055,7 +2085,7 @@ pub fn RecoverySearchSection(
                                                 on:click=move |_| page.update(|p| *p = p.saturating_add(1))
                                                 class="min-h-[40px] rounded-full border border-white/15 px-4 py-1.5 font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
                                             >
-                                                "Next →"
+                                                {move || t(locale.get(), Msg::RecoveryNextPage)}
                                             </button>
                                         </div>
                                     }
@@ -2112,6 +2142,7 @@ fn render_facility_card(
     on_save_care_team: Option<Callback<SavedCareTeamFacility>>,
     saved_facility_name: RwSignal<Option<String>>,
 ) -> impl IntoView {
+    let locale = use_locale();
     let f = hit.facility;
     let dist = hit.distance_km.map(format_distance);
     let addr_line = f.address.display_line();
@@ -2452,9 +2483,10 @@ fn render_facility_card(
                         view! {
                             <a
                                 href=href
-                                class="inline-flex min-h-[38px] items-center rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
+                                class="inline-flex min-h-[38px] items-center gap-1 rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
                             >
-                                {format!("Call {label}")}
+                                <span>{move || t(locale.get(), Msg::RecoveryCallNow)}</span>
+                                <span dir="ltr">{label}</span>
                             </a>
                         }
                     })
@@ -2465,7 +2497,7 @@ fn render_facility_card(
                     rel="noopener noreferrer"
                     class="inline-flex min-h-[38px] items-center rounded-lg border border-white/15 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-white/30 hover:text-white"
                 >
-                    "Directions ↗"
+                    {move || t(locale.get(), Msg::RecoveryDirections)}
                 </a>
                 {website.map(|url| {
                     view! {
@@ -2475,7 +2507,7 @@ fn render_facility_card(
                             rel="noopener noreferrer"
                             class="inline-flex min-h-[38px] items-center rounded-lg border border-white/15 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-white/30 hover:text-white"
                         >
-                            "Website ↗"
+                            {move || t(locale.get(), Msg::RecoveryWebsite)}
                         </a>
                     }
                 })}
@@ -2485,6 +2517,8 @@ fn render_facility_card(
                         phone: save_phone.clone(),
                         address: save_addr.clone(),
                     };
+                    let check_name = save_name.clone();
+                    let check_name_cls = save_name.clone();
                     view! {
                         <button
                             type="button"
@@ -2492,9 +2526,26 @@ fn render_facility_card(
                                 cb.run(saved_payload.clone());
                                 saved_facility_name.set(Some(saved_payload.name.clone()));
                             }
-                            class="ml-auto inline-flex min-h-[38px] items-center rounded-lg border border-cyan-400/35 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
+                            class=move || {
+                                let is_saved = saved_facility_name
+                                    .with(|cur| cur.as_deref() == Some(check_name_cls.as_str()));
+                                if is_saved {
+                                    "ms-auto inline-flex min-h-[38px] items-center rounded-lg border border-emerald-400/45 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-200 transition"
+                                } else {
+                                    "ms-auto inline-flex min-h-[38px] items-center rounded-lg border border-cyan-400/35 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
+                                }
+                            }
                         >
-                            "+ Care Team"
+                            {move || {
+                                let loc = locale.get();
+                                let is_saved = saved_facility_name
+                                    .with(|cur| cur.as_deref() == Some(check_name.as_str()));
+                                if is_saved {
+                                    t(loc, Msg::RecoverySavedCareTeam)
+                                } else {
+                                    t(loc, Msg::RecoverySaveCareTeam)
+                                }
+                            }}
                         </button>
                     }
                 })}

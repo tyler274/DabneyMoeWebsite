@@ -8,6 +8,8 @@
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::{t, use_locale, Locale, Msg};
+
 #[cfg(any(feature = "hydrate", feature = "csr"))]
 pub const STORAGE_KEY_PHYSICIAN_LAYOUT: &str = "dabney.layout.physician.v1";
 #[cfg(any(feature = "hydrate", feature = "csr"))]
@@ -32,6 +34,14 @@ impl LayoutDensity {
             Self::Compact => "Compact",
             Self::Balanced => "Balanced",
             Self::Spacious => "Spacious",
+        }
+    }
+
+    pub const fn label_for(self, locale: Locale) -> &'static str {
+        match self {
+            Self::Compact => t(locale, Msg::LayoutDensityCompact),
+            Self::Balanced => t(locale, Msg::LayoutDensityBalanced),
+            Self::Spacious => t(locale, Msg::LayoutDensitySpacious),
         }
     }
 
@@ -74,6 +84,14 @@ impl SidebarPlacement {
             Self::Hidden => "Full-width chart",
         }
     }
+
+    pub const fn label_for(self, locale: Locale) -> &'static str {
+        match self {
+            Self::Left => t(locale, Msg::LayoutPanelLeft),
+            Self::Right => t(locale, Msg::LayoutPanelRight),
+            Self::Hidden => t(locale, Msg::LayoutPanelFullWidth),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,6 +106,13 @@ impl PhysicianFocusOrder {
         match self {
             Self::QaFirst => "Chart Q&A first",
             Self::ClinicalFirst => "Problems & Meds first",
+        }
+    }
+
+    pub const fn label_for(self, locale: Locale) -> &'static str {
+        match self {
+            Self::QaFirst => t(locale, Msg::LayoutQaFirst),
+            Self::ClinicalFirst => t(locale, Msg::LayoutClinicalFirst),
         }
     }
 }
@@ -112,6 +137,14 @@ impl PhysicianLayoutPreset {
             Self::FocusedTriage => "Focused Triage",
             Self::ChartFirstSplit => "Chart-First Split",
             Self::CalmReading => "Calm Reading",
+        }
+    }
+
+    pub const fn label_for(self, locale: Locale) -> &'static str {
+        match self {
+            Self::FocusedTriage => t(locale, Msg::LayoutPresetFocusedTriage),
+            Self::ChartFirstSplit => t(locale, Msg::LayoutPresetChartFirstSplit),
+            Self::CalmReading => t(locale, Msg::LayoutPresetCalmReading),
         }
     }
 
@@ -188,6 +221,13 @@ impl PhysicianLayoutPrefs {
     pub fn active_label(&self) -> &'static str {
         self.preset.map_or("Custom", PhysicianLayoutPreset::label)
     }
+
+    pub fn active_label_for(&self, locale: Locale) -> &'static str {
+        self.preset.map_or_else(
+            || t(locale, Msg::LayoutCustomLabel),
+            |p| p.label_for(locale),
+        )
+    }
 }
 
 // ============================================================================
@@ -208,6 +248,13 @@ impl PatientSectionOrder {
             Self::RecordsFirst => "Health records first",
         }
     }
+
+    pub const fn label_for(self, locale: Locale) -> &'static str {
+        match self {
+            Self::AskFirst => t(locale, Msg::LayoutAskFirst),
+            Self::RecordsFirst => t(locale, Msg::LayoutRecordsFirst),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,6 +269,13 @@ impl PatientStartTab {
         match self {
             Self::You => "Your Health (You)",
             Self::Shared => "For My Doctor",
+        }
+    }
+
+    pub const fn label_for(self, locale: Locale) -> &'static str {
+        match self {
+            Self::You => t(locale, Msg::PatientTabYou),
+            Self::Shared => t(locale, Msg::PatientTabDoctor),
         }
     }
 }
@@ -246,6 +300,14 @@ impl PatientLayoutPreset {
             Self::CalmCompanion => "Calm Companion",
             Self::RecordsFirstCompact => "Records-First Compact",
             Self::VisitPrepFocus => "Visit Prep Focus",
+        }
+    }
+
+    pub const fn label_for(self, locale: Locale) -> &'static str {
+        match self {
+            Self::CalmCompanion => t(locale, Msg::LayoutPresetCalmCompanion),
+            Self::RecordsFirstCompact => t(locale, Msg::LayoutPresetRecordsFirstCompact),
+            Self::VisitPrepFocus => t(locale, Msg::LayoutPresetVisitPrepFocus),
         }
     }
 
@@ -314,6 +376,13 @@ impl PatientLayoutPrefs {
     pub fn active_label(&self) -> &'static str {
         self.preset.map_or("Custom", PatientLayoutPreset::label)
     }
+
+    pub fn active_label_for(&self, locale: Locale) -> &'static str {
+        self.preset.map_or_else(
+            || t(locale, Msg::LayoutCustomLabel),
+            |p| p.label_for(locale),
+        )
+    }
 }
 
 // ============================================================================
@@ -363,6 +432,17 @@ impl MentalHealthTab {
         }
     }
 
+    pub const fn label_for(self, locale: Locale) -> &'static str {
+        match self {
+            Self::Overview => t(locale, Msg::MhTabOverview),
+            Self::LogImport => t(locale, Msg::MhTabLogImport),
+            Self::AlertsAi => t(locale, Msg::MhTabAlertsAi),
+            Self::CareBrief => t(locale, Msg::MhTabCareBrief),
+            Self::Recovery => t(locale, Msg::MhTabRecovery),
+            Self::All => t(locale, Msg::MhTabAll),
+        }
+    }
+
     pub fn from_query_search(search: &str) -> Option<Self> {
         for pair in search.trim_start_matches('?').split('&') {
             if let Some(val) = pair.strip_prefix("tab=") {
@@ -401,6 +481,14 @@ impl MentalHealthLayoutPreset {
             Self::GuidedTabs => "Guided Tabs",
             Self::DailyCheckInAndRecovery => "Daily Check-In & Care",
             Self::FullAnalyticsWall => "Full Analytics Wall",
+        }
+    }
+
+    pub const fn label_for(self, locale: Locale) -> &'static str {
+        match self {
+            Self::GuidedTabs => t(locale, Msg::LayoutPresetGuidedTabs),
+            Self::DailyCheckInAndRecovery => t(locale, Msg::LayoutPresetDailyCheckIn),
+            Self::FullAnalyticsWall => t(locale, Msg::LayoutPresetFullAnalyticsWall),
         }
     }
 
@@ -478,6 +566,13 @@ impl MentalHealthLayoutPrefs {
         self.preset
             .map_or("Custom", MentalHealthLayoutPreset::label)
     }
+
+    pub fn active_label_for(&self, locale: Locale) -> &'static str {
+        self.preset.map_or_else(
+            || t(locale, Msg::LayoutCustomLabel),
+            |p| p.label_for(locale),
+        )
+    }
 }
 
 // ============================================================================
@@ -517,11 +612,16 @@ pub fn PhysicianLayoutCustomizer(
     open: RwSignal<bool>,
     saved_notice: RwSignal<Option<String>>,
 ) -> impl IntoView {
+    let locale = use_locale();
     let persist = move |next: PhysicianLayoutPrefs, label: &str| {
         #[cfg(any(feature = "hydrate", feature = "csr"))]
         save_layout_prefs(STORAGE_KEY_PHYSICIAN_LAYOUT, &next);
         prefs.set(next);
-        saved_notice.set(Some(format!("Saved layout: {label}")));
+        let loc = locale.get_untracked();
+        saved_notice.set(Some(format!(
+            "{}: {label}",
+            t(loc, Msg::LayoutButtonPrefix)
+        )));
     };
 
     view! {
@@ -533,7 +633,14 @@ pub fn PhysicianLayoutCustomizer(
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div>
                         <p class="text-xs font-semibold uppercase tracking-widest text-cyan-300">
-                            "Workspace Layout · Saved on This Device"
+                            {move || {
+                                let loc = locale.get();
+                                format!(
+                                    "{} · {}",
+                                    t(loc, Msg::LayoutButtonPrefix),
+                                    t(loc, Msg::LayoutSavedOnDevice)
+                                )
+                            }}
                         </p>
                         <p class="mt-0.5 text-xs text-slate-300">
                             "Pick a suggested layout preset or fine-tune sidebar placement, density, and visible chart sections."
@@ -547,18 +654,23 @@ pub fn PhysicianLayoutCustomizer(
                                 #[cfg(any(feature = "hydrate", feature = "csr"))]
                                 clear_layout_prefs(STORAGE_KEY_PHYSICIAN_LAYOUT);
                                 prefs.set(default);
-                                saved_notice.set(Some("Reset to Focused Triage default.".to_string()));
+                                let loc = locale.get_untracked();
+                                saved_notice.set(Some(format!(
+                                    "{}: {}",
+                                    t(loc, Msg::LayoutReset),
+                                    PhysicianLayoutPreset::FocusedTriage.label_for(loc)
+                                )));
                             }
                             class="min-h-[34px] rounded-full border border-white/15 px-3 py-1 text-xs text-slate-300 transition hover:bg-white/10 hover:text-white"
                         >
-                            "Reset"
+                            {move || t(locale.get(), Msg::LayoutReset)}
                         </button>
                         <button
                             type="button"
                             on:click=move |_| open.set(false)
                             class="min-h-[34px] rounded-full border border-white/15 bg-white/[0.04] px-3 py-1 text-xs font-medium text-white transition hover:bg-white/10"
                         >
-                            "Done"
+                            {move || t(locale.get(), Msg::LayoutDone)}
                         </button>
                     </div>
                 </div>
@@ -574,19 +686,26 @@ pub fn PhysicianLayoutCustomizer(
                                 <button
                                     type="button"
                                     aria-pressed=move || is_selected().to_string()
-                                    on:click=move |_| persist(preset.build(), preset.label())
+                                    on:click=move |_| {
+                                        let loc = locale.get_untracked();
+                                        persist(preset.build(), preset.label_for(loc));
+                                    }
                                     class=move || {
                                         if is_selected() {
-                                            "rounded-xl border border-cyan-400/60 bg-cyan-500/15 p-3.5 text-left transition"
+                                            "rounded-xl border border-cyan-400/60 bg-cyan-500/15 p-3.5 text-start transition"
                                         } else {
-                                            "rounded-xl border border-white/10 bg-slate-950/60 p-3.5 text-left transition hover:border-white/25"
+                                            "rounded-xl border border-white/10 bg-slate-950/60 p-3.5 text-start transition hover:border-white/25"
                                         }
                                     }
                                 >
                                     <div class="flex items-center justify-between gap-2">
-                                        <span class="text-sm font-semibold text-white">{preset.label()}</span>
+                                        <span class="text-sm font-semibold text-white">
+                                            {move || preset.label_for(locale.get())}
+                                        </span>
                                         {move || is_selected().then(|| view! {
-                                            <span class="rounded-full bg-cyan-400/20 px-2 py-0.5 text-[10px] font-semibold text-cyan-200">"Active"</span>
+                                            <span class="rounded-full bg-cyan-400/20 px-2 py-0.5 text-[10px] font-semibold text-cyan-200">
+                                                {move || t(locale.get(), Msg::LayoutActiveBadge)}
+                                            </span>
                                         })}
                                     </div>
                                     <p class="mt-1 text-xs leading-relaxed text-slate-300">{preset.description()}</p>
@@ -599,7 +718,9 @@ pub fn PhysicianLayoutCustomizer(
                 // Fine-tuning row
                 <div class="grid gap-4 border-t border-white/10 pt-4 md:grid-cols-3 text-xs">
                     <div class="space-y-2">
-                        <p class="font-semibold uppercase tracking-wider text-slate-400">"Patient Panel"</p>
+                        <p class="font-semibold uppercase tracking-wider text-slate-400">
+                            {move || t(locale.get(), Msg::PhysicianPatientPanel)}
+                        </p>
                         <div class="flex flex-wrap gap-1.5">
                             {SidebarPlacement::ALL
                                 .iter()
@@ -614,7 +735,8 @@ pub fn PhysicianLayoutCustomizer(
                                                 let mut next = prefs.get();
                                                 next.preset = None;
                                                 next.sidebar = placement;
-                                                persist(next, placement.label());
+                                                let loc = locale.get_untracked();
+                                                persist(next, placement.label_for(loc));
                                             }
                                             class=move || {
                                                 if active() {
@@ -624,7 +746,7 @@ pub fn PhysicianLayoutCustomizer(
                                                 }
                                             }
                                         >
-                                            {placement.label()}
+                                            {move || placement.label_for(locale.get())}
                                         </button>
                                     }
                                 })
@@ -648,7 +770,8 @@ pub fn PhysicianLayoutCustomizer(
                                                 let mut next = prefs.get();
                                                 next.preset = None;
                                                 next.density = d;
-                                                persist(next, d.label());
+                                                let loc = locale.get_untracked();
+                                                persist(next, d.label_for(loc));
                                             }
                                             class=move || {
                                                 if active() {
@@ -658,7 +781,7 @@ pub fn PhysicianLayoutCustomizer(
                                                 }
                                             }
                                         >
-                                            {d.label()}
+                                            {move || d.label_for(locale.get())}
                                         </button>
                                     }
                                 })
@@ -675,7 +798,8 @@ pub fn PhysicianLayoutCustomizer(
                                                 let mut next = prefs.get();
                                                 next.preset = None;
                                                 next.order = ord;
-                                                persist(next, ord.label());
+                                                let loc = locale.get_untracked();
+                                                persist(next, ord.label_for(loc));
                                             }
                                             class=move || {
                                                 if active() {
@@ -685,7 +809,7 @@ pub fn PhysicianLayoutCustomizer(
                                                 }
                                             }
                                         >
-                                            {ord.label()}
+                                            {move || ord.label_for(locale.get())}
                                         </button>
                                     }
                                 })
@@ -704,10 +828,11 @@ pub fn PhysicianLayoutCustomizer(
                                         let mut next = prefs.get();
                                         next.preset = None;
                                         next.show_qa = event_target_checked(&ev);
-                                        persist(next, "Custom sections");
+                                        let loc = locale.get_untracked();
+                                        persist(next, t(loc, Msg::LayoutCustomLabel));
                                     }
                                 />
-                                "Chart Q&A"
+                                {move || t(locale.get(), Msg::PhysicianJumpQa)}
                             </label>
                             <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/60 px-2.5 py-1.5 text-slate-200">
                                 <input
@@ -717,10 +842,11 @@ pub fn PhysicianLayoutCustomizer(
                                         let mut next = prefs.get();
                                         next.preset = None;
                                         next.show_clinical_grid = event_target_checked(&ev);
-                                        persist(next, "Custom sections");
+                                        let loc = locale.get_untracked();
+                                        persist(next, t(loc, Msg::LayoutCustomLabel));
                                     }
                                 />
-                                "Problems & Meds"
+                                {move || t(locale.get(), Msg::PhysicianJumpClinical)}
                             </label>
                             <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/60 px-2.5 py-1.5 text-slate-200">
                                 <input
@@ -730,10 +856,11 @@ pub fn PhysicianLayoutCustomizer(
                                         let mut next = prefs.get();
                                         next.preset = None;
                                         next.show_reply_draft = event_target_checked(&ev);
-                                        persist(next, "Custom sections");
+                                        let loc = locale.get_untracked();
+                                        persist(next, t(loc, Msg::LayoutCustomLabel));
                                     }
                                 />
-                                "Draft Reply"
+                                {move || t(locale.get(), Msg::PhysicianJumpReply)}
                             </label>
                             <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/60 px-2.5 py-1.5 text-slate-200">
                                 <input
@@ -743,10 +870,11 @@ pub fn PhysicianLayoutCustomizer(
                                         let mut next = prefs.get();
                                         next.preset = None;
                                         next.show_source_records = event_target_checked(&ev);
-                                        persist(next, "Custom sections");
+                                        let loc = locale.get_untracked();
+                                        persist(next, t(loc, Msg::LayoutCustomLabel));
                                     }
                                 />
-                                "Source Records"
+                                {move || t(locale.get(), Msg::PhysicianJumpRecords)}
                             </label>
                         </div>
                     </div>
@@ -767,6 +895,7 @@ pub fn PatientLayoutCustomizer(
     saved_notice: RwSignal<Option<String>>,
     on_apply_start_tab: Callback<PatientStartTab>,
 ) -> impl IntoView {
+    let locale = use_locale();
     let persist = move |next: PatientLayoutPrefs, label: &str, switch_tab: bool| {
         #[cfg(any(feature = "hydrate", feature = "csr"))]
         save_layout_prefs(STORAGE_KEY_PATIENT_LAYOUT, &next);
@@ -775,7 +904,11 @@ pub fn PatientLayoutCustomizer(
         if switch_tab {
             on_apply_start_tab.run(tab);
         }
-        saved_notice.set(Some(format!("Saved layout: {label}")));
+        let loc = locale.get_untracked();
+        saved_notice.set(Some(format!(
+            "{}: {label}",
+            t(loc, Msg::LayoutButtonPrefix)
+        )));
     };
 
     view! {
@@ -787,7 +920,14 @@ pub fn PatientLayoutCustomizer(
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div>
                         <p class="text-xs font-semibold uppercase tracking-widest text-emerald-300">
-                            "Your Layout · Saved on This Device"
+                            {move || {
+                                let loc = locale.get();
+                                format!(
+                                    "{} · {}",
+                                    t(loc, Msg::LayoutButtonPrefix),
+                                    t(loc, Msg::LayoutSavedOnDevice)
+                                )
+                            }}
                         </p>
                         <p class="mt-0.5 text-xs text-slate-300">
                             "Choose a suggested layout or customize section order, density, and your default tab."
@@ -802,18 +942,23 @@ pub fn PatientLayoutCustomizer(
                                 clear_layout_prefs(STORAGE_KEY_PATIENT_LAYOUT);
                                 prefs.set(default);
                                 on_apply_start_tab.run(PatientStartTab::You);
-                                saved_notice.set(Some("Reset to Calm Companion default.".to_string()));
+                                let loc = locale.get_untracked();
+                                saved_notice.set(Some(format!(
+                                    "{}: {}",
+                                    t(loc, Msg::LayoutReset),
+                                    PatientLayoutPreset::CalmCompanion.label_for(loc)
+                                )));
                             }
                             class="min-h-[34px] rounded-full border border-white/15 px-3 py-1 text-xs text-slate-300 transition hover:bg-white/10 hover:text-white"
                         >
-                            "Reset"
+                            {move || t(locale.get(), Msg::LayoutReset)}
                         </button>
                         <button
                             type="button"
                             on:click=move |_| open.set(false)
                             class="min-h-[34px] rounded-full border border-white/15 bg-white/[0.04] px-3 py-1 text-xs font-medium text-white transition hover:bg-white/10"
                         >
-                            "Done"
+                            {move || t(locale.get(), Msg::LayoutDone)}
                         </button>
                     </div>
                 </div>
@@ -828,19 +973,26 @@ pub fn PatientLayoutCustomizer(
                                 <button
                                     type="button"
                                     aria-pressed=move || is_selected().to_string()
-                                    on:click=move |_| persist(preset.build(), preset.label(), true)
+                                    on:click=move |_| {
+                                        let loc = locale.get_untracked();
+                                        persist(preset.build(), preset.label_for(loc), true);
+                                    }
                                     class=move || {
                                         if is_selected() {
-                                            "rounded-xl border border-emerald-400/60 bg-emerald-500/15 p-3.5 text-left transition"
+                                            "rounded-xl border border-emerald-400/60 bg-emerald-500/15 p-3.5 text-start transition"
                                         } else {
-                                            "rounded-xl border border-white/10 bg-slate-950/60 p-3.5 text-left transition hover:border-white/25"
+                                            "rounded-xl border border-white/10 bg-slate-950/60 p-3.5 text-start transition hover:border-white/25"
                                         }
                                     }
                                 >
                                     <div class="flex items-center justify-between gap-2">
-                                        <span class="text-sm font-semibold text-white">{preset.label()}</span>
+                                        <span class="text-sm font-semibold text-white">
+                                            {move || preset.label_for(locale.get())}
+                                        </span>
                                         {move || is_selected().then(|| view! {
-                                            <span class="rounded-full bg-emerald-400/20 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">"Active"</span>
+                                            <span class="rounded-full bg-emerald-400/20 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">
+                                                {move || t(locale.get(), Msg::LayoutActiveBadge)}
+                                            </span>
                                         })}
                                     </div>
                                     <p class="mt-1 text-xs leading-relaxed text-slate-300">{preset.description()}</p>
@@ -867,7 +1019,8 @@ pub fn PatientLayoutCustomizer(
                                                 let mut next = prefs.get();
                                                 next.preset = None;
                                                 next.density = d;
-                                                persist(next, d.label(), false);
+                                                let loc = locale.get_untracked();
+                                                persist(next, d.label_for(loc), false);
                                             }
                                             class=move || {
                                                 if active() {
@@ -877,7 +1030,7 @@ pub fn PatientLayoutCustomizer(
                                                 }
                                             }
                                         >
-                                            {d.label()}
+                                            {move || d.label_for(locale.get())}
                                         </button>
                                     }
                                 })
@@ -900,7 +1053,8 @@ pub fn PatientLayoutCustomizer(
                                                 let mut next = prefs.get();
                                                 next.preset = None;
                                                 next.order = ord;
-                                                persist(next, ord.label(), false);
+                                                let loc = locale.get_untracked();
+                                                persist(next, ord.label_for(loc), false);
                                             }
                                             class=move || {
                                                 if active() {
@@ -910,7 +1064,7 @@ pub fn PatientLayoutCustomizer(
                                                 }
                                             }
                                         >
-                                            {ord.label()}
+                                            {move || ord.label_for(locale.get())}
                                         </button>
                                     }
                                 })
@@ -929,10 +1083,11 @@ pub fn PatientLayoutCustomizer(
                                         let mut next = prefs.get();
                                         next.preset = None;
                                         next.show_ask_section = event_target_checked(&ev);
-                                        persist(next, "Custom sections", false);
+                                        let loc = locale.get_untracked();
+                                        persist(next, t(loc, Msg::LayoutCustomLabel), false);
                                     }
                                 />
-                                "Ask Curie"
+                                {move || t(locale.get(), Msg::PatientJumpAsk)}
                             </label>
                             <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/60 px-2.5 py-1.5 text-slate-200">
                                 <input
@@ -942,10 +1097,11 @@ pub fn PatientLayoutCustomizer(
                                         let mut next = prefs.get();
                                         next.preset = None;
                                         next.show_private_notes = event_target_checked(&ev);
-                                        persist(next, "Custom sections", false);
+                                        let loc = locale.get_untracked();
+                                        persist(next, t(loc, Msg::LayoutCustomLabel), false);
                                     }
                                 />
-                                "Private Notes"
+                                {move || t(locale.get(), Msg::PatientJumpNotes)}
                             </label>
                         </div>
                     </div>
@@ -966,6 +1122,7 @@ pub fn MentalHealthLayoutCustomizer(
     open: RwSignal<bool>,
     saved_notice: RwSignal<Option<String>>,
 ) -> impl IntoView {
+    let locale = use_locale();
     let persist = move |next: MentalHealthLayoutPrefs, label: &str, apply_tab: bool| {
         #[cfg(any(feature = "hydrate", feature = "csr"))]
         save_layout_prefs(STORAGE_KEY_MENTAL_HEALTH_LAYOUT, &next);
@@ -974,7 +1131,11 @@ pub fn MentalHealthLayoutCustomizer(
         if apply_tab {
             active_tab.set(tab);
         }
-        saved_notice.set(Some(format!("Saved layout: {label}")));
+        let loc = locale.get_untracked();
+        saved_notice.set(Some(format!(
+            "{}: {label}",
+            t(loc, Msg::LayoutButtonPrefix)
+        )));
     };
 
     view! {
@@ -986,7 +1147,14 @@ pub fn MentalHealthLayoutCustomizer(
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div>
                         <p class="text-xs font-semibold uppercase tracking-widest text-cyan-300">
-                            "Dashboard Layout · Saved on This Device"
+                            {move || {
+                                let loc = locale.get();
+                                format!(
+                                    "{} · {}",
+                                    t(loc, Msg::LayoutButtonPrefix),
+                                    t(loc, Msg::LayoutSavedOnDevice)
+                                )
+                            }}
                         </p>
                         <p class="mt-0.5 text-xs text-slate-300">
                             "Pick a suggested layout or choose your starting view, density, and which panels appear."
@@ -1001,18 +1169,23 @@ pub fn MentalHealthLayoutCustomizer(
                                 clear_layout_prefs(STORAGE_KEY_MENTAL_HEALTH_LAYOUT);
                                 prefs.set(default);
                                 active_tab.set(MentalHealthTab::Overview);
-                                saved_notice.set(Some("Reset to Guided Tabs default.".to_string()));
+                                let loc = locale.get_untracked();
+                                saved_notice.set(Some(format!(
+                                    "{}: {}",
+                                    t(loc, Msg::LayoutReset),
+                                    MentalHealthLayoutPreset::GuidedTabs.label_for(loc)
+                                )));
                             }
                             class="min-h-[34px] rounded-full border border-white/15 px-3 py-1 text-xs text-slate-300 transition hover:bg-white/10 hover:text-white"
                         >
-                            "Reset"
+                            {move || t(locale.get(), Msg::LayoutReset)}
                         </button>
                         <button
                             type="button"
                             on:click=move |_| open.set(false)
                             class="min-h-[34px] rounded-full border border-white/15 bg-white/[0.04] px-3 py-1 text-xs font-medium text-white transition hover:bg-white/10"
                         >
-                            "Done"
+                            {move || t(locale.get(), Msg::LayoutDone)}
                         </button>
                     </div>
                 </div>
@@ -1027,19 +1200,26 @@ pub fn MentalHealthLayoutCustomizer(
                                 <button
                                     type="button"
                                     aria-pressed=move || is_selected().to_string()
-                                    on:click=move |_| persist(preset.build(), preset.label(), true)
+                                    on:click=move |_| {
+                                        let loc = locale.get_untracked();
+                                        persist(preset.build(), preset.label_for(loc), true);
+                                    }
                                     class=move || {
                                         if is_selected() {
-                                            "rounded-xl border border-cyan-400/60 bg-cyan-500/15 p-3.5 text-left transition"
+                                            "rounded-xl border border-cyan-400/60 bg-cyan-500/15 p-3.5 text-start transition"
                                         } else {
-                                            "rounded-xl border border-white/10 bg-slate-950/60 p-3.5 text-left transition hover:border-white/25"
+                                            "rounded-xl border border-white/10 bg-slate-950/60 p-3.5 text-start transition hover:border-white/25"
                                         }
                                     }
                                 >
                                     <div class="flex items-center justify-between gap-2">
-                                        <span class="text-sm font-semibold text-white">{preset.label()}</span>
+                                        <span class="text-sm font-semibold text-white">
+                                            {move || preset.label_for(locale.get())}
+                                        </span>
                                         {move || is_selected().then(|| view! {
-                                            <span class="rounded-full bg-cyan-400/20 px-2 py-0.5 text-[10px] font-semibold text-cyan-200">"Active"</span>
+                                            <span class="rounded-full bg-cyan-400/20 px-2 py-0.5 text-[10px] font-semibold text-cyan-200">
+                                                {move || t(locale.get(), Msg::LayoutActiveBadge)}
+                                            </span>
                                         })}
                                     </div>
                                     <p class="mt-1 text-xs leading-relaxed text-slate-300">{preset.description()}</p>
@@ -1061,7 +1241,8 @@ pub fn MentalHealthLayoutCustomizer(
                                     let mut next = prefs.get();
                                     next.preset = None;
                                     next.default_tab = tab;
-                                    persist(next, tab.label(), true);
+                                    let loc = locale.get_untracked();
+                                    persist(next, tab.label_for(loc), true);
                                 }
                             }
                             class="min-h-[38px] w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-1.5 text-xs text-white focus:border-cyan-400 focus:outline-none"
@@ -1071,7 +1252,9 @@ pub fn MentalHealthLayoutCustomizer(
                                 .copied()
                                 .map(|tab| {
                                     view! {
-                                        <option value=tab.slug()>{tab.label()}</option>
+                                        <option value=tab.slug()>
+                                            {move || tab.label_for(locale.get())}
+                                        </option>
                                     }
                                 })
                                 .collect_view()}
@@ -1094,7 +1277,8 @@ pub fn MentalHealthLayoutCustomizer(
                                                 let mut next = prefs.get();
                                                 next.preset = None;
                                                 next.density = d;
-                                                persist(next, d.label(), false);
+                                                let loc = locale.get_untracked();
+                                                persist(next, d.label_for(loc), false);
                                             }
                                             class=move || {
                                                 if active() {
@@ -1104,7 +1288,7 @@ pub fn MentalHealthLayoutCustomizer(
                                                 }
                                             }
                                         >
-                                            {d.label()}
+                                            {move || d.label_for(locale.get())}
                                         </button>
                                     }
                                 })
@@ -1123,7 +1307,8 @@ pub fn MentalHealthLayoutCustomizer(
                                         let mut next = prefs.get();
                                         next.preset = None;
                                         next.show_kpi_strip = event_target_checked(&ev);
-                                        persist(next, "Custom modules", false);
+                                        let loc = locale.get_untracked();
+                                        persist(next, t(loc, Msg::LayoutCustomLabel), false);
                                     }
                                 />
                                 "KPI Strip"
@@ -1136,7 +1321,8 @@ pub fn MentalHealthLayoutCustomizer(
                                         let mut next = prefs.get();
                                         next.preset = None;
                                         next.show_alerts = event_target_checked(&ev);
-                                        persist(next, "Custom modules", false);
+                                        let loc = locale.get_untracked();
+                                        persist(next, t(loc, Msg::LayoutCustomLabel), false);
                                     }
                                 />
                                 "Alerts"
@@ -1149,7 +1335,8 @@ pub fn MentalHealthLayoutCustomizer(
                                         let mut next = prefs.get();
                                         next.preset = None;
                                         next.show_ai_chat = event_target_checked(&ev);
-                                        persist(next, "Custom modules", false);
+                                        let loc = locale.get_untracked();
+                                        persist(next, t(loc, Msg::LayoutCustomLabel), false);
                                     }
                                 />
                                 "AI Chat"
@@ -1162,10 +1349,11 @@ pub fn MentalHealthLayoutCustomizer(
                                         let mut next = prefs.get();
                                         next.preset = None;
                                         next.show_recovery_search = event_target_checked(&ev);
-                                        persist(next, "Custom modules", false);
+                                        let loc = locale.get_untracked();
+                                        persist(next, t(loc, Msg::LayoutCustomLabel), false);
                                     }
                                 />
-                                "Recovery Finder"
+                                {move || t(locale.get(), Msg::MhTabRecovery)}
                             </label>
                             <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/60 px-2.5 py-1.5 text-slate-200">
                                 <input
@@ -1175,10 +1363,11 @@ pub fn MentalHealthLayoutCustomizer(
                                         let mut next = prefs.get();
                                         next.preset = None;
                                         next.show_support_brief = event_target_checked(&ev);
-                                        persist(next, "Custom modules", false);
+                                        let loc = locale.get_untracked();
+                                        persist(next, t(loc, Msg::LayoutCustomLabel), false);
                                     }
                                 />
-                                "Care & Brief"
+                                {move || t(locale.get(), Msg::MhTabCareBrief)}
                             </label>
                         </div>
                     </div>
@@ -1233,5 +1422,36 @@ mod tests {
             Some(MentalHealthTab::LogImport)
         );
         assert_eq!(MentalHealthTab::from_query_search(""), None);
+    }
+
+    #[test]
+    fn localized_labels_match_english_defaults_and_translate_for_non_english() {
+        for d in LayoutDensity::ALL {
+            assert_eq!(d.label_for(Locale::En), d.label());
+            assert_ne!(d.label_for(Locale::Ar), d.label());
+        }
+        for s in SidebarPlacement::ALL {
+            assert_eq!(s.label_for(Locale::En), s.label());
+            assert_ne!(s.label_for(Locale::Es), s.label());
+        }
+        for p in PhysicianLayoutPreset::ALL {
+            assert_eq!(p.label_for(Locale::En), p.label());
+        }
+        for p in PatientLayoutPreset::ALL {
+            assert_eq!(p.label_for(Locale::En), p.label());
+        }
+        for p in MentalHealthLayoutPreset::ALL {
+            assert_eq!(p.label_for(Locale::En), p.label());
+        }
+        let custom = PhysicianLayoutPrefs {
+            preset: None,
+            ..PhysicianLayoutPrefs::default()
+        };
+        assert_eq!(custom.active_label(), "Custom");
+        assert_eq!(custom.active_label_for(Locale::En), "Custom");
+        assert_eq!(
+            custom.active_label_for(Locale::Ar),
+            t(Locale::Ar, Msg::LayoutCustomLabel)
+        );
     }
 }

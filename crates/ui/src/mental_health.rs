@@ -8,7 +8,8 @@ use leptos_router::hooks::use_location;
 #[cfg(any(feature = "hydrate", feature = "csr"))]
 use crate::dashboard_layout::{load_layout_prefs, STORAGE_KEY_MENTAL_HEALTH_LAYOUT};
 use crate::dashboard_layout::{
-    MentalHealthLayoutCustomizer, MentalHealthLayoutPrefs, MentalHealthTab,
+    MentalHealthLayoutCustomizer, MentalHealthLayoutPrefs, MentalHealthLayoutPreset,
+    MentalHealthTab,
 };
 #[cfg(any(feature = "hydrate", feature = "csr"))]
 use crate::health_bridge::{
@@ -22,6 +23,7 @@ use crate::health_bridge::{
     collect_cgm_grounding_facts_with_analytics, synthesize_grounded_cgm_answer_with_analytics,
     AppAlertStatusUi, HealthBridgeStatusUi, LocalChatTurn, LocalLlmStatusUi, PersonalVaultStatusUi,
 };
+use crate::i18n::{t, use_locale, Msg};
 use crate::info_tip::InfoTip;
 use crate::local_ai_chat::{PersonalCgmAiChatSection, PersonalVaultBar};
 use crate::mental_health_3d::LingoMood3DChart;
@@ -174,6 +176,7 @@ fn parse_optional_scale_score(raw: &str, max_val: u8, name: &str) -> Result<Opti
 
 #[component]
 pub fn MentalHealthPage() -> impl IntoView {
+    let locale = use_locale();
     let initial_import = parse_commercial_glucose_input(SAMPLE_LINGO_CSV, None).ok();
     let csv_input = RwSignal::new(SAMPLE_LINGO_CSV.to_string());
     let monitor_hint = RwSignal::new(Option::<GlucoseMonitor>::None);
@@ -1387,10 +1390,10 @@ pub fn MentalHealthPage() -> impl IntoView {
             <div class="print-hide print:hidden mb-10 flex flex-col gap-6 border-b border-white/10 pb-8 md:flex-row md:items-end md:justify-between">
                 <div class="max-w-2xl">
                     <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-cyan-400">
-                        "Curie Mobile · Metabolic Health & All Commercial CGMs"
+                        {move || t(locale.get(), Msg::MhEyebrow)}
                     </p>
                     <h1 class="text-3xl font-bold tracking-tight text-white sm:text-4xl">
-                        "Mental Health & Comprehensive Glucose Tracking"
+                        {move || t(locale.get(), Msg::MhTitle)}
                     </h1>
                     <p class="mt-3 text-base leading-relaxed text-slate-300">
                         "Auto-detect and analyze exports from Abbott Lingo, FreeStyle Libre (LibreView), Dexcom G6/G7/Stelo (Clarity), Medtronic CareLink, Senseonics Eversense, Tandem, Omnipod/Glooko/Tidepool, and fingerstick meters in mg/dL or mmol/L—paired privately with mood, anxiety, PHQ-9, GAD-7, and ASRM on your device."
@@ -1401,13 +1404,13 @@ pub fn MentalHealthPage() -> impl IntoView {
                         href="/clinical/patient"
                         attr:class="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
                     >
-                        "Open Curie Mobile →"
+                        {move || t(locale.get(), Msg::MhOpenMobile)}
                     </A>
                     <A
                         href="/clinical/physician"
                         attr:class="inline-flex items-center gap-2 rounded-full bg-cyan-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
                     >
-                        "Open Curie Clinic →"
+                        {move || t(locale.get(), Msg::MhOpenClinic)}
                     </A>
                     {move || if confirm_reset_hero.get() {
                         view! {
@@ -1437,7 +1440,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                                 on:click=move |_| confirm_reset_hero.set(true)
                                 class="min-h-[40px] rounded-full border border-white/15 px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/5"
                             >
-                                "Reset sample"
+                                {move || t(locale.get(), Msg::MhResetSample)}
                             </button>
                         }
                         .into_any()
@@ -1461,6 +1464,14 @@ pub fn MentalHealthPage() -> impl IntoView {
                         .copied()
                         .map(|tab| {
                             let is_active = move || active_tab.get() == tab;
+                            let tab_msg = match tab {
+                                MentalHealthTab::Overview => Msg::MhTabOverview,
+                                MentalHealthTab::LogImport => Msg::MhTabLogImport,
+                                MentalHealthTab::AlertsAi => Msg::MhTabAlertsAi,
+                                MentalHealthTab::CareBrief => Msg::MhTabCareBrief,
+                                MentalHealthTab::Recovery => Msg::MhTabRecovery,
+                                MentalHealthTab::All => Msg::MhTabAll,
+                            };
                             view! {
                                 <button
                                     type="button"
@@ -1482,7 +1493,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                                         }
                                     }
                                 >
-                                    {tab.label()}
+                                    {move || t(locale.get(), tab_msg)}
                                 </button>
                             }
                         })
@@ -1500,7 +1511,22 @@ pub fn MentalHealthPage() -> impl IntoView {
                         }
                     }
                 >
-                    {move || format!("Layout: {} ▾", layout_prefs.get().active_label())}
+                    {move || {
+                        let loc = locale.get();
+                        let preset_label = match layout_prefs.get().preset {
+                            Some(MentalHealthLayoutPreset::GuidedTabs) => {
+                                t(loc, Msg::LayoutPresetGuidedTabs)
+                            }
+                            Some(MentalHealthLayoutPreset::DailyCheckInAndRecovery) => {
+                                t(loc, Msg::LayoutPresetDailyCheckIn)
+                            }
+                            Some(MentalHealthLayoutPreset::FullAnalyticsWall) => {
+                                t(loc, Msg::LayoutPresetFullAnalyticsWall)
+                            }
+                            None => t(loc, Msg::LayoutCustomLabel),
+                        };
+                        format!("{}: {} ▾", t(loc, Msg::LayoutButtonPrefix), preset_label)
+                    }}
                 </button>
             </div>
 
@@ -1623,7 +1649,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                                 on:click=move |_| active_tab.set(MentalHealthTab::LogImport)
                                 class="inline-flex min-h-[38px] shrink-0 items-center rounded-full bg-cyan-400 px-4 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-300"
                             >
-                                "Upload your CGM file ↓"
+                                {move || t(locale.get(), Msg::MhUploadCgmCta)}
                             </a>
                         </div>
                     }
@@ -2093,7 +2119,9 @@ pub fn MentalHealthPage() -> impl IntoView {
             >
             <div class="print-hide print:hidden mb-8 grid gap-6 lg:grid-cols-2">
                 <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
-                    <h2 class="mb-1 text-lg font-semibold text-white">"Log Mental Health Check-In"</h2>
+                    <h2 class="mb-1 text-lg font-semibold text-white">
+                        {move || t(locale.get(), Msg::MhLogCheckInHeading)}
+                    </h2>
                     <p class="mb-4 text-sm text-slate-400">
                         {move || format!(
                             "Correlates immediately with your nearest {} reading and prior 2-hour excursion peak.",
@@ -2233,7 +2261,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                                 type="submit"
                                 class="min-h-[40px] rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
                             >
-                                "Add check-in"
+                                {move || t(locale.get(), Msg::MhAddCheckIn)}
                             </button>
                             {move || form_status.get().map(|msg| view! {
                                 <span role="status" aria-live="polite" class="text-xs text-emerald-300">
@@ -2246,7 +2274,9 @@ pub fn MentalHealthPage() -> impl IntoView {
 
                 <section id="cgm-import" class="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
                     <div class="mb-1 flex flex-wrap items-center justify-between gap-2">
-                        <h2 class="text-lg font-semibold text-white">"Commercial CGM & Glucose File Import"</h2>
+                        <h2 class="text-lg font-semibold text-white">
+                            {move || t(locale.get(), Msg::MhCgmImportHeading)}
+                        </h2>
                         <span class="rounded-full border border-white/10 bg-slate-900 px-2.5 py-0.5 text-[11px] text-cyan-300">
                             {move || format!("{} ({})", detected_monitor.get().display_name(), source_unit.get().label())}
                         </span>
@@ -2258,7 +2288,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                         <summary class="cursor-pointer font-semibold text-cyan-200">
                             "How to export from Abbott Lingo (+ Android Health Connect / Apple Health)"
                         </summary>
-                        <ol class="mt-2 list-decimal space-y-1 pl-4 text-[11px] leading-relaxed text-slate-300">
+                        <ol class="mt-2 list-decimal space-y-1 ps-4 text-[11px] leading-relaxed text-slate-300">
                             <li>"Open the Abbott Lingo app → You → Profile → Actions → Export your glucose data → Download file."</li>
                             <li>"Choose that CSV below (or an Apple Health export.xml or Health Connect JSON) — everything parses locally on your device and stays private (stored encrypted on this device only when local vault is enabled)."</li>
                             <li>"Live Health Connect / Apple Health sync is available inside the opt-in personal Curie Mobile app, keeping the public browser demo strictly zero-PHI."</li>
@@ -2343,7 +2373,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                                 type="file"
                                 accept=".csv,.txt,.json,.xml,text/csv,application/json,application/xml,text/xml"
                                 on:change=on_cgm_file_change
-                                class="mt-1 block w-full text-xs text-slate-300 file:mr-2 file:rounded-full file:border-0 file:bg-cyan-500 file:px-3 file:py-1 file:text-xs file:font-semibold file:text-slate-950 hover:file:bg-cyan-400"
+                                class="mt-1 block w-full text-xs text-slate-300 file:me-2 file:rounded-full file:border-0 file:bg-cyan-500 file:px-3 file:py-1 file:text-xs file:font-semibold file:text-slate-950 hover:file:bg-cyan-400"
                             />
                         </label>
                     </div>
@@ -2394,7 +2424,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                             on:click=apply_csv
                             class="min-h-[40px] rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50"
                         >
-                            "Parse & Validate Export"
+                            {move || t(locale.get(), Msg::MhParseValidateExport)}
                         </button>
                         {move || csv_error.get().map(|err| view! {
                             <span role="alert" class="text-xs text-rose-400">{err}</span>
@@ -2410,7 +2440,9 @@ pub fn MentalHealthPage() -> impl IntoView {
             <section class="print-hide print:hidden rounded-2xl border border-white/10 bg-white/[0.02] p-6">
                 <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <div>
-                        <h2 class="mb-1 text-lg font-semibold text-white">"Glucose–Mood Correlation Log"</h2>
+                        <h2 class="mb-1 text-lg font-semibold text-white">
+                            {move || t(locale.get(), Msg::MhCorrelationLogHeading)}
+                        </h2>
                         <p class="text-sm text-slate-400">
                             {move || format!(
                                 "Each mental health check-in paired with nearest {} glucose and peak reading in the preceding 2 hours.",
@@ -2427,19 +2459,19 @@ pub fn MentalHealthPage() -> impl IntoView {
                                 download="curie-mental-health-cgm.csv"
                                 class="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-4 py-2 text-xs font-medium text-slate-200 transition hover:bg-white/5"
                             >
-                                "Download CSV"
+                                {move || t(locale.get(), Msg::MhDownloadCsv)}
                             </a>
                         }
                     }}
                 </div>
                 <div class="overflow-x-auto">
-                    <table class="w-full min-w-[600px] border-collapse text-left text-sm">
+                    <table class="w-full min-w-[600px] border-collapse text-start text-sm">
                         <thead>
                             <tr class="border-b border-white/10 text-xs uppercase tracking-wider text-slate-400">
-                                <th class="py-2 pr-4">"Time"</th>
-                                <th class="py-2 pr-4">"Glucose / 2h Peak"</th>
-                                <th class="py-2 pr-4">"Mood · Anx · Eng"</th>
-                                <th class="py-2 pr-4">"Pattern"</th>
+                                <th class="py-2 pe-4">"Time"</th>
+                                <th class="py-2 pe-4">"Glucose / 2h Peak"</th>
+                                <th class="py-2 pe-4">"Mood · Anx · Eng"</th>
+                                <th class="py-2 pe-4">"Pattern"</th>
                                 <th class="py-2">"Context"</th>
                             </tr>
                         </thead>
@@ -2480,14 +2512,14 @@ pub fn MentalHealthPage() -> impl IntoView {
                                     };
                                     view! {
                                         <tr>
-                                            <td class="py-3 pr-4 whitespace-nowrap font-mono text-xs text-slate-300">{row.recorded_at}</td>
-                                            <td class="py-3 pr-4 whitespace-nowrap font-mono text-xs text-cyan-300">
+                                            <td class="py-3 pe-4 whitespace-nowrap font-mono text-xs text-slate-300">{row.recorded_at}</td>
+                                            <td class="py-3 pe-4 whitespace-nowrap font-mono text-xs text-cyan-300">
                                                 {format!("{:.0} / {:.0} mg/dL", row.nearest_glucose_mg_dl, row.peak_prior_2h_mg_dl)}
                                             </td>
-                                            <td class="py-3 pr-4 whitespace-nowrap text-xs">
+                                            <td class="py-3 pe-4 whitespace-nowrap text-xs">
                                                 {format!("{}/10 · {}/10 · {}/10", row.mood, row.anxiety, row.energy)}
                                             </td>
-                                            <td class="py-3 pr-4 whitespace-nowrap">{badge}</td>
+                                            <td class="py-3 pe-4 whitespace-nowrap">{badge}</td>
                                             <td class="py-3 text-xs text-slate-300">{row.note}</td>
                                         </tr>
                                     }
