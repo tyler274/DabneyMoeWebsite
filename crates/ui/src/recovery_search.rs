@@ -2066,11 +2066,13 @@ pub fn RecoverySearchSection(
 
                                 // Pagination
                                 {if total_pages > 1 {
+                                    let is_first_page = cur_page == 0;
+                                    let is_last_page = cur_page + 1 >= total_pages;
                                     view! {
                                         <div class="flex items-center justify-between border-t border-white/10 pt-4 text-xs">
                                             <button
                                                 type="button"
-                                                disabled=cur_page == 0
+                                                disabled=is_first_page
                                                 on:click=move |_| page.update(|p| *p = p.saturating_sub(1))
                                                 class="min-h-[40px] rounded-full border border-white/15 px-4 py-1.5 font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
                                             >
@@ -2081,7 +2083,7 @@ pub fn RecoverySearchSection(
                                             </span>
                                             <button
                                                 type="button"
-                                                disabled=cur_page + 1 >= total_pages
+                                                disabled=is_last_page
                                                 on:click=move |_| page.update(|p| *p = p.saturating_add(1))
                                                 class="min-h-[40px] rounded-full border border-white/15 px-4 py-1.5 font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
                                             >
