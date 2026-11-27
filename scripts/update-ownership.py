@@ -34,7 +34,7 @@ EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 DEFAULT_OUTPUT_REL = Path("crates/ui/data/ownership-metrics.json")
 
 # Generated OpenAPI wire crate excluded from manual authorship blame.
-EXCLUDED_UPSTREAM_PREFIXES = ("crates/duet-wire/",)
+EXCLUDED_UPSTREAM_PREFIXES = ("crates/duet-wire/", "crates/mobile-wire/")
 
 # Areas reclaimed via two-stage Chinese-wall REA clean-room rewrites.
 RECLAIMED_CLEAN_ROOM_AREAS = frozenset(
@@ -131,6 +131,12 @@ DEFAULT_REPLACEMENT_LEDGER: list[dict[str, str]] = [
         "replacement": "Two-stage Chinese-wall REA rewrites (149 Evidence JSONs; 100% of 38 Rust crates >=90% Tyler or Reclaimed; full workspace Clippy host+wasm32 & all PG 16 + 5/5 Chromium suites PASS)",
         "owner": "100% clean-room @tyler274",
     },
+    {
+        "category": "Standalone workspace Wave 5A+5B & Curie/Moleworks rebase (ad5951c74)",
+        "removed": "Final 285 unrewritten files across physician-app, local-product, physician-sample, 26 tail Rust crates, infra/gcp, workflows & skills (0 remaining external lines)",
+        "replacement": "Two-stage Chinese-wall REA v6.8.0 rewrites (286 Wave 5 bundles -> 696 cumulative) layered onto the strictly-Tyler Curie/Moleworks export (43 crates, 26/26 Chromium site, 1,143 mdbook links, 0.0% Eli/Dev)",
+        "owner": "100% clean-room @tyler274",
+    },
 ]
 
 DEFAULT_REA_EVIDENCE: list[dict[str, Any]] = [
@@ -211,6 +217,18 @@ DEFAULT_REA_EVIDENCE: list[dict[str, Any]] = [
         "evidence_id": "ev_e950677700db44e8ab2f54415365bdcd0efefdece9a34817e2f2a0637660b119",
         "bundles": 45,
         "scope": "Black-box specs for 30 ops/config/book/extension/script files (dev/ 98.1%, extension/ 97.2%, scripts/ 97.0%, book/ 91.2%; 1,157 lychee links + 11/11 connector + 33/33 CI unit tests PASS)",
+    },
+    {
+        "operation": "inspect_rust_binary + capture_process (Wave 5A Apps/Infra/Local/Ops/Skills · 171 bundles)",
+        "evidence_id": "ev_4760d39270db8f4ce977db94fb1be94c443ffd97e6ce2033b128fcf84e21a80b",
+        "bundles": 171,
+        "scope": "Black-box specs for 156 remaining files across physician-app/client, local-product (227/227 tests), infra/gcp (173/173 OpenTofu), ops/Nix (69/69 tests), workflows & skills (124/124) plus in-repo mdbook chapter",
+    },
+    {
+        "operation": "inspect_rust_binary + capture_process (Wave 5B Tail-Rust/Physician-Sample · 115 bundles)",
+        "evidence_id": "ev_8ad69016fd1d7e94fb7c01c8f943b951bc7ffa58d9c59a76856d00b1e8ad4fb4",
+        "bundles": 115,
+        "scope": "Black-box specs for final 129 unrewritten files: 26 tail Rust crates (606/606 unit + 44/44 PG 16) and physician-sample (151/151 unit + 65/65 PG 16 + 33/33 Chromium); rebased onto Curie/Moleworks 43-crate workspace (ad5951c74, 0.0% Eli/Dev)",
     },
 ]
 
