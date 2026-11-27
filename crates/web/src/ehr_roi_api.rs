@@ -20,9 +20,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use clinical_workspace::{
     build_shlink_manifest_request_body, dispatch_roi_request, parse_smart_health_link,
-    render_roi_cover_text, render_roi_form_html, sign_kipu_request, validate_roi_request,
-    KipuAuthScheme, RoiBatchDispatchReport, RoiDispatchItemOutcome, RoiRequest, RoiStatus,
-    KIPU_DEFAULT_BASE_URL,
+    render_roi_cover_text, render_roi_form_html, sign_kipu_request, validate_public_https_url,
+    validate_roi_request, KipuAuthScheme, RoiBatchDispatchReport, RoiDispatchItemOutcome,
+    RoiRequest, RoiStatus, KIPU_DEFAULT_BASE_URL,
 };
 use serde::{Deserialize, Serialize};
 use tower_http::limit::RequestBodyLimitLayer;
@@ -33,10 +33,24 @@ const MAX_ROI_DISPATCH_BODY: usize = 256 * 1024;
 
 /// Optional operator configuration for automated server-side ROI dispatch
 /// (for example an e-fax / HIM email relay webhook).
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Implements redacted [`std::fmt::Debug`] so `bearer_token` is never exposed.
+#[derive(Clone, PartialEq, Eq)]
 pub struct RoiWebhookConfig {
     webhook_url: Url,
     bearer_token: Option<String>,
+}
+
+impl std::fmt::Debug for RoiWebhookConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RoiWebhookConfig")
+            .field("webhook_url", &self.webhook_url)
+            .field(
+                "bearer_token",
+                &self.bearer_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish()
+    }
 }
 
 impl RoiWebhookConfig {
@@ -798,7 +812,10 @@ async fn shlink_inspect(
             let location_host = if let Some(loc) =
                 f.get("location").and_then(serde_json::Value::as_str)
             {
-                match validate_outbound_url(loc, false) {
+                // Enforce HTTPS-only, port-443-only, and full SSRF guard on every manifest file URL.
+                match validate_public_https_url(loc)
+                    .and_then(|clean| validate_outbound_url(&clean, false))
+                {
                     Ok(valid_loc) => Some(valid_loc.host_str().unwrap_or("unknown").to_string()),
                     Err(err) => {
                         return json_no_store(
@@ -935,6 +952,28 @@ async fn kipu_verify(
         return json_no_store(StatusCode::OK, &summary);
     }
 
+    // Security invariant: never act as an unauthenticated arbitrary-method outbound
+    // HTTP proxy. Live probes are strictly read-only (`GET` / `HEAD`, no request body)
+    // and restricted to the explicit Kipu host allowlist (`api.kipuworks.com` /
+    // `*.kipuworks.com` on HTTPS port 443), with loopback permitted only in local
+    // non-production dev/test mode (`allow_loopback_discovery == true`).
+    if !matches!(signed.method.as_str(), "GET" | "HEAD") {
+        return json_no_store(
+            StatusCode::BAD_REQUEST,
+            &serde_json::json!({
+                "error": "Live Kipu probes are restricted to read-only GET or HEAD requests."
+            }),
+        );
+    }
+    if req.body.as_deref().is_some_and(|b| !b.is_empty()) {
+        return json_no_store(
+            StatusCode::BAD_REQUEST,
+            &serde_json::json!({
+                "error": "Live Kipu probes do not accept a request body."
+            }),
+        );
+    }
+
     let target_url = match Url::parse(&signed.full_url) {
         Ok(u) => u,
         Err(err) => {
@@ -944,6 +983,14 @@ async fn kipu_verify(
             );
         }
     };
+    if !is_allowed_kipu_live_probe_target(&target_url, state.allow_loopback_discovery) {
+        return json_no_store(
+            StatusCode::BAD_REQUEST,
+            &serde_json::json!({
+                "error": "Live Kipu probes are restricted to HTTPS port 443 on `api.kipuworks.com` / `*.kipuworks.com`."
+            }),
+        );
+    }
     if let Err(err) = verify_dns_ssrf_safe(&target_url, state.allow_loopback_discovery).await {
         return json_no_store(
             StatusCode::BAD_REQUEST,
@@ -951,14 +998,9 @@ async fn kipu_verify(
         );
     }
 
-    let req_method = match reqwest::Method::from_bytes(signed.method.as_bytes()) {
-        Ok(m) => m,
-        Err(_) => {
-            return json_no_store(
-                StatusCode::BAD_REQUEST,
-                &serde_json::json!({ "error": "Invalid HTTP method." }),
-            );
-        }
+    let req_method = match signed.method.as_str() {
+        "HEAD" => reqwest::Method::HEAD,
+        _ => reqwest::Method::GET,
     };
     let mut http_req = state
         .http
@@ -971,9 +1013,6 @@ async fn kipu_verify(
     }
     if !signed.content_md5.is_empty() {
         http_req = http_req.header("content-md5", &signed.content_md5);
-    }
-    if let Some(body) = req.body {
-        http_req = http_req.body(body);
     }
 
     match http_req.send().await {
@@ -989,4 +1028,19 @@ async fn kipu_verify(
             }),
         ),
     }
+}
+
+fn is_allowed_kipu_live_probe_target(url: &Url, allow_loopback: bool) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let lower = host.to_ascii_lowercase();
+    if allow_loopback
+        && (lower == "127.0.0.1" || lower == "localhost" || lower == "::1" || lower == "[::1]")
+    {
+        return matches!(url.scheme(), "http" | "https");
+    }
+    url.scheme() == "https"
+        && url.port_or_known_default() == Some(443)
+        && (lower == "api.kipuworks.com" || lower.ends_with(".kipuworks.com"))
 }

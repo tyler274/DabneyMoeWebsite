@@ -31,13 +31,19 @@ pub const HEALTH_PASSPORT_SCHEMA: &str = "dabney.health_passport.v1";
 /// Explicit export options governing sensitive record inclusion in a Portable
 /// Health Passport.
 ///
-/// Hard statutory invariant: `include_part2_sud_records` defaults to `false` so
-/// 42 CFR Part 2 Substance Use Disorder (SUD) records NEVER leak into general
-/// Portable Health Passport exports without explicit patient opt-in.
+/// Hard statutory invariants:
+/// - `include_part2_sud_records` defaults to `false` so 42 CFR Part 2 SUD
+///   records NEVER leak into general Portable Health Passport exports without
+///   explicit patient opt-in.
+/// - `include_part2_sud_counseling_notes` defaults to `false` so separately
+///   maintained SUD counseling notes (42 CFR § 2.31(b)) remain withheld EVEN
+///   when `include_part2_sud_records` is `true`, unless separately opted in!
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PassportExportOptions {
     #[serde(default)]
     pub include_part2_sud_records: bool,
+    #[serde(default)]
+    pub include_part2_sud_counseling_notes: bool,
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -150,6 +156,10 @@ pub struct HealthPassport {
     /// Count of 42 CFR Part 2 SUD records withheld because explicit opt-in was not enabled.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub excluded_part2_record_count: usize,
+    /// Count of 42 CFR § 2.31(b) SUD counseling notes withheld because separate
+    /// written opt-in (`include_part2_sud_counseling_notes`) was not enabled.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub excluded_part2_counseling_note_count: usize,
     /// Verbatim 42 CFR § 2.32(a) Prohibition on Redisclosure notice embedded whenever
     /// `part2_sud_included` is `true`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -250,22 +260,37 @@ pub fn build_health_passport_with_options(
     options: PassportExportOptions,
 ) -> HealthPassport {
     let allow_part2 = options.include_part2_sud_records;
+    let allow_counseling_notes = options.include_part2_sud_counseling_notes;
 
-    let excluded_part2_record_count = if allow_part2 {
+    let item_permitted = |conf: crate::ConfidentialityClass| -> bool {
+        match conf {
+            crate::ConfidentialityClass::StandardHipaa => true,
+            crate::ConfidentialityClass::Part2Sud => allow_part2,
+            crate::ConfidentialityClass::Part2SudCounselingNotes => allow_counseling_notes,
+        }
+    };
+
+    let excluded_part2_counseling_note_count = if allow_counseling_notes {
         0
     } else {
         patient
             .records
             .iter()
-            .filter(|rec| rec.confidentiality.is_part2_sud())
+            .filter(|rec| rec.confidentiality.is_part2_counseling_notes())
             .count()
     };
+
+    let excluded_part2_record_count = patient
+        .records
+        .iter()
+        .filter(|rec| rec.confidentiality.is_part2_sud() && !item_permitted(rec.confidentiality))
+        .count();
 
     let records: Vec<ChartRecord> = match audience {
         PassportAudience::FullPortableBackup => patient
             .records
             .iter()
-            .filter(|rec| allow_part2 || !rec.confidentiality.is_part2_sud())
+            .filter(|rec| item_permitted(rec.confidentiality))
             .cloned()
             .collect(),
         PassportAudience::EmergencyCard => {
@@ -273,7 +298,7 @@ pub fn build_health_passport_with_options(
             patient
                 .records
                 .iter()
-                .filter(|rec| allow_part2 || !rec.confidentiality.is_part2_sud())
+                .filter(|rec| item_permitted(rec.confidentiality))
                 .filter(|rec| state.selected_record_ids.iter().any(|id| id == &rec.id))
                 .take(4)
                 .cloned()
@@ -282,7 +307,7 @@ pub fn build_health_passport_with_options(
         PassportAudience::DoctorOrSpecialist | PassportAudience::CaregiverOrAnyone => patient
             .records
             .iter()
-            .filter(|rec| allow_part2 || !rec.confidentiality.is_part2_sud())
+            .filter(|rec| item_permitted(rec.confidentiality))
             .filter(|rec| state.selected_record_ids.iter().any(|id| id == &rec.id))
             .cloned()
             .collect(),
@@ -290,33 +315,32 @@ pub fn build_health_passport_with_options(
 
     let filtered_allergies: Vec<AllergyEntry> = allergies
         .iter()
-        .filter(|a| allow_part2 || !a.confidentiality.is_part2_sud())
+        .filter(|a| item_permitted(a.confidentiality))
         .cloned()
         .collect();
     let filtered_problems: Vec<Problem> = patient
         .problems
         .iter()
-        .filter(|p| allow_part2 || !p.confidentiality.is_part2_sud())
+        .filter(|p| item_permitted(p.confidentiality))
         .cloned()
         .collect();
     let filtered_medications: Vec<Medication> = patient
         .medications
         .iter()
-        .filter(|m| allow_part2 || !m.confidentiality.is_part2_sud())
+        .filter(|m| item_permitted(m.confidentiality))
         .cloned()
         .collect();
 
-    let part2_sud_included = allow_part2
-        && (records.iter().any(|r| r.confidentiality.is_part2_sud())
-            || filtered_allergies
-                .iter()
-                .any(|a| a.confidentiality.is_part2_sud())
-            || filtered_problems
-                .iter()
-                .any(|p| p.confidentiality.is_part2_sud())
-            || filtered_medications
-                .iter()
-                .any(|m| m.confidentiality.is_part2_sud()));
+    let part2_sud_included = records.iter().any(|r| r.confidentiality.is_part2_sud())
+        || filtered_allergies
+            .iter()
+            .any(|a| a.confidentiality.is_part2_sud())
+        || filtered_problems
+            .iter()
+            .any(|p| p.confidentiality.is_part2_sud())
+        || filtered_medications
+            .iter()
+            .any(|m| m.confidentiality.is_part2_sud());
 
     let part2_redisclosure_notice =
         part2_sud_included.then(|| PART2_REDISCLOSURE_NOTICE_LONG.to_string());
@@ -330,7 +354,7 @@ pub fn build_health_passport_with_options(
                 imported_record_count,
                 ..
             } => {
-                if !allow_part2 && conn.vendor.is_part2_sensitive() {
+                if !allow_part2 && !allow_counseling_notes && conn.vendor.is_part2_sensitive() {
                     return None;
                 }
                 Some(PassportPortalSummary {
@@ -373,6 +397,7 @@ pub fn build_health_passport_with_options(
         excluded_private_note_count: state.personal_notes.len(),
         part2_sud_included,
         excluded_part2_record_count,
+        excluded_part2_counseling_note_count,
         part2_redisclosure_notice,
         integrity_sha256: String::new(),
     };
@@ -427,53 +452,78 @@ pub fn render_passport_fhir_ips_bundle(passport: &HealthPassport) -> Value {
         }
     }));
 
+    let part2_security_meta = |conf: crate::ConfidentialityClass| -> Option<Value> {
+        if !conf.is_part2_sud() {
+            return None;
+        }
+        let mut codings = vec![json!({
+            "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+            "code": "ETHUD",
+            "display": "substance use disorder information sensitivity (42 CFR Part 2)"
+        })];
+        if conf.is_part2_counseling_notes() {
+            codings.push(json!({
+                "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+                "code": "42CFR2.31b",
+                "display": "SUD counseling notes (separate written consent required)"
+            }));
+        }
+        Some(json!({ "security": codings }))
+    };
+
     for (idx, alg) in passport.allergies.iter().enumerate() {
         let id = format!("allergy-{idx}");
         section_entries.push(json!({ "reference": format!("AllergyIntolerance/{id}") }));
-        entries.push(json!({
-            "resource": {
-                "resourceType": "AllergyIntolerance",
-                "id": id,
-                "patient": { "reference": patient_ref },
-                "criticality": alg.criticality.to_ascii_lowercase(),
-                "recordedDate": alg.recorded_at,
-                "code": { "text": alg.substance },
-                "reaction": [{ "manifestation": [{ "text": alg.reaction }] }]
-            }
-        }));
+        let mut res = json!({
+            "resourceType": "AllergyIntolerance",
+            "id": id,
+            "patient": { "reference": patient_ref },
+            "criticality": alg.criticality.to_ascii_lowercase(),
+            "recordedDate": alg.recorded_at,
+            "code": { "text": alg.substance },
+            "reaction": [{ "manifestation": [{ "text": alg.reaction }] }]
+        });
+        if let Some(meta) = part2_security_meta(alg.confidentiality) {
+            res["meta"] = meta;
+        }
+        entries.push(json!({ "resource": res }));
     }
 
     for (idx, prob) in passport.problems.iter().enumerate() {
         let id = format!("condition-{idx}");
         section_entries.push(json!({ "reference": format!("Condition/{id}") }));
-        entries.push(json!({
-            "resource": {
-                "resourceType": "Condition",
-                "id": id,
-                "subject": { "reference": patient_ref },
-                "clinicalStatus": { "text": prob.status },
-                "code": {
-                    "coding": [{ "code": prob.code, "display": prob.label }],
-                    "text": prob.label
-                }
+        let mut res = json!({
+            "resourceType": "Condition",
+            "id": id,
+            "subject": { "reference": patient_ref },
+            "clinicalStatus": { "text": prob.status },
+            "code": {
+                "coding": [{ "code": prob.code, "display": prob.label }],
+                "text": prob.label
             }
-        }));
+        });
+        if let Some(meta) = part2_security_meta(prob.confidentiality) {
+            res["meta"] = meta;
+        }
+        entries.push(json!({ "resource": res }));
     }
 
     for (idx, med) in passport.medications.iter().enumerate() {
         let id = format!("med-{idx}");
         section_entries.push(json!({ "reference": format!("MedicationStatement/{id}") }));
-        entries.push(json!({
-            "resource": {
-                "resourceType": "MedicationStatement",
-                "id": id,
-                "status": "active",
-                "subject": { "reference": patient_ref },
-                "medicationCodeableConcept": { "text": med.name },
-                "dosage": [{ "text": format!("{} ({})", med.dose, med.schedule) }],
-                "reasonCode": [{ "text": med.indication }]
-            }
-        }));
+        let mut res = json!({
+            "resourceType": "MedicationStatement",
+            "id": id,
+            "status": "active",
+            "subject": { "reference": patient_ref },
+            "medicationCodeableConcept": { "text": med.name },
+            "dosage": [{ "text": format!("{} ({})", med.dose, med.schedule) }],
+            "reasonCode": [{ "text": med.indication }]
+        });
+        if let Some(meta) = part2_security_meta(med.confidentiality) {
+            res["meta"] = meta;
+        }
+        entries.push(json!({ "resource": res }));
     }
 
     for rec in &passport.records {
@@ -499,14 +549,8 @@ pub fn render_passport_fhir_ips_bundle(passport: &HealthPassport) -> Value {
             "effectiveDateTime": rec.recorded_at,
             "valueString": value_text
         });
-        if rec.confidentiality.is_part2_sud() {
-            obs["meta"] = json!({
-                "security": [{
-                    "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
-                    "code": "ETHUD",
-                    "display": "substance use disorder information sensitivity (42 CFR Part 2)"
-                }]
-            });
+        if let Some(meta) = part2_security_meta(rec.confidentiality) {
+            obs["meta"] = meta;
         }
         entries.push(json!({ "resource": obs }));
     }
@@ -1070,8 +1114,9 @@ mod tests {
         assert!(!default_json.contains("Naltrexone"));
         assert!(!default_json.contains("F10.21"));
 
-        // Explicit opt-in includes Part 2 records and embeds the verbatim 42 CFR § 2.32 notice
-        // in JSON, Markdown, HTML, and FHIR R4 IPS Bundle!
+        // General Part 2 opt-in includes standard Part 2 SUD records and embeds the
+        // verbatim 42 CFR § 2.32 notice, while STILL withholding 42 CFR § 2.31(b)
+        // separately maintained SUD counseling notes until separately opted in!
         let opted_in = build_health_passport_with_options(
             &nadia,
             &state,
@@ -1082,10 +1127,16 @@ mod tests {
             "2026-11-26T04:30:00Z",
             PassportExportOptions {
                 include_part2_sud_records: true,
+                include_part2_sud_counseling_notes: false,
             },
         );
         assert!(opted_in.part2_sud_included);
-        assert_eq!(opted_in.excluded_part2_record_count, 0);
+        assert_eq!(opted_in.excluded_part2_counseling_note_count, 1);
+        assert_eq!(opted_in.excluded_part2_record_count, 1);
+        assert!(opted_in
+            .records
+            .iter()
+            .all(|r| !r.confidentiality.is_part2_counseling_notes()));
         assert!(opted_in
             .part2_redisclosure_notice
             .as_deref()
@@ -1094,6 +1145,7 @@ mod tests {
 
         let json_out = serde_json::to_string_pretty(&opted_in).unwrap();
         assert!(json_out.contains("42 CFR part 2"));
+        assert!(!json_out.contains("Individual SUD Counseling Session Reflection"));
         assert!(parse_health_passport_json(&json_out).is_ok());
 
         let md_out = render_passport_markdown(&opted_in);
@@ -1109,5 +1161,44 @@ mod tests {
         assert!(ips_str.contains("42CFRPart2"));
         assert!(ips_str.contains("ETHUD"));
         assert_eq!(ips["entry"][0]["resource"]["confidentiality"], "R");
+        // Verify Part 2 AllergyIntolerance, Condition, and MedicationStatement carry meta.security!
+        let entries_arr = ips["entry"].as_array().unwrap();
+        assert!(entries_arr.iter().any(|e| {
+            e["resource"]["resourceType"] == "MedicationStatement"
+                && e["resource"]["meta"]["security"].is_array()
+        }));
+        assert!(entries_arr.iter().any(|e| {
+            e["resource"]["resourceType"] == "Condition"
+                && e["resource"]["meta"]["security"].is_array()
+        }));
+        assert!(entries_arr.iter().any(|e| {
+            e["resource"]["resourceType"] == "AllergyIntolerance"
+                && e["resource"]["meta"]["security"].is_array()
+        }));
+
+        // Separate 42 CFR § 2.31(b) opt-in includes the counseling note with `42CFR2.31b` tag.
+        let with_counseling = build_health_passport_with_options(
+            &nadia,
+            &state,
+            &allergies,
+            &[],
+            PassportAudience::FullPortableBackup,
+            "",
+            "2026-11-26T04:30:00Z",
+            PassportExportOptions {
+                include_part2_sud_records: true,
+                include_part2_sud_counseling_notes: true,
+            },
+        );
+        assert_eq!(with_counseling.excluded_part2_counseling_note_count, 0);
+        assert_eq!(with_counseling.excluded_part2_record_count, 0);
+        assert!(with_counseling
+            .records
+            .iter()
+            .any(|r| r.confidentiality.is_part2_counseling_notes()));
+        let ips_with_cn = render_passport_fhir_ips_bundle(&with_counseling);
+        assert!(serde_json::to_string(&ips_with_cn)
+            .unwrap()
+            .contains("42CFR2.31b"));
     }
 }

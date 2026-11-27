@@ -23,6 +23,8 @@ use crate::{
 /// Default Kipu Health API base URL (tenant-provisioned via Kipu Super Admin).
 pub const KIPU_DEFAULT_BASE_URL: &str = "https://api.kipuworks.com";
 
+const MAX_KIPU_PAYLOAD_BYTES: usize = 2 * 1024 * 1024;
+
 /// Required `Accept` media-type header for Kipu Health API v3.
 pub const KIPU_API_V3_ACCEPT: &str = "application/vnd.kipusystems+json; version=3";
 
@@ -202,21 +204,17 @@ pub fn sign_kipu_request(
     }
 
     let has_body = body.is_some_and(|b| !b.is_empty());
+    let ct_val = content_type
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(if has_body { "application/json" } else { "" });
+    if ct_val.contains(',') || ct_val.contains('\r') || ct_val.contains('\n') {
+        return Err("Invalid Content-Type header for Kipu signing.".into());
+    }
     let (ct, md5_b64) = if has_body {
-        let ct_val = content_type
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or("application/json");
-        if ct_val.contains(',') || ct_val.contains('\r') || ct_val.contains('\n') {
-            return Err("Invalid Content-Type header for Kipu signing.".into());
-        }
         (ct_val.to_string(), content_md5_base64(body.unwrap_or(&[])))
     } else {
-        // Kipu / api-auth uses empty Content-Type and Content-MD5 for bodyless GET/DELETE.
-        let ct_val = content_type
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or("");
+        // Kipu / api-auth uses empty Content-MD5 (and usually empty Content-Type) for bodyless requests.
         (ct_val.to_string(), String::new())
     };
 
@@ -469,6 +467,9 @@ pub fn ingest_kipu_payload(
     portal_id: &str,
     raw_json: &str,
 ) -> Result<FhirImportResult, String> {
+    if raw_json.len() > MAX_KIPU_PAYLOAD_BYTES {
+        return Err("KipuEMR JSON payload exceeds the 2 MiB local parsing safety cap.".into());
+    }
     let parsed: Value =
         serde_json::from_str(raw_json).map_err(|err| format!("Invalid KipuEMR JSON: {err}"))?;
     let root = parsed
@@ -674,6 +675,31 @@ pub fn ingest_kipu_payload(
         }
     }
 
+    // Separately maintained SUD counseling notes (42 CFR § 2.31(b)).
+    if let Some(items) = array_field(
+        root,
+        &["sud_counseling_notes", "counseling_notes", "therapy_notes"],
+    ) {
+        for (idx, item) in items.iter().enumerate() {
+            result.total_entries_seen += 1;
+            match parse_kipu_counseling_note(
+                item,
+                idx,
+                &prefix,
+                source_label,
+                casefile_id.as_deref(),
+            ) {
+                Ok(rec) => result.records.push(rec),
+                Err(reason) => result.warnings.push(FhirResourceWarning {
+                    index: idx,
+                    resource_type: "KipuSudCounselingNote".into(),
+                    resource_id: item_id(item),
+                    reason,
+                }),
+            }
+        }
+    }
+
     if result.records.is_empty()
         && result.medications.is_empty()
         && result.problems.is_empty()
@@ -780,6 +806,15 @@ pub fn sandbox_kipu_payload_for_patient(patient: &PatientChart) -> String {
                 "expires_at": "2027-10-12",
                 "scope": "Primary care coordination; excludes separate SUD counseling notes."
             }
+        ],
+        "sud_counseling_notes": [
+            {
+                "id": "kcn-01",
+                "title": "Individual SUD Counseling Session Reflection (42 CFR § 2.31(b))",
+                "recorded_at": "2026-11-19",
+                "clinician": "Alex Rivera, LCSW (Demo)",
+                "summary": "Synthetic demo counseling note maintained separately under 42 CFR § 2.31(b): discussed stress coping routines and family communication boundaries."
+            }
         ]
     });
 
@@ -855,7 +890,23 @@ fn parse_kipu_evaluation(
     if let Some(cf) = casefile_id {
         kvs.push(("Casefile ID".into(), cf.to_string()));
     }
-    kvs.push(("Confidentiality".into(), "42 CFR Part 2 (SUD)".into()));
+    let is_counseling = obj
+        .get("separate_counseling_note")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || str_field(obj, &["category", "note_type", "evaluation_type"]).is_some_and(|cat| {
+            let lower = cat.to_ascii_lowercase();
+            lower.contains("counseling_note")
+                || lower.contains("counseling note")
+                || lower.contains("therapy_note")
+                || lower.contains("psychotherapy")
+        });
+    let confidentiality = if is_counseling {
+        ConfidentialityClass::Part2SudCounselingNotes
+    } else {
+        ConfidentialityClass::Part2Sud
+    };
+    kvs.push(("Confidentiality".into(), confidentiality.label().into()));
 
     Ok(ChartRecord {
         id: stable_kipu_id(prefix, "eval", item, idx),
@@ -865,7 +916,51 @@ fn parse_kipu_evaluation(
         source_label: source_label.to_string(),
         body: format!("{summary} ({PART2_REDISCLOSURE_NOTICE_SHORT})"),
         key_values: kvs,
-        confidentiality: ConfidentialityClass::Part2Sud,
+        confidentiality,
+    })
+}
+
+fn parse_kipu_counseling_note(
+    item: &Value,
+    idx: usize,
+    prefix: &str,
+    source_label: &str,
+    casefile_id: Option<&str>,
+) -> Result<ChartRecord, String> {
+    let obj = item
+        .as_object()
+        .ok_or_else(|| "Kipu SUD counseling note entry must be a JSON object.".to_string())?;
+    let title = str_field(obj, &["title", "name", "session_type"])
+        .unwrap_or("SUD Counseling Note (42 CFR § 2.31(b))");
+    let summary = str_field(obj, &["summary", "notes", "body", "content"]).ok_or_else(|| {
+        "Kipu SUD counseling note missing `summary` / `notes` / `body`.".to_string()
+    })?;
+    let recorded_at = date_prefix(str_field(
+        obj,
+        &["recorded_at", "session_date", "created_at", "date"],
+    ));
+    let mut kvs = vec![(
+        "Confidentiality".into(),
+        ConfidentialityClass::Part2SudCounselingNotes.label().into(),
+    )];
+    if let Some(clinician) = str_field(obj, &["clinician", "provider", "author"]) {
+        kvs.push(("Clinician".into(), clinician.to_string()));
+    }
+    if let Some(cf) = casefile_id {
+        kvs.push(("Casefile ID".into(), cf.to_string()));
+    }
+
+    Ok(ChartRecord {
+        id: stable_kipu_id(prefix, "counseling", item, idx),
+        kind: RecordKind::ProgressNote,
+        title: title.to_string(),
+        recorded_at,
+        source_label: source_label.to_string(),
+        body: format!(
+            "{summary} (42 CFR § 2.31(b) separate consent required; {PART2_REDISCLOSURE_NOTICE_SHORT})"
+        ),
+        key_values: kvs,
+        confidentiality: ConfidentialityClass::Part2SudCounselingNotes,
     })
 }
 
@@ -1231,6 +1326,25 @@ mod tests {
             false,
         )
         .is_err());
+        // Rejects header-injection characters in bodyless content_type too.
+        assert!(sign_kipu_request(
+            KIPU_DEFAULT_BASE_URL,
+            "GET",
+            "/api/patients/census",
+            "Wed, 26 Nov 2026 04:30:00 GMT",
+            Some("application/json,injected\r\nX-Evil: 1"),
+            None,
+            KipuAuthScheme::ApiAuthHmacSha1,
+            "a",
+            "b",
+            false,
+        )
+        .is_err());
+
+        // Debug formatting redacts authorization digest.
+        let dbg = format!("{get_req:?}");
+        assert!(dbg.contains("[REDACTED]"));
+        assert!(!dbg.contains(&get_req.authorization));
     }
 
     #[test]
@@ -1255,13 +1369,21 @@ mod tests {
         assert_eq!(import.medications.len(), 1);
         assert_eq!(import.problems.len(), 1);
         assert_eq!(import.allergies.len(), 1);
-        // census + eval + vital + allergy record + lab + appointment + consent = 7
-        assert_eq!(import.records.len(), 7);
+        // census + eval + vital + allergy record + lab + appointment + consent + counseling note = 8
+        assert_eq!(import.records.len(), 8);
         assert_eq!(import.warnings.len(), 1);
         assert!(import
             .records
             .iter()
-            .all(|r| r.confidentiality == ConfidentialityClass::Part2Sud));
+            .all(|r| r.confidentiality.is_part2_sud()));
+        assert_eq!(
+            import
+                .records
+                .iter()
+                .filter(|r| r.confidentiality.is_part2_counseling_notes())
+                .count(),
+            1
+        );
         assert!(import
             .medications
             .iter()

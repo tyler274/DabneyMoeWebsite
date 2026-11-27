@@ -91,6 +91,10 @@ pub enum ConfidentialityClass {
     StandardHipaa,
     /// Substance Use Disorder (SUD) program record protected by 42 CFR Part 2.
     Part2Sud,
+    /// Separately maintained SUD counseling notes requiring separate written
+    /// consent under 42 CFR § 2.31(b) (never disclosed under general TPO or
+    /// general Part 2 opt-in).
+    Part2SudCounselingNotes,
 }
 
 impl ConfidentialityClass {
@@ -100,13 +104,18 @@ impl ConfidentialityClass {
     }
 
     pub const fn is_part2_sud(self) -> bool {
-        matches!(self, Self::Part2Sud)
+        matches!(self, Self::Part2Sud | Self::Part2SudCounselingNotes)
+    }
+
+    pub const fn is_part2_counseling_notes(self) -> bool {
+        matches!(self, Self::Part2SudCounselingNotes)
     }
 
     pub const fn label(self) -> &'static str {
         match self {
             Self::StandardHipaa => "Standard HIPAA (45 CFR Part 164)",
             Self::Part2Sud => "42 CFR Part 2 (SUD Protected)",
+            Self::Part2SudCounselingNotes => "42 CFR § 2.31(b) SUD Counseling Notes",
         }
     }
 
@@ -114,6 +123,7 @@ impl ConfidentialityClass {
         match self {
             Self::StandardHipaa => "HIPAA",
             Self::Part2Sud => "42 CFR Part 2",
+            Self::Part2SudCounselingNotes => "42 CFR § 2.31(b) Counseling",
         }
     }
 }
@@ -1557,6 +1567,8 @@ pub mod api {
         selected_record_ids: Option<Vec<String>>,
         #[serde(default)]
         include_part2_sud_records: bool,
+        #[serde(default)]
+        include_part2_sud_counseling_notes: bool,
     }
 
     #[derive(Deserialize)]
@@ -1856,7 +1868,35 @@ pub mod api {
 
     async fn portal_ingest_document(Json(req): Json<ClinicalDocumentIngestRequest>) -> Response {
         match ingest_clinical_document(&req.source_label, &req.portal_id, &req.document) {
-            Ok(ingested) => json_no_store(StatusCode::OK, &ingested),
+            Ok(ingested) => {
+                // Never echo raw 32-byte SHLink AES-256 decryption keys over HTTP.
+                let sanitized_shl = ingested.smart_health_link.map(|shl| {
+                    serde_json::json!({
+                        "valid": true,
+                        "version": shl.v,
+                        "manifest_host": shl.host(),
+                        "manifest_url": shl.url,
+                        "key_bytes": 32,
+                        "key_valid": true,
+                        "exp": shl.exp,
+                        "flag": shl.flag,
+                        "flags": shl.flags,
+                        "label": shl.label,
+                        "viewer_origin": shl.viewer_origin,
+                        "passcode_required": shl.requires_passcode(),
+                        "direct_file_url": shl.is_direct_file_url(),
+                        "long_term": shl.is_long_term(),
+                    })
+                });
+                json_no_store(
+                    StatusCode::OK,
+                    &serde_json::json!({
+                        "format": ingested.format,
+                        "import": ingested.import,
+                        "smart_health_link": sanitized_shl,
+                    }),
+                )
+            }
             Err(err) => json_no_store(
                 StatusCode::BAD_REQUEST,
                 &serde_json::json!({ "error": err }),
@@ -1883,6 +1923,7 @@ pub mod api {
             "2026-11-26T04:30:00Z",
             PassportExportOptions {
                 include_part2_sud_records: req.include_part2_sud_records,
+                include_part2_sud_counseling_notes: req.include_part2_sud_counseling_notes,
             },
         );
         let fhir_ips = render_passport_fhir_ips_bundle(&passport);

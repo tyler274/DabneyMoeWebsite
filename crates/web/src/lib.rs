@@ -1458,26 +1458,52 @@ mod tests {
             .unwrap()
             .ends_with(":[REDACTED]"));
 
-        // 4. Kipu verify fails closed on loopback/private hosts in prod mode (allow_loopback=false)
+        // 4. Kipu verify fails closed on loopback/private hosts, non-Kipu live_probe hosts,
+        // non-443 ports, and non-read-only verbs on live_probe!
         let prod_router = super::ehr_roi_api::router(None, false);
-        let kipu_ssrf = prod_router
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/ehr/kipu/verify")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        serde_json::json!({
-                            "base_url": "http://127.0.0.1:9999",
-                            "path": "/api/patients/census"
-                        })
-                        .to_string(),
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(kipu_ssrf.status(), StatusCode::BAD_REQUEST);
+        for bad_kipu in [
+            serde_json::json!({
+                "base_url": "http://127.0.0.1:9999",
+                "path": "/api/patients/census"
+            }),
+            serde_json::json!({
+                "base_url": "https://example.com",
+                "path": "/api/patients/census",
+                "access_id": "a",
+                "secret_key": "s",
+                "live_probe": true
+            }),
+            serde_json::json!({
+                "base_url": "https://api.kipuworks.com:8443",
+                "path": "/api/patients/census",
+                "access_id": "a",
+                "secret_key": "s",
+                "live_probe": true
+            }),
+            serde_json::json!({
+                "base_url": "https://api.kipuworks.com",
+                "method": "POST",
+                "path": "/api/v3/vital_signs",
+                "access_id": "a",
+                "secret_key": "s",
+                "body": "{}",
+                "live_probe": true
+            }),
+        ] {
+            let resp = prod_router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/ehr/kipu/verify")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(bad_kipu.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{bad_kipu}");
+        }
 
         // 5. Kipu live probe against local mock server verifies real HMAC header + Accept v3
         let mock_kipu = Router::new().route(
@@ -1532,9 +1558,10 @@ mod tests {
         assert_eq!(live_json["probe_status"], 200);
         assert_eq!(live_json["probe_ok"], true);
 
-        // 6. Unified multi-format ingest endpoint handles C-CDA R2.1 XML & HL7 v2
+        // 6. Unified multi-format ingest endpoint handles C-CDA R2.1 XML & redacts SHLink keys!
         let ccda_xml = clinical_workspace::sandbox_ccda_xml_for_patient(&nadia);
         let doc_resp = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method(Method::POST)
@@ -1560,5 +1587,33 @@ mod tests {
         assert!(doc_json["import"]["records"]
             .as_array()
             .is_some_and(|r| !r.is_empty()));
+
+        // Ingesting a shlink:/ URI via `/portals/ingest-document` MUST NOT echo the raw AES key.
+        let shl_doc_resp = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/clinical/api/portals/ingest-document")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "source_label": "SHLink Paste",
+                            "portal_id": "shlink",
+                            "document": shl_uri
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(shl_doc_resp.status(), StatusCode::OK);
+        let shl_doc_bytes = to_bytes(shl_doc_resp.into_body(), 64 * 1024).await.unwrap();
+        let shl_doc_text = String::from_utf8(shl_doc_bytes.to_vec()).unwrap();
+        assert!(!shl_doc_text.contains(&valid_key));
+        let shl_doc_json: serde_json::Value = serde_json::from_str(&shl_doc_text).unwrap();
+        assert_eq!(shl_doc_json["format"], "smart_health_link_uri");
+        assert_eq!(shl_doc_json["smart_health_link"]["key_bytes"], 32);
+        assert!(shl_doc_json["smart_health_link"].get("key").is_none());
     }
 }

@@ -658,9 +658,17 @@ fn detect_ccda_confidentiality(root: &XmlNode, raw_xml: &str) -> Confidentiality
         .and_then(|c| c.attr("code"))
         .unwrap_or("");
     let lower = raw_xml.to_ascii_lowercase();
-    if lower.contains("42 cfr part 2")
+    // Fail-closed: treat restricted (`R`) and very-restricted (`V`) C-CDA
+    // documents, explicit 42 CFR Part 2 notices, and HL7 `ETHUD` / SUD markers
+    // as Part 2 protected so restricted records never silently leak into
+    // general exports.
+    if matches!(conf_code, "R" | "V")
+        || lower.contains("42 cfr part 2")
         || lower.contains("42 cfr 2.")
-        || (matches!(conf_code, "R" | "V") && lower.contains("substance use"))
+        || lower.contains("ethud")
+        || lower.contains("substance use disorder")
+        || lower.contains("alcohol use disorder")
+        || lower.contains("opioid use disorder")
     {
         ConfidentialityClass::Part2Sud
     } else {
@@ -797,8 +805,6 @@ fn extract_allergies(
     allergies_out: &mut Vec<AllergyEntry>,
     records_out: &mut Vec<ChartRecord>,
 ) -> usize {
-    let mut entries = Vec::new();
-    section.collect_descendants("playingEntity", &mut entries);
     let mut added = 0;
 
     // Walk allergy entries (each `<entry>` usually wraps one allergy observation).
@@ -1108,18 +1114,11 @@ fn parse_xml_document(input: &str) -> Result<XmlNode, String> {
                 };
                 pos += 2 + end + 2;
             } else if input[pos..].starts_with("<!") {
-                // DOCTYPE or declaration — reject external entity definitions, skip simple declarations.
-                let Some(end) = input[pos + 2..].find('>') else {
-                    return Err("Unterminated XML declaration.".into());
-                };
-                let decl = &input[pos + 2..pos + 2 + end];
-                if decl.to_ascii_uppercase().contains("ENTITY") {
-                    return Err(
-                        "XML DOCTYPE ENTITY declarations are forbidden for security (XXE defense)."
-                            .into(),
-                    );
-                }
-                pos += 2 + end + 1;
+                // Fail-closed: reject ALL DTD / DOCTYPE / ENTITY declarations (XXE / external DTD defense).
+                return Err(
+                    "XML DOCTYPE and DTD declarations (`<!...`) are forbidden for security (XXE defense)."
+                        .into(),
+                );
             } else if input[pos..].starts_with("</") {
                 let Some(end) = input[pos + 2..].find('>') else {
                     return Err("Unterminated XML closing tag.".into());
@@ -1325,6 +1324,31 @@ mod tests {
         let xxe =
             r#"<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><ClinicalDocument/>"#;
         assert!(ingest_ccda_xml("Evil", "evil", xxe).is_err());
+
+        // Plain external DOCTYPE SYSTEM/PUBLIC without ENTITY is also rejected fail-closed.
+        let doctype_sys =
+            r#"<!DOCTYPE ClinicalDocument SYSTEM "http://evil.example/dtd"><ClinicalDocument/>"#;
+        assert!(ingest_ccda_xml("Evil", "evil", doctype_sys).is_err());
+
+        // Restricted confidentialityCode="R" fails closed to Part2Sud.
+        let restricted = r#"<?xml version="1.0"?>
+        <ClinicalDocument xmlns="urn:hl7-org:v3">
+          <confidentialityCode code="R" codeSystem="2.16.840.1.113883.5.25"/>
+          <title>Behavioral Summary</title>
+          <effectiveTime value="20261120"/>
+          <component><structuredBody>
+            <component><section>
+              <code code="11506-3" displayName="Progress Note"/>
+              <title>Progress Note</title>
+              <text>Restricted clinical note.</text>
+            </section></component>
+          </structuredBody></component>
+        </ClinicalDocument>"#;
+        let restricted_import = ingest_ccda_xml("Clinic", "clinic-r", restricted).unwrap();
+        assert_eq!(
+            restricted_import.confidentiality,
+            ConfidentialityClass::Part2Sud
+        );
 
         let partial = r#"<?xml version="1.0"?>
         <ClinicalDocument xmlns="urn:hl7-org:v3">

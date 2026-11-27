@@ -1010,13 +1010,16 @@ pub fn PortablePassportSection(
     let copy_status = RwSignal::new(Option::<String>::None);
     let import_status = RwSignal::new(Option::<String>::None);
     let import_error = RwSignal::new(Option::<String>::None);
-    // Hard 42 CFR Part 2 invariant: SUD records are strictly excluded by default unless opted in.
+    // Hard 42 CFR Part 2 invariants: SUD records AND § 2.31(b) counseling notes
+    // are strictly excluded by default unless separately opted in.
     let include_part2_sud = RwSignal::new(false);
+    let include_part2_counseling = RwSignal::new(false);
 
     let active_passport = Memo::new(move |_| {
         let aud = audience.get();
         let em = emergency_note.get();
         let inc_part2 = include_part2_sud.get();
+        let inc_counseling = include_part2_counseling.get();
         patient_sv.with_value(|p| {
             state_sv.with_value(|st| {
                 allergies_sv.with_value(|algs| {
@@ -1031,6 +1034,7 @@ pub fn PortablePassportSection(
                             DEMO_TIMESTAMP,
                             PassportExportOptions {
                                 include_part2_sud_records: inc_part2,
+                                include_part2_sud_counseling_notes: inc_counseling,
                             },
                         )
                     })
@@ -1200,7 +1204,24 @@ pub fn PortablePassportSection(
                             "Explicit 42 CFR Part 2 Opt-In (Substance Use Disorder Records — Default: Excluded)"
                         </strong>
                         <span class="block text-[11px] leading-relaxed text-amber-100/90">
-                            "Any 42 CFR Part 2-tagged records (e.g., KipuEMR behavioral health imports) are withheld from your Portable Health Passport by default. Checking this box includes them and embeds the statutory 42 CFR § 2.32 Prohibition on Redisclosure notice across JSON, HTML, Markdown, and FHIR R4 IPS exports."
+                            "Any 42 CFR Part 2-tagged records (e.g., KipuEMR behavioral health imports) are withheld from your Portable Health Passport by default. Checking this box includes general SUD records (still excluding separate § 2.31(b) counseling notes) and embeds the statutory 42 CFR § 2.32 Prohibition on Redisclosure notice across JSON, HTML, Markdown, and FHIR R4 IPS exports."
+                        </span>
+                    </span>
+                </label>
+
+                <label class="flex cursor-pointer items-start gap-2.5 rounded-xl border border-rose-400/30 bg-rose-500/[0.06] p-3 text-xs text-rose-100">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || include_part2_counseling.get()
+                        on:change=move |ev| include_part2_counseling.set(event_target_checked(&ev))
+                        class="mt-0.5 accent-rose-400"
+                    />
+                    <span class="space-y-0.5">
+                        <strong class="block text-rose-200">
+                            "Separate 42 CFR § 2.31(b) Opt-In (SUD Counseling Notes — Default: Excluded)"
+                        </strong>
+                        <span class="block text-[11px] leading-relaxed text-rose-100/90">
+                            "Separately maintained SUD counseling notes are never included under a general Part 2 export and require this separate explicit opt-in."
                         </span>
                     </span>
                 </label>

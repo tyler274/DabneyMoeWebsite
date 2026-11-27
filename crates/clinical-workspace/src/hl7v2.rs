@@ -122,6 +122,8 @@ struct PendingObservationGroup {
     key_values: Vec<(String, String)>,
 }
 
+const MAX_HL7_PAYLOAD_BYTES: usize = 2 * 1024 * 1024;
+
 /// Parses an HL7 v2.x pipe-delimited message (`ADT`, `ORU`, `MDM`, `SIU`) into
 /// a normalized [`FhirImportResult`] with per-segment warnings.
 pub fn ingest_hl7v2_message(
@@ -129,6 +131,9 @@ pub fn ingest_hl7v2_message(
     portal_id: &str,
     raw_hl7: &str,
 ) -> Result<FhirImportResult, String> {
+    if raw_hl7.len() > MAX_HL7_PAYLOAD_BYTES {
+        return Err("HL7 v2 message exceeds the 2 MiB local parsing safety cap.".into());
+    }
     let segments: Vec<&str> = raw_hl7
         .split(['\r', '\n'])
         .map(str::trim)

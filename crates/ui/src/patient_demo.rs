@@ -1577,7 +1577,7 @@ fn PatientRecordCard(
                     </span>
                     {record.confidentiality.is_part2_sud().then(|| view! {
                         <span class="rounded-full border border-amber-400/45 bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-200">
-                            "42 CFR Part 2"
+                            {record.confidentiality.short_badge()}
                         </span>
                     })}
                     {is_cited.then(|| view! {

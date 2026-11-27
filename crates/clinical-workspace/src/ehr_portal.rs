@@ -580,7 +580,10 @@ pub struct LinkedPortalConnection {
 
 /// Complete PKCE `S256` SMART on FHIR R4 authorization request prepared for a
 /// patient portal sign-in.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Implements redacted [`std::fmt::Debug`] so `code_verifier` is never leaked
+/// into debug logs.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SmartPkceSession {
     pub organization_id: String,
     pub organization_name: String,
@@ -597,6 +600,27 @@ pub struct SmartPkceSession {
     pub code_challenge_method: String,
     pub authorize_url: String,
     pub read_only: bool,
+}
+
+impl std::fmt::Debug for SmartPkceSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SmartPkceSession")
+            .field("organization_id", &self.organization_id)
+            .field("organization_name", &self.organization_name)
+            .field("vendor", &self.vendor)
+            .field("fhir_base_url", &self.fhir_base_url)
+            .field("authorize_endpoint", &self.authorize_endpoint)
+            .field("token_endpoint", &self.token_endpoint)
+            .field("redirect_uri", &self.redirect_uri)
+            .field("client_id", &self.client_id)
+            .field("scopes", &self.scopes)
+            .field("state", &self.state)
+            .field("code_verifier", &"[REDACTED]")
+            .field("code_challenge", &self.code_challenge)
+            .field("code_challenge_method", &self.code_challenge_method)
+            .field("read_only", &self.read_only)
+            .finish()
+    }
 }
 
 /// Non-fatal parse warning for one individual FHIR resource inside a Bundle.
@@ -1346,6 +1370,7 @@ pub fn parse_smart_health_link(
         .map(str::to_string);
     let mut flags = Vec::new();
     if let Some(ref fl) = flag_raw {
+        let mut prev_ch: Option<char> = None;
         for ch in fl.chars() {
             let parsed = match ch {
                 'L' => SmartHealthLinkFlag::LongTerm,
@@ -1358,6 +1383,14 @@ pub fn parse_smart_health_link(
             if flags.contains(&parsed) {
                 return Err(format!("Duplicate SMART Health Link flag `{ch}`."));
             }
+            if let Some(prev) = prev_ch {
+                if ch < prev {
+                    return Err(format!(
+                        "SMART Health Link `flag` string `{fl}` must be alphabetically sorted (e.g., `LP`, `LU`)."
+                    ));
+                }
+            }
+            prev_ch = Some(ch);
             flags.push(parsed);
         }
         if flags.contains(&SmartHealthLinkFlag::PasscodeRequired)
@@ -1852,11 +1885,16 @@ pub struct ClinicalDocumentIngest {
 /// - Kipu JSON envelope (`casefile_id`, `patient_evaluations`, `vital_signs`,
 ///   `episode_orders`, `consent_form_records`, `kipu_api_version`, etc.) →
 ///   [`crate::kipu::ingest_kipu_payload`]
+const MAX_CLINICAL_DOCUMENT_BYTES: usize = 2 * 1024 * 1024;
+
 pub fn ingest_clinical_document(
     source_label: &str,
     portal_id: &str,
     raw_input: &str,
 ) -> Result<ClinicalDocumentIngest, String> {
+    if raw_input.len() > MAX_CLINICAL_DOCUMENT_BYTES {
+        return Err("Clinical document exceeds the 2 MiB local parsing safety cap.".into());
+    }
     let trimmed = raw_input.trim_start_matches('\u{feff}').trim();
     if trimmed.is_empty() {
         return Err("Clinical document input is empty.".into());
@@ -1949,6 +1987,9 @@ pub fn ingest_fhir_r4_bundle(
     portal_id: &str,
     raw_json: &str,
 ) -> Result<FhirImportResult, String> {
+    if raw_json.len() > MAX_CLINICAL_DOCUMENT_BYTES {
+        return Err("FHIR R4 JSON payload exceeds the 2 MiB local parsing safety cap.".into());
+    }
     let parsed: Value =
         serde_json::from_str(raw_json).map_err(|err| format!("Invalid FHIR R4 JSON: {err}"))?;
     let root = parsed
@@ -3042,17 +3083,22 @@ mod tests {
                 .expect("manifest body");
         assert_eq!(body["passcode"], "1234");
 
-        // Invalid `PU` combination rejected.
+        // Invalid `PU` combination and unsorted `PL` rejected.
         let valid_key = parsed.key.clone();
-        let pu_json = json!({
-            "url": "https://example.org/shl/abc",
-            "key": valid_key,
-            "flag": "PU",
-            "v": 1
-        })
-        .to_string();
-        let pu_uri = format!("shlink:/{}", base64url_encode(pu_json.as_bytes()));
-        assert!(parse_smart_health_link(&pu_uri, None).is_err());
+        for bad_flag in ["PU", "PL", "UL", "LPU"] {
+            let bad_json = json!({
+                "url": "https://example.org/shl/abc",
+                "key": valid_key,
+                "flag": bad_flag,
+                "v": 1
+            })
+            .to_string();
+            let bad_uri = format!("shlink:/{}", base64url_encode(bad_json.as_bytes()));
+            assert!(
+                parse_smart_health_link(&bad_uri, None).is_err(),
+                "expected flag `{bad_flag}` to be rejected"
+            );
+        }
 
         // SSRF private metadata IP rejected.
         let ssrf_json = json!({
