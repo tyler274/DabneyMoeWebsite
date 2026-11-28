@@ -7,6 +7,19 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
+if command -v nixpkgs-fmt >/dev/null 2>&1 \
+  && command -v cargo >/dev/null 2>&1 \
+  && command -v yamlfmt >/dev/null 2>&1; then
+  echo "==> nixpkgs-fmt (--check)"
+  nixpkgs-fmt --check flake.nix nix/
+  echo "==> rustfmt (--check)"
+  cargo fmt --all --check
+  echo "==> yamlfmt (-lint)"
+  yamlfmt -lint .github/workflows/*.yml
+  echo "==> format checks passed"
+  exit 0
+fi
+
 if ! command -v nix >/dev/null 2>&1; then
   echo "pre-push: nix not found; run format checks manually with: nix run .#format-check" >&2
   exit 1

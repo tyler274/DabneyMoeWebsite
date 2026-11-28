@@ -41,6 +41,9 @@
 
     PKG_CONFIG_PATH = pkgConfigPath;
     LD_LIBRARY_PATH = ldLibraryPath;
+    # Link local Linux dev/test builds with mold (5-10x faster than GNU ld on
+    # the large Leptos SSR binaries).
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
 
     shellHook = ''
       # Trunk maps $NO_COLOR onto a boolean (clap) flag, so a value like
@@ -63,6 +66,24 @@
       echo "  CI gate:     nix run .#ci"
       echo "  Android:     nix develop .#android"
     '';
+  };
+
+  # Slim CI shell for clippy and test jobs: carries only the Rust toolchain,
+  # linker, and Tauri native libs — omitting gcloud, opentofu, skopeo, bun,
+  # nodejs, cargo-leptos, trunk, and binaryen so container jobs download far
+  # less from cache.nixos.org.
+  ci = pkgs.mkShell {
+    packages = [
+      rustToolchain
+      pkgs.pkg-config
+      pkgs.gcc
+      pkgs.mold
+    ]
+    ++ tauriDeps;
+
+    PKG_CONFIG_PATH = pkgConfigPath;
+    LD_LIBRARY_PATH = ldLibraryPath;
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
   };
 
   # Deploy shell for CI and local releases: only the tools `scripts/deploy.sh`
