@@ -9,7 +9,7 @@
 #   - Cloudflare primary with Anubis on standby fallback (--mode cloudflare-only)
 #
 # Usage:
-#   direnv exec . ./scripts/setup-cloudflare-edge.sh [--mode both|cloudflare-only] [--plan-only]
+#   direnv exec . ./scripts/setup-cloudflare-edge.sh [--mode both|cloudflare-only] [--bot-detection on|off] [--plan-only]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -18,13 +18,18 @@ REGION="${GCP_REGION:-us-central1}"
 BILLING_ACCOUNT_ID="${GCP_BILLING_ACCOUNT_ID:-01A29E-334D38-0B8604}"
 MONTHLY_BUDGET_USD="${GCP_MONTHLY_BUDGET_USD:-5}"
 DOMAIN="${CUSTOM_DOMAIN:-dabney.moe}"
-MODE="both"
+MODE="cloudflare-only"
+BOT_DETECTION="off"
 PLAN_ONLY="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode)
       MODE="${2:?--mode requires both or cloudflare-only}"
+      shift 2
+      ;;
+    --bot-detection)
+      BOT_DETECTION="${2:?--bot-detection requires on or off}"
       shift 2
       ;;
     --plan-only)
@@ -47,6 +52,15 @@ case "$MODE" in
   cloudflare-only) ENABLE_ANUBIS="false" ;;
   *)
     echo "error: --mode must be 'both' or 'cloudflare-only' (got '$MODE')" >&2
+    exit 1
+    ;;
+esac
+
+case "$BOT_DETECTION" in
+  on)  ENABLE_BOT_DETECTION="true" ;;
+  off) ENABLE_BOT_DETECTION="false" ;;
+  *)
+    echo "error: --bot-detection must be 'on' or 'off' (got '$BOT_DETECTION')" >&2
     exit 1
     ;;
 esac
@@ -74,7 +88,7 @@ Cloudflare setup URLs (one-time, in your browser):
        - Zone -> Zone WAF           -> Edit   (for edge rate limiting)
        - Zone -> Bot Management     -> Edit   (for Bot Fight Mode)
 
-  3. Optional — Doppler dashboard (to also store CLOUDFLARE_API_TOKEN / ZONE_ID):
+  3. Optional: Doppler dashboard (to also store CLOUDFLARE_API_TOKEN / ZONE_ID):
        https://dashboard.doppler.com/
 
 EOF
@@ -135,6 +149,7 @@ export TF_VAR_enable_anubis="$ENABLE_ANUBIS"
 export TF_VAR_enable_cloudflare_dns="true"
 export TF_VAR_cloudflare_proxied="true"
 export TF_VAR_enable_cloudflare_edge_protection="true"
+export TF_VAR_enable_cloudflare_bot_detection="$ENABLE_BOT_DETECTION"
 export TF_VAR_cloudflare_zone_id="$CLOUDFLARE_ZONE_ID"
 export TF_VAR_cloudflare_api_token="$CLOUDFLARE_API_TOKEN"
 
@@ -162,7 +177,7 @@ PY
 PLAN_FILE="terraform/gcp/cloudflare-edge.tfplan"
 trap 'rm -f "$ROOT/$PLAN_FILE"' EXIT
 
-echo "==> Generating OpenTofu plan (mode=$MODE, enable_anubis=$ENABLE_ANUBIS)..."
+echo "==> Generating OpenTofu plan (mode=$MODE, enable_anubis=$ENABLE_ANUBIS, bot_detection=$BOT_DETECTION)..."
 tofu -chdir=terraform/gcp plan -out="$(basename "$PLAN_FILE")"
 
 if [[ "$PLAN_ONLY" == "true" ]]; then
@@ -183,6 +198,7 @@ curl -sI -A "Mozilla/5.0 Chrome/125.0" "https://${DOMAIN}/" \
   | grep -iE "^(HTTP/|cf-ray:|cf-cache-status:|server:|cache-control:)" || true
 
 echo
-echo "Done! To switch Anubis on/off later as a fallback:"
-echo "  direnv exec . ./scripts/setup-cloudflare-edge.sh --mode both"
-echo "  direnv exec . ./scripts/setup-cloudflare-edge.sh --mode cloudflare-only"
+echo "Done! To toggle bot detection or Anubis later:"
+echo "  direnv exec . ./scripts/setup-cloudflare-edge.sh --mode cloudflare-only --bot-detection off"
+echo "  direnv exec . ./scripts/setup-cloudflare-edge.sh --mode cloudflare-only --bot-detection on"
+echo "  direnv exec . ./scripts/setup-cloudflare-edge.sh --mode both --bot-detection on"
