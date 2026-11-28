@@ -32,7 +32,7 @@ resource "cloudflare_zone_setting" "browser_check" {
 
   zone_id    = var.cloudflare_zone_id
   setting_id = "browser_check"
-  value      = "on"
+  value      = var.enable_cloudflare_bot_detection ? "on" : "off"
 }
 
 resource "cloudflare_zone_setting" "security_level" {
@@ -40,7 +40,7 @@ resource "cloudflare_zone_setting" "security_level" {
 
   zone_id    = var.cloudflare_zone_id
   setting_id = "security_level"
-  value      = "medium"
+  value      = var.enable_cloudflare_bot_detection ? "medium" : "essentially_off"
 }
 
 # Keep zone-level Always Use HTTPS off so Google Cloud Run's managed TLS cert
@@ -159,7 +159,7 @@ resource "cloudflare_ruleset" "waf_custom" {
     {
       action      = "block"
       description = "Block known AI training/scraping crawlers, SEO scrapers, and empty User-Agents"
-      enabled     = true
+      enabled     = var.enable_cloudflare_bot_detection
       expression  = "(http.host eq \"${var.custom_domain}\") and (not cf.client.bot) and (not starts_with(http.request.uri.path, \"/.well-known/\")) and (http.request.uri.path ne \"/robots.txt\") and (http.user_agent eq \"\" or lower(http.user_agent) contains \"gptbot\" or lower(http.user_agent) contains \"claudebot\" or lower(http.user_agent) contains \"claude-web\" or lower(http.user_agent) contains \"anthropic-ai\" or lower(http.user_agent) contains \"bytespider\" or lower(http.user_agent) contains \"ccbot\" or lower(http.user_agent) contains \"amazonbot\" or lower(http.user_agent) contains \"meta-externalagent\" or lower(http.user_agent) contains \"facebookbot\" or lower(http.user_agent) contains \"perplexitybot\" or lower(http.user_agent) contains \"oai-searchbot\" or lower(http.user_agent) contains \"google-extended\" or lower(http.user_agent) contains \"diffbot\" or lower(http.user_agent) contains \"imagesiftbot\" or lower(http.user_agent) contains \"ahrefsbot\" or lower(http.user_agent) contains \"semrushbot\" or lower(http.user_agent) contains \"dotbot\" or lower(http.user_agent) contains \"mj12bot\" or lower(http.user_agent) contains \"blexbot\" or lower(http.user_agent) contains \"petalbot\" or lower(http.user_agent) contains \"dataforseobot\")"
     },
     {
@@ -171,13 +171,13 @@ resource "cloudflare_ruleset" "waf_custom" {
     {
       action      = "managed_challenge"
       description = "Managed Challenge non-browser/scripted clients and suspicious traffic (verified search/social bots allowed)"
-      enabled     = true
+      enabled     = var.enable_cloudflare_bot_detection
       expression  = "(http.host eq \"${var.custom_domain}\") and (not cf.client.bot) and (not starts_with(http.request.uri.path, \"/.well-known/\")) and (not (http.request.uri.path in {\"/robots.txt\" \"/favicon.ico\" \"/favicon.png\" \"/photos/tyler-dunes.jpg\"})) and (not (lower(http.user_agent) contains \"discordbot\" or lower(http.user_agent) contains \"slackbot\" or lower(http.user_agent) contains \"twitterbot\" or lower(http.user_agent) contains \"linkedinbot\" or lower(http.user_agent) contains \"telegrambot\" or lower(http.user_agent) contains \"whatsapp\")) and ((not (lower(http.user_agent) contains \"mozilla\" or lower(http.user_agent) contains \"opera\")) or lower(http.user_agent) contains \"headlesschrome\" or lower(http.user_agent) contains \"playwright\" or lower(http.user_agent) contains \"puppeteer\" or lower(http.user_agent) contains \"selenium\" or lower(http.user_agent) contains \"scrapy\" or cf.threat_score gt 10)"
     },
     {
       action      = "managed_challenge"
       description = "Challenge cross-site or non-same-origin probes to /api/*, /clinical/api*, and /coda/physician/api*"
-      enabled     = true
+      enabled     = var.enable_cloudflare_bot_detection
       expression  = "(http.host eq \"${var.custom_domain}\") and (starts_with(http.request.uri.path, \"/api/\") or starts_with(http.request.uri.path, \"/clinical/api\") or starts_with(http.request.uri.path, \"/coda/physician/api\")) and (not any(http.request.headers[\"sec-fetch-site\"][*] eq \"same-origin\"))"
     }
   ]
@@ -218,6 +218,6 @@ resource "cloudflare_bot_management" "this" {
   count = local.cf_edge_enabled ? 1 : 0
 
   zone_id    = var.cloudflare_zone_id
-  enable_js  = true
-  fight_mode = true
+  enable_js  = var.enable_cloudflare_bot_detection
+  fight_mode = var.enable_cloudflare_bot_detection
 }
