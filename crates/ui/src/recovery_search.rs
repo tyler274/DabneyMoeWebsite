@@ -2286,10 +2286,19 @@ fn render_facility_card(
                                 {licenses
                                     .into_iter()
                                     .map(|lic| {
-                                        let status_class = if lic.status.is_good_standing() {
-                                            "rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-200"
-                                        } else {
-                                            "rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-rose-200"
+                                        let status_class = match lic.status {
+                                            LicenseStatus::Active | LicenseStatus::Provisional => {
+                                                "rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-200"
+                                            }
+                                            LicenseStatus::Unknown => {
+                                                "rounded bg-slate-500/20 px-1.5 py-0.5 text-[10px] font-medium text-slate-300"
+                                            }
+                                            LicenseStatus::Probation
+                                            | LicenseStatus::Suspended
+                                            | LicenseStatus::Revoked
+                                            | LicenseStatus::Inactive => {
+                                                "rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-rose-200"
+                                            }
                                         };
                                         let status_text = lic.status.label();
                                         let agency_num = format!(
@@ -2297,7 +2306,7 @@ fn render_facility_card(
                                             lic.agency, lic.license_number
                                         );
                                         let ltype = lic.license_type.clone();
-                                        let beds = lic.licensed_beds;
+                                        let beds = lic.licensed_beds.filter(|&b| b > 0);
                                         let verify_url = lic.verification_url.clone().filter(|u| {
                                             u.starts_with("https://") || u.starts_with("http://")
                                         });

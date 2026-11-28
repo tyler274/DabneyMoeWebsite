@@ -124,7 +124,9 @@ const CDPH_FACILITY_FIELDS: FacilityFieldMap = FacilityFieldMap {
 const CDSS_ARF_FIELDS: FacilityFieldMap = FacilityFieldMap {
     license_number: &["facility_number"],
     name: &["facility_name"],
-    dba_or_site_name: &["licensee"],
+    // Omit `licensee` (multi-site corporate operator name) so confidential-address SAMHSA
+    // entries do not absorb every campus of a large residential operator in the same city.
+    dba_or_site_name: &[],
     license_type: &["facility_type"],
     status: &["facility_status"],
     street: &["facility_address"],
@@ -471,6 +473,7 @@ pub async fn sync(
             imported.systems_executed.push(system_id.to_string());
         }
         outcome.merge(imported);
+        return Ok(outcome);
     }
 
     for system in ca_manifest.systems {
@@ -510,10 +513,34 @@ pub async fn sync(
     Ok(outcome)
 }
 
-/// Applies California-specific post-normalization to facility records returned by CHHS CKAN
-/// endpoints (e.g. DHCS NTP default license type/status and DHCS `"Approved"` status).
-fn normalize_ca_facility_records(system_id: &str, records: &mut [FacilityLicenseRecord]) {
-    for rec in records {
+/// Applies California-specific post-normalization and behavioral-health relevance filtering
+/// to facility records returned by CHHS CKAN endpoints.
+fn normalize_ca_facility_records(system_id: &str, records: &mut Vec<FacilityLicenseRecord>) {
+    // Keep only behavioral-health, psychiatric, and addiction-relevant CDPH license categories
+    // so general medical clinics, surgical clinics, SNFs, hospices, and dialysis units sharing a
+    // medical campus address are never attached to behavioral health listings.
+    if system_id == "ca-cdph" {
+        records.retain(|rec| {
+            let lt = rec.license_type.trim().to_ascii_uppercase();
+            lt == "APH"
+                || lt == "CDRH"
+                || lt == "PHF"
+                || lt == "CMHC"
+                || lt == "PSYCHC"
+                || lt.contains("PSYCHIATRIC")
+                || lt.contains("PSYCHOLOGY")
+                || lt.contains("CHEMICAL DEPENDENCY")
+                || lt.contains("MENTAL HEALTH")
+                || lt.contains("BEHAVIORAL")
+                || lt.contains("ADDICTION")
+                || lt.contains("REHABILITATION")
+        });
+    }
+
+    for rec in records.iter_mut() {
+        if rec.licensed_beds == Some(0) {
+            rec.licensed_beds = None;
+        }
         if system_id == "ca-dhcs-ntp" {
             if rec.license_type.is_empty() || rec.license_type == rec.license_number {
                 rec.license_type = "Narcotic Treatment Program (NTP)".to_string();
@@ -569,8 +596,27 @@ pub fn classify_ca_provider_license(board: &str, credential_label: &str) -> Opti
     let is_pab = b.contains("physician assistant") || b == "pab" || b == "ca-pab";
     let is_bvnpt = b.contains("vocational nursing") || b == "bvnpt";
 
+    // Physician Assistant Board (check BEFORE OMBC/MBC so PAs never map to DO or MD)
+    if is_pab
+        || c.contains("physician assistant")
+        || c.contains("physician associate")
+        || has_word(&c, "pa")
+        || has_word(&c, "pa-c")
+    {
+        return Some(StaffLicense::Pa);
+    }
+
+    // Exclude non-physician allied licenses also regulated by MBC (midwives, sleep techs, etc.)
+    let is_non_physician_mbc = c.contains("midwife")
+        || c.contains("polysomnograph")
+        || c.contains("research psychoanalyst")
+        || c.contains("technologist")
+        || c.contains("nurse");
+
     // Separate Osteopathic Medical Board of California (DO only)
-    if is_ombc || c.contains("osteopathic") || has_word(&c, "do") || c.contains("d.o.") {
+    if !is_non_physician_mbc
+        && (is_ombc || c.contains("osteopathic") || has_word(&c, "do") || c.contains("d.o."))
+    {
         if c.contains("psychiatr") {
             return Some(StaffLicense::DoPsychiatrist);
         }
@@ -580,13 +626,20 @@ pub fn classify_ca_provider_license(board: &str, credential_label: &str) -> Opti
         return Some(StaffLicense::DoPhysician);
     }
 
-    // Physician Assistant Board (check before MD/physician so "Physician Assistant" never maps to MD)
-    if is_pab || c.contains("physician assistant") || has_word(&c, "pa") || has_word(&c, "pa-c") {
-        return Some(StaffLicense::Pa);
-    }
-
-    // Medical Board of California (MD only)
-    if is_mbc || has_word(&c, "md") || c.contains("m.d.") || c.contains("physician and surgeon") {
+    // Medical Board of California (MD only; require physician/MD credential, never allied roles)
+    let cred_is_physician_or_md = has_word(&c, "md")
+        || c.contains("m.d.")
+        || c.contains("physician")
+        || c.contains("surgeon")
+        || c.contains("psychiatr")
+        || c.contains("addiction medicine")
+        || c.is_empty();
+    if !is_non_physician_mbc
+        && ((is_mbc && cred_is_physician_or_md)
+            || has_word(&c, "md")
+            || c.contains("m.d.")
+            || c.contains("physician and surgeon"))
+    {
         if c.contains("psychiatr") {
             return Some(StaffLicense::MdPsychiatrist);
         }

@@ -191,6 +191,7 @@ struct RecordFacilityKey {
     city_norm: String,
     street: Option<(String, String)>,
     phone10: Option<String>,
+    is_inactive: bool,
     exact_names: Vec<String>,
     token_sets: Vec<BTreeSet<String>>,
 }
@@ -211,6 +212,7 @@ impl RecordFacilityKey {
             city_norm: r.city.as_deref().map(normalize_city).unwrap_or_default(),
             street: r.street.as_deref().and_then(normalize_street_key),
             phone10: r.phone.as_deref().and_then(normalize_phone10),
+            is_inactive: r.status == crate::schema::LicenseStatus::Inactive,
             exact_names,
             token_sets,
         }
@@ -276,7 +278,10 @@ fn find_matching_facilities(fac_keys: &[FacilityMatchKey], rec: &RecordFacilityK
 
     // Rule 3: High token overlap on normalized facility name (or DBA) + same 5-digit ZIP
     // (or same city when name is distinctive with >= 2 meaningful tokens), rejecting records
-    // whose street explicitly disagrees with the facility's street.
+    // whose street explicitly disagrees with the facility's street or whose status is Inactive.
+    if rec.is_inactive {
+        return Vec::new();
+    }
     let mut name_matches = Vec::new();
     for (idx, fac) in fac_keys.iter().enumerate() {
         if !states_compatible(&fac.state, &rec.state) {

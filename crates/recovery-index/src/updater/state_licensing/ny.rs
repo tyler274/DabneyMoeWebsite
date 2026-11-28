@@ -295,7 +295,22 @@ pub async fn sync(
 
         if let Some(ref spec) = sys.generic_endpoint {
             match execute_generic_endpoint(client, cache, STATE_CODE, sys.id, spec).await {
-                Ok(part) => combined.merge(part),
+                Ok(mut part) => {
+                    // OMH (operating_certificate_required='Y') and NYS DOH active directories
+                    // omit a status column because every published row is an active operating
+                    // certificate; default Unknown to Active rather than displaying Unknown.
+                    if matches!(
+                        sys.id,
+                        "ny-omh-programs" | "ny-doh-facilities" | "ny-doh-certifications"
+                    ) {
+                        for rec in &mut part.facility_records {
+                            if rec.status == LicenseStatus::Unknown {
+                                rec.status = LicenseStatus::Active;
+                            }
+                        }
+                    }
+                    combined.merge(part);
+                }
                 Err(err @ StateLicenseError::CaptchaBlocked { .. }) => return Err(err),
                 Err(err) if filter.is_some() => return Err(err),
                 Err(err) => combined.warnings.push(format!("{}: {err}", sys.id)),
@@ -309,7 +324,47 @@ pub async fn sync(
         ));
     }
 
+    // Join NYS DOH psychiatric / chemical-dependence bed certification counts (2g9y-7kqm,
+    // which has no street/city/zip) onto matching NYS DOH facility rows (vn5v-hh5r) by
+    // normalized facility name so hospital bed counts carry through to catalog matching.
+    attach_doh_certified_beds(&mut combined.facility_records);
+
     Ok(combined)
+}
+
+fn attach_doh_certified_beds(records: &mut Vec<FacilityLicenseRecord>) {
+    let mut beds_by_name: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    for rec in records.iter() {
+        if rec.street.is_none() && rec.city.is_none() && rec.zip.is_none() {
+            if let Some(beds) = rec.licensed_beds.filter(|&b| b > 0) {
+                let key = rec.facility_name.trim().to_ascii_lowercase();
+                if !key.is_empty() {
+                    *beds_by_name.entry(key).or_insert(0) += beds;
+                }
+            }
+        }
+    }
+    if beds_by_name.is_empty() {
+        return;
+    }
+    for rec in records.iter_mut() {
+        if rec.agency == "NYS Department of Health (NYS DOH)"
+            && (rec.street.is_some() || rec.zip.is_some())
+            && rec.licensed_beds.is_none()
+        {
+            let key = rec.facility_name.trim().to_ascii_lowercase();
+            if let Some(&beds) = beds_by_name.get(&key) {
+                rec.licensed_beds = Some(beds);
+            }
+        }
+    }
+    // Drop addressless bed-only rows once folded onto their parent DOH facilities.
+    records.retain(|rec| {
+        !(rec.agency == "NYS Department of Health (NYS DOH)"
+            && rec.street.is_none()
+            && rec.city.is_none()
+            && rec.zip.is_none())
+    });
 }
 
 fn select_import_target(req: &StateSyncRequest) -> &'static StateBoardDescriptor {
