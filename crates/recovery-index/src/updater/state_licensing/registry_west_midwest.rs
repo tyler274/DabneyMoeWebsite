@@ -129,7 +129,7 @@ const HI_SYSTEMS: &[StateBoardDescriptor] = &[
         generic_endpoint: Some(GenericEndpointSpec::ArcGisFacility {
             agency: "Hawaii Statewide GIS Program / DOH OHCA",
             layer_query_url: "https://services.arcgis.com/HQ0xoN0EzDPBOEci/arcgis/rest/services/DOH_Facilities_10/FeatureServer/0/query",
-            where_clause: "1=1",
+            where_clause: "FacType IN ('Major Hospital', 'Critical Access Hospital', 'Federally Qualified Health Center') OR UPPER(FacType) LIKE '%PSYCH%' OR UPPER(FacType) LIKE '%BEHAVIOR%' OR UPPER(FacType) LIKE '%MENTAL%' OR UPPER(FacType) LIKE '%SUBSTANCE%' OR UPPER(FacType) LIKE '%SPECIAL TREATMENT%'",
             page_size: 1000,
             max_records: 5_000,
             verification_url_template: None,
@@ -1198,7 +1198,7 @@ const UT_SYSTEMS: &[StateBoardDescriptor] = &[
         generic_endpoint: Some(GenericEndpointSpec::ArcGisFacility {
             agency: "Utah DHHS Office of Licensing (UGRC)",
             layer_query_url: "https://services1.arcgis.com/99lidPhWCzftIe9K/arcgis/rest/services/LicensedHealthCareFacilities/FeatureServer/0/query",
-            where_clause: "1=1",
+            where_clause: "LICENSE_TYPE = 'Hospital' OR UPPER(LICENSE_TYPE) LIKE '%PSYCH%' OR UPPER(LICENSE_TYPE) LIKE '%BEHAVIOR%' OR UPPER(LICENSE_TYPE) LIKE '%MENTAL%' OR UPPER(LICENSE_TYPE) LIKE '%SUBSTANCE%' OR UPPER(LICENSE_TYPE) LIKE '%CHEMICAL%' OR UPPER(LICENSE_TYPE) LIKE '%ADDICT%'",
             page_size: 1000,
             max_records: 25_000,
             verification_url_template: None,

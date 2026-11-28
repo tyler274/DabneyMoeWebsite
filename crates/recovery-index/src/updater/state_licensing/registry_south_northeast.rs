@@ -674,7 +674,7 @@ static MANIFESTS: &[StateLicensingManifest] = &[
                 generic_endpoint: Some(GenericEndpointSpec::ArcGisFacility {
                     agency: "Louisiana GOHSEP / LDH Health Standards Section",
                     layer_query_url: "https://services1.arcgis.com/fXHQyq63u0UsTeSM/arcgis/rest/services/LDH_Care_Facilities/FeatureServer/0/query",
-                    where_clause: "1=1",
+                    where_clause: "F_TYPE IN ('Hospital', 'Behavioral Health with Beds', 'Psychiatric Residential Treatment Facilities', 'Federally Qualified Health Center') OR UPPER(F_TYPE) LIKE '%BEHAVIOR%' OR UPPER(F_TYPE) LIKE '%PSYCH%' OR UPPER(F_TYPE) LIKE '%MENTAL%' OR UPPER(F_TYPE) LIKE '%SUBSTANCE%' OR UPPER(F_TYPE) LIKE '%ADDICT%'",
                     page_size: 1000,
                     max_records: 10_000,
                     verification_url_template: None,

@@ -1822,10 +1822,20 @@ pub fn RecoverySearchSection(
                                             {state_licenses
                                                 .into_iter()
                                                 .map(|lic| {
-                                                    let status_class = if lic.status.is_good_standing() {
-                                                        "rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-200"
-                                                    } else {
-                                                        "rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-rose-200"
+                                                    let status_class = match lic.status {
+                                                        LicenseStatus::Active
+                                                        | LicenseStatus::Provisional => {
+                                                            "rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-200"
+                                                        }
+                                                        LicenseStatus::Unknown => {
+                                                            "rounded bg-slate-500/20 px-1.5 py-0.5 text-[10px] font-medium text-slate-300"
+                                                        }
+                                                        LicenseStatus::Probation
+                                                        | LicenseStatus::Suspended
+                                                        | LicenseStatus::Revoked
+                                                        | LicenseStatus::Inactive => {
+                                                            "rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-rose-200"
+                                                        }
                                                     };
                                                     let status_text = lic.status.label();
                                                     let board_num = if lic.license_number.trim().is_empty() {
@@ -2219,13 +2229,22 @@ fn toggle_vec<T: PartialEq + Copy + Send + Sync + 'static>(sig: RwSignal<Vec<T>>
 }
 
 fn provider_license_dot_class(licenses: &[StateProviderLicense]) -> &'static str {
-    let has_warning = licenses
-        .iter()
-        .any(|lic| lic.disciplinary_flag || !lic.status.is_good_standing());
-    if has_warning {
+    let has_adverse = licenses.iter().any(|lic| {
+        lic.disciplinary_flag
+            || matches!(
+                lic.status,
+                LicenseStatus::Probation
+                    | LicenseStatus::Suspended
+                    | LicenseStatus::Revoked
+                    | LicenseStatus::Inactive
+            )
+    });
+    if has_adverse {
         "inline-block h-1.5 w-1.5 rounded-full bg-rose-400"
-    } else {
+    } else if licenses.iter().any(|lic| lic.status.is_good_standing()) {
         "inline-block h-1.5 w-1.5 rounded-full bg-emerald-400"
+    } else {
+        "inline-block h-1.5 w-1.5 rounded-full bg-slate-400"
     }
 }
 
