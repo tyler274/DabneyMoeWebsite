@@ -604,6 +604,16 @@ pub enum Msg {
     PassportPart2BehavioralHint,
     PassportPortalsHeading,
     PassportRoiHeading,
+
+    // Elder-Friendly Comfort View & Configurable Patient Layout
+    LayoutPresetEasyReading,
+    LayoutPresetPowerUser,
+    LayoutTextStandard,
+    LayoutTextLarge,
+    LayoutTextExtraLarge,
+    PatientComfortBarLabel,
+    PatientTaskWhatToDo,
+    PatientSwitchDemoPerson,
 }
 
 impl Msg {
@@ -800,6 +810,15 @@ impl Msg {
         Msg::PassportPart2BehavioralHint,
         Msg::PassportPortalsHeading,
         Msg::PassportRoiHeading,
+        // Elder-Friendly Comfort View & Configurable Patient Layout
+        Msg::LayoutPresetEasyReading,
+        Msg::LayoutPresetPowerUser,
+        Msg::LayoutTextStandard,
+        Msg::LayoutTextLarge,
+        Msg::LayoutTextExtraLarge,
+        Msg::PatientComfortBarLabel,
+        Msg::PatientTaskWhatToDo,
+        Msg::PatientSwitchDemoPerson,
     ];
 }
 
@@ -1023,6 +1042,14 @@ const fn translate_en(key: Msg) -> &'static str {
         Msg::PassportPart2BehavioralHint => "Seeing a psychiatrist or therapist? 42 CFR Part 2 substance-use records stay hidden by default — check the box below only if you choose to include them.",
         Msg::PassportPortalsHeading => "Sign Into Your Doctors' Portals & Pull Records Locally",
         Msg::PassportRoiHeading => "Automate Sending Release of Information (ROI) Forms",
+        Msg::LayoutPresetEasyReading => "Simple & Large Text",
+        Msg::LayoutPresetPowerUser => "Power User (All Tools)",
+        Msg::LayoutTextStandard => "Standard text",
+        Msg::LayoutTextLarge => "Large text",
+        Msg::LayoutTextExtraLarge => "Extra-large text",
+        Msg::PatientComfortBarLabel => "Reading comfort",
+        Msg::PatientTaskWhatToDo => "What would you like to do today?",
+        Msg::PatientSwitchDemoPerson => "Switch sample person",
     }
 }
 
@@ -1233,6 +1260,14 @@ const fn translate_es(key: Msg) -> &'static str {
         Msg::PassportPart2BehavioralHint => "¿Visitas a un psiquiatra o terapeuta? Los registros 42 CFR Part 2 permanecen ocultos por defecto; marca la casilla abajo solo si deseas compartirlos.",
         Msg::PassportPortalsHeading => "Conecta tus portales médicos y trae registros localmente",
         Msg::PassportRoiHeading => "Automatizar solicitudes de entrega de historial (ROI)",
+        Msg::LayoutPresetEasyReading => "Simple y texto grande",
+        Msg::LayoutPresetPowerUser => "Usuario avanzado (todo)",
+        Msg::LayoutTextStandard => "Texto normal",
+        Msg::LayoutTextLarge => "Texto grande",
+        Msg::LayoutTextExtraLarge => "Texto muy grande",
+        Msg::PatientComfortBarLabel => "Comodidad de lectura",
+        Msg::PatientTaskWhatToDo => "¿Qué te gustaría hacer hoy?",
+        Msg::PatientSwitchDemoPerson => "Cambiar persona de ejemplo",
     }
 }
 
@@ -1441,6 +1476,14 @@ const fn translate_fr(key: Msg) -> &'static str {
         Msg::PassportPart2BehavioralHint => "Vous voyez un psychiatre ou un thérapeute ? Les dossiers 42 CFR Part 2 restent masqués par défaut — cochez la case ci-dessous uniquement si vous choisissez de les partager.",
         Msg::PassportPortalsHeading => "Connectez vos portails médicaux localement",
         Msg::PassportRoiHeading => "Automatiser les demandes de transfert de dossier (ROI)",
+        Msg::LayoutPresetEasyReading => "Simple et grand texte",
+        Msg::LayoutPresetPowerUser => "Mode avancé (tout)",
+        Msg::LayoutTextStandard => "Texte standard",
+        Msg::LayoutTextLarge => "Grand texte",
+        Msg::LayoutTextExtraLarge => "Très grand texte",
+        Msg::PatientComfortBarLabel => "Confort de lecture",
+        Msg::PatientTaskWhatToDo => "Que souhaitez-vous faire aujourd'hui ?",
+        Msg::PatientSwitchDemoPerson => "Changer de profil exemple",
     }
 }
 
@@ -1649,6 +1692,14 @@ const fn translate_pt(key: Msg) -> &'static str {
         Msg::PassportPart2BehavioralHint => "Consultando psiquiatra ou terapeuta? Registros 42 CFR Part 2 ficam ocultos por padrão — marque abaixo apenas se quiser compartilhá-los.",
         Msg::PassportPortalsHeading => "Conecte portais médicos e importe registros localmente",
         Msg::PassportRoiHeading => "Automatizar pedidos de liberação de prontuário (ROI)",
+        Msg::LayoutPresetEasyReading => "Simples e texto grande",
+        Msg::LayoutPresetPowerUser => "Avançado (todas ferramentas)",
+        Msg::LayoutTextStandard => "Texto padrão",
+        Msg::LayoutTextLarge => "Texto grande",
+        Msg::LayoutTextExtraLarge => "Texto extragrande",
+        Msg::PatientComfortBarLabel => "Conforto de leitura",
+        Msg::PatientTaskWhatToDo => "O que você gostaria de fazer hoje?",
+        Msg::PatientSwitchDemoPerson => "Trocar pessoa de exemplo",
     }
 }
 
@@ -1857,6 +1908,14 @@ const fn translate_de(key: Msg) -> &'static str {
         Msg::PassportPart2BehavioralHint => "Termin bei Psychiater oder Therapeut? 42-CFR-Part-2-Einträge bleiben standardmäßig verborgen — aktivieren Sie die Option unten nur auf eigenen Wunsch.",
         Msg::PassportPortalsHeading => "Arztportale verbinden & Befunde lokal abrufen",
         Msg::PassportRoiHeading => "Aktenanforderungen (ROI) automatisch senden",
+        Msg::LayoutPresetEasyReading => "Einfach & Große Schrift",
+        Msg::LayoutPresetPowerUser => "Profi-Modus (Alle Tools)",
+        Msg::LayoutTextStandard => "Normale Schrift",
+        Msg::LayoutTextLarge => "Große Schrift",
+        Msg::LayoutTextExtraLarge => "Sehr große Schrift",
+        Msg::PatientComfortBarLabel => "Lesekomfort",
+        Msg::PatientTaskWhatToDo => "Was möchten Sie heute tun?",
+        Msg::PatientSwitchDemoPerson => "Beispielperson wechseln",
     }
 }
 
@@ -2061,6 +2120,14 @@ const fn translate_zh_hans(key: Msg) -> &'static str {
         Msg::PassportPart2BehavioralHint => "去看精神科医生或心理治疗师？42 CFR Part 2 物质使用记录默认隐藏，仅在您勾选下方选项时才会包含。",
         Msg::PassportPortalsHeading => "登录医生门户并在本地导入记录",
         Msg::PassportRoiHeading => "自动发送病历调取授权表 (ROI)",
+        Msg::LayoutPresetEasyReading => "简洁大字模式",
+        Msg::LayoutPresetPowerUser => "专业模式（全部工具）",
+        Msg::LayoutTextStandard => "标准字体",
+        Msg::LayoutTextLarge => "大字体",
+        Msg::LayoutTextExtraLarge => "超大字体",
+        Msg::PatientComfortBarLabel => "阅读舒适度",
+        Msg::PatientTaskWhatToDo => "您今天想做什么？",
+        Msg::PatientSwitchDemoPerson => "切换示例人物",
     }
 }
 
@@ -2267,6 +2334,14 @@ const fn translate_ja(key: Msg) -> &'static str {
         Msg::PassportPart2BehavioralHint => "精神科医やセラピストの受診ですか？42 CFR Part 2 記録は既定で非公開です。共有したい場合のみ下のチェックを入れてください。",
         Msg::PassportPortalsHeading => "医療機関ポータルに接続してローカル取得",
         Msg::PassportRoiHeading => "カルテ開示請求フォーム (ROI) を自動作成・送信",
+        Msg::LayoutPresetEasyReading => "シンプル・大きな文字",
+        Msg::LayoutPresetPowerUser => "上級モード（全機能）",
+        Msg::LayoutTextStandard => "標準文字",
+        Msg::LayoutTextLarge => "大きな文字",
+        Msg::LayoutTextExtraLarge => "特大文字",
+        Msg::PatientComfortBarLabel => "読みやすさ設定",
+        Msg::PatientTaskWhatToDo => "今日は何をしますか？",
+        Msg::PatientSwitchDemoPerson => "サンプル人物を切り替え",
     }
 }
 
@@ -2471,6 +2546,14 @@ const fn translate_ko(key: Msg) -> &'static str {
         Msg::PassportPart2BehavioralHint => "정신과 의사나 상담사를 만나시나요? 42 CFR Part 2 기록은 기본적으로 숨겨지며 아래에서 직접 동의한 경우에만 포함됩니다.",
         Msg::PassportPortalsHeading => "병원 포털 연결 및 로컬 기록 가져오기",
         Msg::PassportRoiHeading => "의무기록 사본 요청서(ROI) 자동 작성 및 발송",
+        Msg::LayoutPresetEasyReading => "간편 큰 글씨 모드",
+        Msg::LayoutPresetPowerUser => "전문가 모드 (전체 도구)",
+        Msg::LayoutTextStandard => "기본 글씨",
+        Msg::LayoutTextLarge => "큰 글씨",
+        Msg::LayoutTextExtraLarge => "아주 큰 글씨",
+        Msg::PatientComfortBarLabel => "읽기 편한 보기",
+        Msg::PatientTaskWhatToDo => "오늘 어떤 작업을 하시겠어요?",
+        Msg::PatientSwitchDemoPerson => "예시 인물 전환",
     }
 }
 
@@ -2679,6 +2762,14 @@ const fn translate_ar(key: Msg) -> &'static str {
         Msg::PassportPart2BehavioralHint => "هل تزور طبيباً نفسياً أو معالجاً؟ تبقى سجلات 42 CFR Part 2 مخفية افتراضياً — فعّل المربع أدناه فقط إذا اخترت مشاركتها.",
         Msg::PassportPortalsHeading => "الاتصال ببوابات أطبائك وجلب السجلات محلياً",
         Msg::PassportRoiHeading => "أتمتة إرسال نماذج طلب السجلات الطبية (ROI)",
+        Msg::LayoutPresetEasyReading => "بسيط وبخط كبير",
+        Msg::LayoutPresetPowerUser => "وضع متقدم (كل الأدوات)",
+        Msg::LayoutTextStandard => "خط عادي",
+        Msg::LayoutTextLarge => "خط كبير",
+        Msg::LayoutTextExtraLarge => "خط كبير جداً",
+        Msg::PatientComfortBarLabel => "راحة القراءة",
+        Msg::PatientTaskWhatToDo => "ماذا تريد أن تفعل اليوم؟",
+        Msg::PatientSwitchDemoPerson => "تبديل الشخص التجريبي",
     }
 }
 
