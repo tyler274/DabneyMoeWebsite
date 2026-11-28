@@ -10,6 +10,7 @@ pub mod network;
 pub mod nppes;
 pub mod overrides;
 pub mod samhsa;
+pub mod state_licensing;
 pub mod website;
 
 use std::collections::{BTreeMap, HashMap};
@@ -39,6 +40,8 @@ pub enum UpdaterError {
     HttpClient(#[source] reqwest::Error),
     #[error("SAMHSA import failed")]
     Samhsa(#[from] samhsa::SamhsaError),
+    #[error("state licensing sync failed")]
+    StateLicense(#[from] state_licensing::StateLicenseError),
     #[error("override error")]
     Override(#[from] overrides::OverrideError),
     #[error("could not read {}", path.display())]
@@ -319,6 +322,13 @@ fn merge_preserved_enrichment(target: &mut Facility, prev: &Facility) {
     if target.staffing_profile.is_none() {
         target.staffing_profile.clone_from(&prev.staffing_profile);
     }
+    for sl in &prev.state_licenses {
+        if !target.state_licenses.iter().any(|existing| {
+            existing.agency == sl.agency && existing.license_number == sl.license_number
+        }) {
+            target.state_licenses.push(sl.clone());
+        }
+    }
 
     if let Some(prev_meta) = &prev.enrichment {
         let meta = target
@@ -349,6 +359,7 @@ pub struct EnrichOptions {
     pub limit: Option<usize>,
     pub residential_first: bool,
     pub skip_nppes: bool,
+    pub skip_state_licensing: bool,
     pub skip_web: bool,
     pub llm: Option<llm::LlmConfig>,
     pub cache_mode: CacheMode,
@@ -565,6 +576,33 @@ pub async fn run_enrich(opts: EnrichOptions) -> Result<(), UpdaterError> {
                 network_mode,
             );
         }
+
+        // Layer 2b: Official State Facility & Provider Licensing Registries (cached)
+        let mut state_lic_summary = String::new();
+        if !opts.skip_state_licensing {
+            let sync_req = state_licensing::StateSyncRequest::default();
+            match state_licensing::sync_state_licensing(&client, &cache, state, &sync_req).await {
+                Ok(outcome) => {
+                    for w in &outcome.warnings {
+                        eprintln!("recovery-index: state-licensing [{state}] warning: {w}");
+                    }
+                    let today = today_utc_iso();
+                    let matched = state_licensing::apply_state_licensing_to_catalog(
+                        catalog, &outcome, &today,
+                    );
+                    state_lic_summary = format!(
+                        " | StateLic: {} fac / {} prov (cache {} hits / {} fetched)",
+                        matched.facilities_matched,
+                        matched.providers_matched,
+                        outcome.cache_hits,
+                        outcome.fetched
+                    );
+                }
+                Err(err) => {
+                    eprintln!("recovery-index: state-licensing [{state}] warning: {err}");
+                }
+            }
+        }
         for f in &mut catalog.facilities {
             f.id = Some(f.stable_id());
         }
@@ -583,7 +621,7 @@ pub async fn run_enrich(opts: EnrichOptions) -> Result<(), UpdaterError> {
         };
         println!(
             "recovery-index enrich [{state}]: {} facilities ({enriched_total} enriched) | \
-             NPPES: {nppes_enriched} matched (cache {nppes_hits} hits / {nppes_net} fetched) | \
+             NPPES: {nppes_enriched} matched (cache {nppes_hits} hits / {nppes_net} fetched){state_lic_summary} | \
              Web: {web_enriched} matched (cache {web_hits} hits / {web_net} fetched){llm_summary} | \
              Network: {} shared/visiting providers | Overrides: {ov_count} | sha256: {}...",
             catalog.facilities.len(),
@@ -840,6 +878,7 @@ pub fn run_stats(paths: &PathsConfig, state_filter: Option<&str>) -> Result<(), 
     let mut total_food = 0usize;
     let mut total_elec = 0usize;
     let mut total_staff = 0usize;
+    let mut total_state_lic = 0usize;
 
     for (code, catalog) in &shards {
         if let Some(wanted) = state_filter {
@@ -873,6 +912,11 @@ pub fn run_stats(paths: &PathsConfig, state_filter: Option<&str>) -> Result<(), 
             .iter()
             .filter(|f| !f.staff_licenses.is_empty())
             .count();
+        let state_lic = catalog
+            .facilities
+            .iter()
+            .filter(|f| !f.state_licenses.is_empty())
+            .count();
 
         total_fac += fac;
         total_enriched += enriched;
@@ -880,17 +924,18 @@ pub fn run_stats(paths: &PathsConfig, state_filter: Option<&str>) -> Result<(), 
         total_food += food;
         total_elec += elec;
         total_staff += staff;
+        total_state_lic += state_lic;
 
         if enriched > 0 || state_filter.is_some() {
             println!(
-                "{code}: {fac:4} total | {enriched:4} enriched | amenities:{amenities:3} food:{food:3} devices:{elec:3} staff:{staff:3} | shared-network:{} providers",
+                "{code}: {fac:4} total | {enriched:4} enriched | amenities:{amenities:3} food:{food:3} devices:{elec:3} staff:{staff:3} state-lic:{state_lic:3} | shared-network:{} providers",
                 catalog.staff_network.len()
             );
         }
     }
 
     println!(
-        "TOTAL: {total_fac} facilities | {total_enriched} enriched | amenities:{total_amenities} food:{total_food} devices:{total_elec} staff:{total_staff}"
+        "TOTAL: {total_fac} facilities | {total_enriched} enriched | amenities:{total_amenities} food:{total_food} devices:{total_elec} staff:{total_staff} state-lic:{total_state_lic}"
     );
     Ok(())
 }
@@ -973,6 +1018,7 @@ pub fn run_add_provider(opts: AddProviderOptions) -> Result<(), UpdaterError> {
             arrangement: opts.arrangement,
             facility_ids,
             sources: vec![DataSource::Verified],
+            state_licenses: Vec::new(),
             notes: opts.notes,
         });
     }
@@ -1056,5 +1102,172 @@ pub fn run_network(
             break;
         }
     }
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+pub struct StateSyncOptions {
+    pub paths: PathsConfig,
+    pub states: Vec<String>,
+    pub request: state_licensing::StateSyncRequest,
+    pub cache_mode: CacheMode,
+}
+
+/// Runs state facility and provider licensing adapters for the selected states (or all live
+/// open-data states when `states` is empty), matches official licenses onto shards and
+/// `staff_network`, writes updated shards, and refreshes `index.json`.
+pub async fn run_state_sync(opts: StateSyncOptions) -> Result<(), UpdaterError> {
+    let client = build_http_client()?;
+    let cache = DiskCache::new(opts.paths.cache_dir.clone(), opts.cache_mode);
+    let mut shards = load_existing_shards(&opts.paths.out_dir)?;
+
+    let target_states: Vec<String> = if opts.states.is_empty() {
+        state_licensing::all_state_manifests()
+            .into_iter()
+            .filter(state_licensing::has_live_adapter)
+            .map(|m| m.state.to_string())
+            .filter(|s| shards.contains_key(s))
+            .collect()
+    } else {
+        opts.states
+            .iter()
+            .map(|s| s.to_ascii_uppercase())
+            .filter(|s| shards.contains_key(s))
+            .collect()
+    };
+
+    if target_states.is_empty() {
+        return Err(UpdaterError::Usage(
+            "No matching state shards found for `state-sync`.".to_string(),
+        ));
+    }
+
+    let today = today_utc_iso();
+    for state in &target_states {
+        let Some(catalog) = shards.get_mut(state) else {
+            continue;
+        };
+        let outcome =
+            state_licensing::sync_state_licensing(&client, &cache, state, &opts.request).await?;
+        for w in &outcome.warnings {
+            eprintln!("recovery-index state-sync [{state}] warning: {w}");
+        }
+        // On a full-state facility sync (no --import-file or --system filter), replace prior
+        // automated state_licenses so improved matching rules never leave stale attachments.
+        if opts.request.import_file.is_none()
+            && opts.request.system_filter.is_none()
+            && !opts.request.skip_facilities
+            && !outcome.facility_records.is_empty()
+        {
+            for fac in &mut catalog.facilities {
+                fac.state_licenses.clear();
+            }
+        }
+        let matched = state_licensing::apply_state_licensing_to_catalog(catalog, &outcome, &today);
+        for f in &mut catalog.facilities {
+            f.id = Some(f.stable_id());
+        }
+        let digest = write_state_shard(&opts.paths.out_dir, catalog)?;
+        rebuild_index_json(&opts.paths.out_dir)?;
+        println!(
+            "recovery-index state-sync [{state}]: systems={} | raw: {} fac / {} prov | \
+             matched: {} facilities ({} licenses), {} providers ({} licenses) | \
+             cache: {} hits / {} fetched | sha256: {}...",
+            if outcome.systems_executed.is_empty() {
+                "none".to_string()
+            } else {
+                outcome.systems_executed.join(",")
+            },
+            outcome.facility_records.len(),
+            outcome.provider_records.len(),
+            matched.facilities_matched,
+            matched.facility_licenses_attached,
+            matched.providers_matched,
+            matched.provider_licenses_attached,
+            outcome.cache_hits,
+            outcome.fetched,
+            &digest[..12],
+        );
+    }
+
+    rebuild_index_json(&opts.paths.out_dir)?;
+    Ok(())
+}
+
+/// Prints the registered facility and provider licensing search systems across all 55 US
+/// jurisdictions (or one selected state).
+pub fn run_state_adapters(state_filter: Option<&str>, live_only: bool) -> Result<(), UpdaterError> {
+    let manifests = state_licensing::all_state_manifests();
+    let mut total_jurisdictions = 0usize;
+    let mut live_jurisdictions = 0usize;
+    let mut total_systems = 0usize;
+    let mut live_systems = 0usize;
+
+    for m in &manifests {
+        if let Some(wanted) = state_filter {
+            if !m.state.eq_ignore_ascii_case(wanted) {
+                continue;
+            }
+        }
+        let is_live = state_licensing::has_live_adapter(m);
+        if live_only && !is_live {
+            continue;
+        }
+        total_jurisdictions += 1;
+        if is_live {
+            live_jurisdictions += 1;
+        }
+        let do_note = if m.separate_osteopathic_board {
+            "separate DO board"
+        } else {
+            "unified MD/DO board"
+        };
+        println!(
+            "{} ({}) [{} | {}]",
+            m.state,
+            m.state_name,
+            if is_live {
+                "LIVE API"
+            } else {
+                "PORTAL / IMPORT"
+            },
+            do_note
+        );
+        for sys in m.systems {
+            total_systems += 1;
+            let has_api = sys.generic_endpoint.is_some()
+                || matches!(
+                    sys.access_mode,
+                    state_licensing::LicensingAccessMode::OpenDataApi
+                        | state_licensing::LicensingAccessMode::DirectSearchApi
+                );
+            if has_api {
+                live_systems += 1;
+            }
+            let gate = if sys.captcha_or_login_gated {
+                " [CAPTCHA/login gated]"
+            } else {
+                ""
+            };
+            println!(
+                "  - [{}] {} ({}) | {} | {}{}",
+                sys.id,
+                sys.agency_name,
+                sys.system_name,
+                sys.scope.label(),
+                sys.access_mode.label(),
+                gate
+            );
+            println!("      portal: {}", sys.portal_url);
+            if let Some(api) = sys.api_or_download_url {
+                println!("      api:    {api}");
+            }
+        }
+    }
+
+    println!(
+        "\nSummary: {total_jurisdictions} jurisdictions ({live_jurisdictions} with live API adapters), \
+         {total_systems} licensing systems ({live_systems} live)."
+    );
     Ok(())
 }

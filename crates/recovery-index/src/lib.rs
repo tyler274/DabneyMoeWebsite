@@ -54,6 +54,7 @@ mod tests {
             },
             staff_licenses,
             staffing_profile: None,
+            state_licenses: Vec::new(),
             enrichment: None,
         }
     }
@@ -460,6 +461,7 @@ mod tests {
             arrangement: StaffArrangement::Visiting,
             facility_ids: vec![id_a.clone(), id_b.clone()],
             sources: vec![DataSource::Verified],
+            state_licenses: Vec::new(),
             notes: Some("Provides yoga classes across Phoenix/Scottsdale programs.".to_string()),
         }];
 
@@ -501,6 +503,7 @@ mod tests {
             arrangement: StaffArrangement::Visiting,
             facility_ids: vec![id_b.clone()],
             sources: vec![DataSource::Verified],
+            state_licenses: Vec::new(),
             notes: None,
         });
         rebuild_state_staff_network(

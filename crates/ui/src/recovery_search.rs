@@ -527,6 +527,7 @@ pub fn RecoverySearchSection(
     let staff_match_mode = RwSignal::new(StaffMatchMode::Any);
     let only_dedicated_physician = RwSignal::new(false);
     let only_shared_network = RwSignal::new(false);
+    let only_state_licensed = RwSignal::new(false);
     let selected_provider_id = RwSignal::new(Option::<String>::None);
     let only_enriched = RwSignal::new(false);
 
@@ -717,6 +718,7 @@ pub fn RecoverySearchSection(
             + selected_staff.with(Vec::len)
             + usize::from(only_dedicated_physician.get())
             + usize::from(only_shared_network.get())
+            + usize::from(only_state_licensed.get())
             + usize::from(selected_provider_id.get().is_some())
             + usize::from(only_enriched.get())
             + usize::from(origin.get().is_some())
@@ -741,6 +743,7 @@ pub fn RecoverySearchSection(
             only_dedicated_physician: only_dedicated_physician.get(),
             only_shared_network: only_shared_network.get(),
             provider_id: selected_provider_id.get(),
+            only_state_licensed: only_state_licensed.get(),
             only_enriched: only_enriched.get(),
             origin: origin.get(),
             radius_km: radius_km.get(),
@@ -765,6 +768,7 @@ pub fn RecoverySearchSection(
         staff_match_mode.set(StaffMatchMode::Any);
         only_dedicated_physician.set(false);
         only_shared_network.set(false);
+        only_state_licensed.set(false);
         selected_provider_id.set(None);
         only_enriched.set(false);
         origin.set(None);
@@ -1184,6 +1188,7 @@ pub fn RecoverySearchSection(
                             class=move || {
                                 if selected_provider_id.get().is_some()
                                     || only_shared_network.get()
+                                    || only_state_licensed.get()
                                     || show_network_explorer.get()
                                 {
                                     "inline-flex min-h-[38px] items-center gap-1.5 rounded-full border border-indigo-400/55 bg-indigo-500/20 px-3.5 py-1.5 text-xs font-semibold text-indigo-100 transition hover:bg-indigo-500/30"
@@ -1597,6 +1602,30 @@ pub fn RecoverySearchSection(
                                     format!("Shares staff across facilities ({n})")
                                 } else {
                                     "Shares staff across facilities".to_string()
+                                }
+                            }}
+                        </button>
+                        <button
+                            type="button"
+                            aria-pressed=move || only_state_licensed.get().to_string()
+                            on:click=move |_| {
+                                only_state_licensed.update(|v| *v = !*v);
+                                page.set(0);
+                            }
+                            class=move || {
+                                if only_state_licensed.get() {
+                                    "min-h-[32px] rounded-full border border-cyan-400/60 bg-cyan-500/20 px-3 py-1 text-xs font-semibold text-cyan-100 transition"
+                                } else {
+                                    "min-h-[32px] rounded-full border border-white/15 bg-white/[0.03] px-3 py-1 text-xs text-slate-300 transition hover:border-cyan-400/40 hover:text-white"
+                                }
+                            }
+                        >
+                            {move || {
+                                let n = offered_facets.get().state_licensed_count;
+                                if n > 0 {
+                                    format!("Matched state license ({n})")
+                                } else {
+                                    "Matched state license".to_string()
                                 }
                             }}
                         </button>
@@ -2158,6 +2187,7 @@ fn render_facility_card(
     let group_badges: Vec<&'static str> = f.groups.iter().map(|g| g.label()).collect();
     let staff_licenses = f.staff_licenses.clone();
     let staffing_profile = f.staffing_profile.clone();
+    let state_licenses = f.state_licenses.clone();
     let amenities = f.lifestyle.amenities.clone();
     let food = f.lifestyle.food;
     let dietary = f.lifestyle.dietary.clone();
@@ -2197,6 +2227,7 @@ fn render_facility_card(
                                 {sources.into_iter().map(|src| {
                                     let cls = match src {
                                         DataSource::Verified => "rounded-full border border-emerald-400/50 bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold text-emerald-200",
+                                        DataSource::StateLicense => "rounded-full border border-cyan-400/45 bg-cyan-500/15 px-2 py-0.5 text-[10px] font-medium text-cyan-200",
                                         DataSource::Nppes => "rounded-full border border-amber-400/35 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-200",
                                         DataSource::Website => "rounded-full border border-teal-400/35 bg-teal-500/10 px-2 py-0.5 text-[10px] text-teal-200",
                                         DataSource::Llm => "rounded-full border border-indigo-400/40 bg-indigo-500/15 px-2 py-0.5 text-[10px] text-indigo-200",
@@ -2241,6 +2272,80 @@ fn render_facility_card(
                         })
                         .collect_view()}
                 </div>
+
+                // State Facility Licensing (official state registry records)
+                {(!state_licenses.is_empty()).then(|| {
+                    let licenses: Vec<StateFacilityLicense> =
+                        state_licenses.into_iter().take(3).collect();
+                    view! {
+                        <div class="space-y-1.5 rounded-lg border border-cyan-400/20 bg-cyan-950/15 p-2">
+                            <span class="block text-[10px] font-semibold uppercase tracking-wider text-cyan-200/90">
+                                "State Facility Licensing"
+                            </span>
+                            <div class="space-y-1">
+                                {licenses
+                                    .into_iter()
+                                    .map(|lic| {
+                                        let status_class = match lic.status {
+                                            LicenseStatus::Active | LicenseStatus::Provisional => {
+                                                "rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-200"
+                                            }
+                                            LicenseStatus::Unknown => {
+                                                "rounded bg-slate-500/20 px-1.5 py-0.5 text-[10px] font-medium text-slate-300"
+                                            }
+                                            LicenseStatus::Probation
+                                            | LicenseStatus::Suspended
+                                            | LicenseStatus::Revoked
+                                            | LicenseStatus::Inactive => {
+                                                "rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-rose-200"
+                                            }
+                                        };
+                                        let status_text = lic.status.label();
+                                        let agency_num = format!(
+                                            "{} #{}",
+                                            lic.agency, lic.license_number
+                                        );
+                                        let ltype = lic.license_type.clone();
+                                        let beds = lic.licensed_beds.filter(|&b| b > 0);
+                                        let verify_url = lic.verification_url.clone().filter(|u| {
+                                            u.starts_with("https://") || u.starts_with("http://")
+                                        });
+                                        view! {
+                                            <div class="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-200">
+                                                <span class=status_class>{status_text}</span>
+                                                <span class="font-medium text-white">{agency_num}</span>
+                                                {(!ltype.is_empty()).then(|| {
+                                                    view! {
+                                                        <span class="text-slate-300">{format!("· {ltype}")}</span>
+                                                    }
+                                                })}
+                                                {beds.map(|b| {
+                                                    view! {
+                                                        <span class="rounded border border-cyan-400/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-100">
+                                                            {format!("{b} licensed beds")}
+                                                        </span>
+                                                    }
+                                                })}
+                                                {verify_url.map(|url| {
+                                                    view! {
+                                                        <a
+                                                            href=url
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            class="text-[10px] font-medium text-cyan-300 underline-offset-2 hover:underline"
+                                                        >
+                                                            "Verify"
+                                                        </a>
+                                                    }
+                                                })}
+                                            </div>
+                                        }
+                                    })
+                                    .collect_view()}
+                            </div>
+                        </div>
+                    }
+                })}
 
                 // Staff Licenses & Dedicated vs Shared/Visiting Network (MD != DO, Psychiatrist != NP)
                 {(!staff_licenses.is_empty() || staffing_profile.is_some()).then(|| {

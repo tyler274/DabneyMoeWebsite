@@ -14,10 +14,11 @@ use recovery_index::schema::{
 };
 use recovery_index::updater::cache::CacheMode;
 use recovery_index::updater::llm::{LlmBackend, LlmConfig};
+use recovery_index::updater::state_licensing::StateSyncRequest;
 use recovery_index::updater::{
     run_add_provider, run_enrich, run_find, run_import, run_network, run_rebuild, run_set_override,
-    run_stats, AddProviderOptions, EnrichOptions, ImportOptions, PathsConfig, SetOverrideOptions,
-    UpdaterError,
+    run_state_adapters, run_state_sync, run_stats, AddProviderOptions, EnrichOptions,
+    ImportOptions, PathsConfig, SetOverrideOptions, StateSyncOptions, UpdaterError,
 };
 
 const USAGE: &str = "\
@@ -36,11 +37,24 @@ COMMANDS:
             + optional cached LLM extraction (codex/claude/openai/ollama) + curated TOML overrides,
             then update index.json SHA-256 hashes.
             [--states CO,AZ,NY,CA] [--limit N] [--residential-first]
-            [--skip-nppes] [--skip-web]
+            [--skip-nppes] [--skip-state-licensing] [--skip-web]
             [--llm codex|claude|openai|ollama] [--llm-model MODEL]
             [--llm-base-url URL] [--llm-concurrency N]
             [--offline | --refresh]
             [--out DIR] [--overrides DIR] [--cache-dir DIR]
+
+  state-sync
+            Sync official state facility and provider licensing registries (Open Data APIs,
+            ArcGIS, CKAN, Socrata, CSV exports, or local --import-file bulk downloads) onto
+            state shards and staff_network, then update index.json SHA-256 digests.
+            [--states AZ,CA,NY,CO] [--system ID] [--import-file FILE]
+            [--skip-facilities] [--skip-providers]
+            [--offline | --refresh] [--out DIR] [--cache-dir DIR]
+
+  state-adapters
+            List all 55 US jurisdiction facility & provider licensing search systems,
+            separate DO board flags, live Open Data endpoints, and official verification URLs.
+            [--state ST] [--live-only]
 
   rebuild   Offline rebuild: assign stable IDs, apply data/recovery/overrides/*.toml,
             write shards, and recompute SHA-256 digests in public/recovery/index.json.
@@ -86,6 +100,8 @@ async fn main() -> ExitCode {
     let result = match args[0].as_str() {
         "import" => cmd_import(&args[1..]).await,
         "enrich" => cmd_enrich(&args[1..]).await,
+        "state-sync" => cmd_state_sync(&args[1..]).await,
+        "state-adapters" => cmd_state_adapters(&args[1..]),
         "rebuild" => cmd_rebuild(&args[1..]),
         "set" => cmd_set(&args[1..]),
         "add-provider" => cmd_add_provider(&args[1..]),
@@ -171,6 +187,7 @@ async fn cmd_enrich(args: &[String]) -> Result<(), UpdaterError> {
         limit: None,
         residential_first: false,
         skip_nppes: false,
+        skip_state_licensing: false,
         skip_web: false,
         llm: None,
         cache_mode: CacheMode::Normal,
@@ -195,6 +212,7 @@ async fn cmd_enrich(args: &[String]) -> Result<(), UpdaterError> {
             }
             "--residential-first" => opts.residential_first = true,
             "--skip-nppes" => opts.skip_nppes = true,
+            "--skip-state-licensing" => opts.skip_state_licensing = true,
             "--skip-web" => opts.skip_web = true,
             "--llm" => {
                 let raw = next_val(&mut it, "--llm")?;
@@ -235,6 +253,56 @@ async fn cmd_enrich(args: &[String]) -> Result<(), UpdaterError> {
         opts.llm = Some(cfg);
     }
     run_enrich(opts).await
+}
+
+async fn cmd_state_sync(args: &[String]) -> Result<(), UpdaterError> {
+    let mut opts = StateSyncOptions {
+        paths: PathsConfig::default(),
+        states: Vec::new(),
+        request: StateSyncRequest::default(),
+        cache_mode: CacheMode::Normal,
+    };
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--states" => opts
+                .states
+                .extend(parse_csv_states(next_val(&mut it, "--states")?)),
+            "--state" => opts
+                .states
+                .extend(parse_csv_states(next_val(&mut it, "--state")?)),
+            "--system" => {
+                opts.request.system_filter = Some(next_val(&mut it, "--system")?.to_string())
+            }
+            "--import-file" => {
+                opts.request.import_file = Some(PathBuf::from(next_val(&mut it, "--import-file")?))
+            }
+            "--skip-facilities" => opts.request.skip_facilities = true,
+            "--skip-providers" => opts.request.skip_providers = true,
+            "--out" => opts.paths.out_dir = PathBuf::from(next_val(&mut it, "--out")?),
+            "--cache-dir" => {
+                opts.paths.cache_dir = PathBuf::from(next_val(&mut it, "--cache-dir")?)
+            }
+            "--offline" => opts.cache_mode = CacheMode::Offline,
+            "--refresh" => opts.cache_mode = CacheMode::Refresh,
+            other => return Err(UpdaterError::Usage(format!("Unknown flag `{other}`"))),
+        }
+    }
+    run_state_sync(opts).await
+}
+
+fn cmd_state_adapters(args: &[String]) -> Result<(), UpdaterError> {
+    let mut state: Option<String> = None;
+    let mut live_only = false;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--state" => state = Some(next_val(&mut it, "--state")?.to_string()),
+            "--live-only" => live_only = true,
+            other => return Err(UpdaterError::Usage(format!("Unknown flag `{other}`"))),
+        }
+    }
+    run_state_adapters(state.as_deref(), live_only)
 }
 
 fn cmd_rebuild(args: &[String]) -> Result<(), UpdaterError> {

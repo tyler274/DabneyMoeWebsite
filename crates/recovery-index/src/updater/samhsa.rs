@@ -354,6 +354,7 @@ fn map_row(row: RawRow, state: &str) -> Option<Facility> {
         lifestyle,
         staff_licenses: Vec::new(),
         staffing_profile: None,
+        state_licenses: Vec::new(),
         enrichment: (!enrichment.is_empty()).then_some(enrichment),
     };
     facility.id = Some(facility.stable_id());

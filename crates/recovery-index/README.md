@@ -27,6 +27,7 @@ All network responses are cached on disk under `.cache/recovery-index/` (gitigno
 | --- | --- | --- |
 | 1 | SAMHSA FindTreatment.gov v2 export pages | 7 days |
 | 2 | CMS NPPES NPI Registry v2.1 (`NPI-1` per ZIP) | 30 days |
+| 2b | Official 50-state (+ DC/territories) facility & provider licensing adapters (ArcGIS, Socrata, CKAN, CSV, and `--import-file` bulk exports) | 14 days |
 | 3 | Public facility websites (homepage + up to 4 amenity/FAQ/team subpages, ETag/Last-Modified revalidation) | 14 days |
 | 3b *(optional)* | LLM structured extraction (`--llm codex\|claude\|openai\|ollama`) over cached site text, content-addressed by text SHA-256 | 90 days |
 | 4 | Curated checked-in TOML overrides (`data/recovery/overrides/<ST>.toml`) | Always wins |
@@ -84,6 +85,15 @@ cargo run -p recovery-index --features cli -- add-provider \
 
 # Inspect the cross-facility shared-staff & visiting-provider network for a state
 cargo run -p recovery-index --features cli -- network --state AZ --top 25
+
+# Inspect all 55 US jurisdiction facility & provider licensing adapters
+cargo run -p recovery-index --features cli -- state-adapters
+cargo run -p recovery-index --features cli -- state-adapters --live-only
+cargo run -p recovery-index --features cli -- state-adapters --state AZ
+
+# Sync official state facility & provider licensing registries onto shards (cached on disk)
+cargo run -p recovery-index --features cli -- state-sync --states AZ,CA,NY,CO
+cargo run -p recovery-index --features cli -- state-sync --states AZ --import-file ./az-board-export.csv
 
 # Check enrichment coverage across states
 cargo run -p recovery-index --features cli -- stats

@@ -1270,8 +1270,146 @@ pub struct NetworkProvider {
     pub facility_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<DataSource>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub state_licenses: Vec<StateProviderLicense>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+}
+
+/// Normalized standing of a state facility or professional license.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LicenseStatus {
+    Active,
+    Provisional,
+    Probation,
+    Suspended,
+    Revoked,
+    Inactive,
+    Unknown,
+}
+
+impl LicenseStatus {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Active => "Active",
+            Self::Provisional => "Provisional",
+            Self::Probation => "Probation / Restricted",
+            Self::Suspended => "Suspended",
+            Self::Revoked => "Revoked",
+            Self::Inactive => "Inactive / Expired",
+            Self::Unknown => "Status Unknown",
+        }
+    }
+
+    pub const fn is_good_standing(self) -> bool {
+        matches!(self, Self::Active | Self::Provisional)
+    }
+
+    /// Parses free-text license status strings returned by state boards and health agencies.
+    pub fn parse_loose(raw: &str) -> Self {
+        let s = raw.trim().to_ascii_lowercase();
+        if s.is_empty() {
+            return Self::Unknown;
+        }
+        if s.contains("revok") || s.contains("surrender") || s.contains("annul") {
+            return Self::Revoked;
+        }
+        if s.contains("suspend") || s.contains("summary") || s.contains("ceased") {
+            return Self::Suspended;
+        }
+        if s.contains("probat")
+            || s.contains("restrict")
+            || s.contains("stipulation")
+            || s.contains("consent")
+            || s.contains("disciplin")
+            || s.contains("conditional")
+        {
+            return Self::Probation;
+        }
+        if s.contains("provisional") || s.contains("temporary") || s.contains("temp ") {
+            return Self::Provisional;
+        }
+        if s.contains("inactive")
+            || s.contains("expired")
+            || s.contains("closed")
+            || s.contains("lapsed")
+            || s.contains("delinquent")
+            || s.contains("cancelled")
+            || s.contains("canceled")
+            || s.contains("retired")
+            || s.contains("denied")
+        {
+            return Self::Inactive;
+        }
+        if s.contains("active")
+            || s.contains("current")
+            || s.contains("open")
+            || s.contains("licensed")
+            || s.contains("certified")
+            || s.contains("clear")
+            || s.contains("valid")
+            || s.contains("good standing")
+            || s == "a"
+            || s == "y"
+        {
+            return Self::Active;
+        }
+        Self::Unknown
+    }
+}
+
+/// Official state facility license / certification record attached to a [`Facility`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateFacilityLicense {
+    /// Two-letter state code (e.g. `"AZ"`, `"CA"`, `"NY"`, `"CO"`).
+    pub state: String,
+    /// Issuing state agency (e.g. `"AZDHS"`, `"CA DHCS"`, `"CA CDPH"`, `"NY OASAS"`, `"CO CDPHE"`).
+    pub agency: String,
+    /// Official state license, certificate, or program ID.
+    pub license_number: String,
+    /// State-specific license or facility category (e.g. `"Behavioral Health Residential Facility"`).
+    pub license_type: String,
+    pub status: LicenseStatus,
+    /// State-licensed bed or residential capacity, if published.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub licensed_beds: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_on: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disciplinary_actions: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inspection_count: Option<u32>,
+    /// Official public state verification or inspection lookup URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retrieved_at: Option<String>,
+}
+
+/// Official state professional board license attached to a [`NetworkProvider`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateProviderLicense {
+    pub state: String,
+    /// Issuing state board (e.g. `"AZ Medical Board"`, `"AZ Board of Osteopathic Examiners"`, `"CO DORA"`).
+    pub board: String,
+    pub license_number: String,
+    /// Exact credential/profession text from the state board.
+    pub credential_label: String,
+    /// Strictly mapped [`StaffLicense`] when unambiguous (never conflates MD vs DO or NP vs MD).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<StaffLicense>,
+    pub status: LicenseStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_on: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub disciplinary_flag: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_url: Option<String>,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 /// Per-facility summary of dedicated vs shared/visiting staff so families can compare care models.
@@ -1323,6 +1461,8 @@ pub enum DataSource {
     Samhsa,
     #[serde(rename = "nppes")]
     Nppes,
+    #[serde(rename = "state-license")]
+    StateLicense,
     #[serde(rename = "website")]
     Website,
     #[serde(rename = "llm")]
@@ -1336,6 +1476,7 @@ impl DataSource {
         match self {
             Self::Samhsa => "SAMHSA",
             Self::Nppes => "CMS NPPES",
+            Self::StateLicense => "State Licensing Registry",
             Self::Website => "Facility Website",
             Self::Llm => "LLM Extracted",
             Self::Verified => "Verified",
@@ -1525,6 +1666,9 @@ pub struct Facility {
     /// Dedicated vs shared/visiting staffing summary and links into `StateCatalog::staff_network`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub staffing_profile: Option<StaffingProfile>,
+    /// Official state facility licensing / certification records matched to this facility.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub state_licenses: Vec<StateFacilityLicense>,
     /// Provenance & freshness metadata for enriched fields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enrichment: Option<EnrichmentMeta>,
@@ -1548,7 +1692,9 @@ impl Facility {
     }
 
     pub fn is_enriched(&self) -> bool {
-        !self.lifestyle.is_empty() || !self.staff_licenses.is_empty()
+        !self.lifestyle.is_empty()
+            || !self.staff_licenses.is_empty()
+            || !self.state_licenses.is_empty()
     }
 
     /// Safe external website URL (strictly `http://` or `https://`).
