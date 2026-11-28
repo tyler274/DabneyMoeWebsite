@@ -33,10 +33,13 @@ permissions:
 # act itself. Undefined `env.ACT` still compares equal to '' in expressions.
 
 # Job graph: `scope` and the image bootstrap run first, then format, clippy,
-# test and every build run in parallel. `deploy` waits for format, clippy,
-# test, build-web and build-image, so wall time is the slowest gate, not the sum.
+# test, build-image, and any affected app builds run in parallel. `build-image`
+# already runs `cargo leptos build --release` (WASM hydrate + Tailwind + asset
+# hashing + static-musl SSR server), so there is no separate duplicate
+# `build-web` job. `deploy` waits for format, clippy, test, and build-image, so
+# wall time is the slowest gate, not the sum.
 #
-# Rust build cache: clippy, test, build-web and build-desktop restore `target/`
+# Rust build cache: clippy, test, and build-desktop restore `target/`
 # keyed by job, rustc version, flake.lock and Cargo.lock. The fallback key
 # keeps flake.lock: cached build scripts and proc macros link against the
 # pinned glibc store path and cannot run after a nixpkgs bump. Crate sources are vendored in the
@@ -226,10 +229,12 @@ jobs:
       - uses: actions/checkout@v6
       - name: Trust workspace for Git
         run: git config --system --add safe.directory '*'
-      - name: Check nixpkgs-fmt
-        run: nix develop -c nixpkgs-fmt --check flake.nix nix/
-      - name: Check rustfmt
-        run: nix develop -c cargo fmt --all --check
+      - name: Check nixpkgs-fmt and rustfmt
+        run: |
+          nix develop -c bash -euo pipefail -c '
+            nixpkgs-fmt --check flake.nix nix/
+            cargo fmt --all --check
+          '
   # RustSec advisories, licence allow-list, bans and source checks. deny.toml is
   # the single policy file; the dev shell carries cargo-deny too, so
   # `nix develop -c cargo deny --all-features check` and `nix run .#ci` match
@@ -299,91 +304,21 @@ jobs:
           key: rust-v1-clippy-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             rust-v1-clippy-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-
-      - name: "clippy: recovery-index (cli)"
-        run: nix develop -c cargo clippy -p recovery-index --features cli -- -D warnings
-      - name: "clippy: recovery-index (wasm32)"
-        run: nix develop -c cargo clippy -p recovery-index --target wasm32-unknown-unknown -- -D warnings
-      - name: "clippy: clinical-workspace (ssr)"
-        run: nix develop -c cargo clippy -p clinical-workspace --features ssr -- -D warnings
-      - name: "clippy: ui (ssr)"
-        run: nix develop -c cargo clippy -p ui --features ssr -- -D warnings
-      - name: "clippy: web (ssr)"
-        run: nix develop -c cargo clippy -p web --features ssr -- -D warnings
-      - name: "clippy: tauri-ui (csr, wasm32)"
-        run: nix develop -c cargo clippy -p tauri-ui --target wasm32-unknown-unknown -- -D warnings
-      - name: "clippy: dabney-app"
-        run: nix develop -c cargo clippy -p dabney-app -- -D warnings
-      - name: "clippy: dabney-app (health-connect)"
-        run: nix develop -c cargo clippy -p dabney-app --features health-connect -- -D warnings
-      - name: "clippy: icon-gen"
-        run: nix develop -c cargo clippy -p icon-gen -- -D warnings
-      - name: "clippy: forge-linear-sync"
-        run: nix develop -c cargo clippy -p forge-linear-sync --all-targets -- -D warnings
-      - name: "clippy: forge"
-        run: nix develop -c cargo clippy -p forge --all-targets -- -D warnings
-      - name: Prepare Rust cache payload
-        id: cache-payload
-        if: ${{ !env.ACT && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.rust-cache.outputs.cache-hit != 'true' }}
-        continue-on-error: true
-        run: scripts/ci-trim-target.sh target
-      - name: Save Rust build cache
-        if: ${{ steps.cache-payload.outcome == 'success' }}
-        continue-on-error: true
-        uses: actions/cache/save@v6
-        with:
-          path: target
-          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
-  # Production web build (Axum SSR server binary + hashed site assets).
-  build-web:
-    name: Build web (Leptos SSR)
-    needs: [scope, build-ci-image]
-    if: needs.scope.outputs.build == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      # act sometimes drops Dockerfile ENV; keep Nix on PATH.
-      PATH: /nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-    container:
-      image: ${{ needs.build-ci-image.outputs.image }}
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-      options: --privileged
-    steps:
-      - uses: actions/checkout@v6
-      - name: Trust workspace for Git
-        run: git config --system --add safe.directory '*'
-      - name: Rust toolchain version
-        id: rustc
+      - name: Run clippy across workspace crates
         run: |
-          version="$(nix develop -c rustc -vV | awk '/^release:/{r=$2} /^commit-hash:/{c=$2} END{print r "-" substr(c,1,12)}')"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-      - name: Restore Rust build cache
-        id: rust-cache
-        if: ${{ !env.ACT }}
-        continue-on-error: true
-        uses: actions/cache/restore@v6
-        with:
-          path: target
-          key: rust-v1-build-web-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            rust-v1-build-web-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-
-      - name: cargo leptos build --release
-        run: nix develop -c cargo leptos build --release
-      # act's built-in artifact server doesn't speak the upload-artifact@v7
-      # protocol (rejects the `mime_type` field), so skip uploads under act.
-      # The build itself is what we validate locally; artifacts are only needed
-      # by the GitHub-hosted deploy job.
-      - name: Upload web artifact
-        if: ${{ !env.ACT }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: web-dist
-          path: |
-            target/site
-            target/release/web
-          if-no-files-found: error
-          retention-days: 7
+          nix develop -c bash -euo pipefail -c '
+            cargo clippy -p recovery-index --features cli -- -D warnings
+            cargo clippy -p recovery-index --target wasm32-unknown-unknown -- -D warnings
+            cargo clippy -p clinical-workspace --features ssr -- -D warnings
+            cargo clippy -p ui --features ssr -- -D warnings
+            cargo clippy -p web --features ssr -- -D warnings
+            cargo clippy -p tauri-ui --target wasm32-unknown-unknown -- -D warnings
+            cargo clippy -p dabney-app -- -D warnings
+            cargo clippy -p dabney-app --features health-connect -- -D warnings
+            cargo clippy -p icon-gen -- -D warnings
+            cargo clippy -p forge-linear-sync --all-targets -- -D warnings
+            cargo clippy -p forge --all-targets -- -D warnings
+          '
       - name: Prepare Rust cache payload
         id: cache-payload
         if: ${{ !env.ACT && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.rust-cache.outputs.cache-hit != 'true' }}
@@ -519,10 +454,13 @@ jobs:
     env:
       # act sometimes drops Dockerfile ENV; keep Nix on PATH.
       PATH: /nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-      # Dependencies come from the cache and CI never rebuilds incrementally;
-      # debug info only makes the cached target/ larger.
+      # Dependencies come from the cache (at opt-level = 2 via Cargo.toml) and
+      # CI never rebuilds incrementally; skip debug info and workspace
+      # optimization so `ui`/`web` test binaries compile in seconds instead of
+      # 10+ minutes.
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_DEV_OPT_LEVEL: '0'
     container:
       image: ${{ needs.build-ci-image.outputs.image }}
       credentials:
@@ -548,22 +486,18 @@ jobs:
           key: rust-v1-test-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             rust-v1-test-${{ steps.rustc.outputs.version }}-${{ hashFiles('flake.lock') }}-
-      - name: "test: recovery-index (cli)"
-        run: nix develop -c cargo test -p recovery-index --features cli
-      - name: "test: clinical-workspace (ssr)"
-        run: nix develop -c cargo test -p clinical-workspace --features ssr
-      - name: "test: ui (data + ssr render)"
-        run: nix develop -c cargo test -p ui --features ssr
-      - name: "test: web (ssr route list)"
-        run: nix develop -c cargo test -p web --features ssr
-      - name: "test: dabney-app (tauri context)"
-        run: nix develop -c cargo test -p dabney-app
-      - name: "test: dabney-app (health-connect)"
-        run: nix develop -c cargo test -p dabney-app --features health-connect
-      - name: "test: forge-linear-sync"
-        run: nix develop -c cargo test -p forge-linear-sync
-      - name: "test: forge"
-        run: nix develop -c cargo test -p forge
+      - name: Run workspace test suite
+        run: |
+          nix develop -c bash -euo pipefail -c '
+            cargo test -p recovery-index --features cli
+            cargo test -p clinical-workspace --features ssr
+            cargo test -p ui --features ssr
+            cargo test -p web --features ssr
+            cargo test -p dabney-app
+            cargo test -p dabney-app --features health-connect
+            cargo test -p forge-linear-sync
+            cargo test -p forge
+          '
       - name: Prepare Rust cache payload
         id: cache-payload
         if: ${{ !env.ACT && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.rust-cache.outputs.cache-hit != 'true' }}
@@ -631,12 +565,12 @@ jobs:
     name: Deploy web (GCP Cloud Run)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Deploy only after format, clippy, test, the web build and the image build
-    # all succeeded. Each result is checked explicitly: a failed, cancelled or
+    # Deploy only after format, clippy, test, and the server image build all
+    # succeeded. Each result is checked explicitly: a failed, cancelled or
     # skipped gate (for example a docs-only change, where `scope` skips the
     # builds) must skip the deploy rather than let it run.
-    needs: [scope, format, clippy, build-web, test, build-image]
-    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.scope.outputs.build == 'true' && needs.format.result == 'success' && needs.clippy.result == 'success' && needs.build-web.result == 'success' && needs.test.result == 'success' && needs.build-image.result == 'success' }}
+    needs: [scope, format, clippy, test, build-image]
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.scope.outputs.build == 'true' && needs.format.result == 'success' && needs.clippy.result == 'success' && needs.test.result == 'success' && needs.build-image.result == 'success' }}
     # Main runs are no longer cancelled by the next push, so two deploys can
     # overlap. Run them one at a time.
     concurrency:

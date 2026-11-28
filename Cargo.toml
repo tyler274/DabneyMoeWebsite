@@ -67,18 +67,18 @@ lib-default-features = false
 # Keep wasm output small.
 lib-profile-release = "wasm-release"
 
-# Link-time optimization for the native (SSR server) release build. The
-# `wasm-release` profile below overrides its own `lto`/`opt-level`, so the wasm
-# bundle is unaffected.
+# Parallel thin LTO for the native (SSR server) release build: avoids the
+# single-threaded fat-LTO bottleneck (~10m on 4-vCPU CI runners) while keeping
+# cross-crate optimization and near-identical binary size. The `wasm-release`
+# profile below overrides its own `opt-level`/`panic`, and `wasm-opt` performs
+# final whole-module size optimization on the emitted `.wasm`.
 [profile.release]
-lto = "fat"
-codegen-units = 1
+lto = "thin"
 
 [profile.wasm-release]
 inherits = "release"
 opt-level = "z"
-codegen-units = 1
-lto = true
+lto = "thin"
 panic = "abort"
 
 # Faster incremental dependency builds during development.
