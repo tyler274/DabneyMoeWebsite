@@ -275,7 +275,7 @@ static MANIFESTS: &[StateLicensingManifest] = &[
                         license_number: &["SITEMAPPINGID", "PROVIDERMAPPINGID", "OBJECTID"],
                         name: &["AGENCY"],
                         dba_or_site_name: &[],
-                        license_type: &["SUD", "MHRS"],
+                        license_type: &[],
                         status: &[],
                         street: &["ADDRESS"],
                         city: &[],
@@ -1089,7 +1089,7 @@ static MANIFESTS: &[StateLicensingManifest] = &[
                 generic_endpoint: Some(GenericEndpointSpec::ArcGisFacility {
                     agency: "NH GRANIT / NH DHHS",
                     layer_query_url: "https://nhgeodata.unh.edu/hosting/rest/services/Hosted/CSD_HSIP_ServiceFacilities/FeatureServer/3/query",
-                    where_clause: "1=1",
+                    where_clause: "naicscode IN ('622110','622210')",
                     page_size: 1000,
                     max_records: 5_000,
                     verification_url_template: None,

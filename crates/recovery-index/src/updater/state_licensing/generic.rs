@@ -1601,13 +1601,18 @@ impl HeaderIndex {
     }
 
     fn get_str(&self, row: &csv::StringRecord, candidates: &[&str]) -> Option<String> {
-        let idx = self.find(candidates)?;
-        let val = row.get(idx)?.trim();
-        if val.is_empty() {
-            None
-        } else {
-            Some(val.to_string())
+        for cand in candidates {
+            let Some(idx) = self.find(&[*cand]) else {
+                continue;
+            };
+            if let Some(val) = row.get(idx) {
+                let trimmed = val.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
         }
+        None
     }
 
     /// Collects all distinct non-empty values across `candidates` in order so secondary fields
@@ -1646,8 +1651,26 @@ fn lookup_json_value<'a>(map: &'a Map<String, Value>, candidates: &[&str]) -> Op
 }
 
 fn lookup_json_str(map: &Map<String, Value>, candidates: &[&str]) -> Option<String> {
-    let val = lookup_json_value(map, candidates)?;
-    json_value_to_str(val)
+    for cand in candidates {
+        if let Some(s) = map.get(*cand).and_then(json_value_to_str) {
+            return Some(s);
+        }
+    }
+    for cand in candidates {
+        let target = normalize_key(cand);
+        if target.is_empty() {
+            continue;
+        }
+        for (k, v) in map {
+            if normalize_key(k) != target {
+                continue;
+            }
+            if let Some(s) = json_value_to_str(v) {
+                return Some(s);
+            }
+        }
+    }
+    None
 }
 
 fn json_value_to_str(val: &Value) -> Option<String> {
@@ -1656,7 +1679,21 @@ fn json_value_to_str(val: &Value) -> Option<String> {
             let t = s.trim();
             (!t.is_empty()).then(|| t.to_string())
         }
-        Value::Number(n) => Some(n.to_string()),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Some(i.to_string())
+            } else if let Some(u) = n.as_u64() {
+                Some(u.to_string())
+            } else if let Some(f) = n.as_f64() {
+                if f.is_finite() && f.fract() == 0.0 && f.abs() < 9_007_199_254_740_992.0 {
+                    Some((f as i64).to_string())
+                } else {
+                    Some(n.to_string())
+                }
+            } else {
+                Some(n.to_string())
+            }
+        }
         Value::Bool(b) => Some(b.to_string()),
         _ => None,
     }
@@ -2765,5 +2802,32 @@ SNF-200,Oakwood Nursing Home,Skilled Nursing Facility,Active,200 Oak Ave,Phoenix
         assert_eq!(records[0].license, Some(StaffLicense::Pa));
         assert_eq!(records[1].license, Some(StaffLicense::MdPhysician));
         assert_eq!(records[2].license, Some(StaffLicense::DoPhysician));
+    }
+
+    #[test]
+    fn lookup_json_str_skips_whitespace_candidates_and_formats_whole_floats() {
+        let map: Map<String, Value> = serde_json::from_str(
+            r#"{
+                "lic_number": "   ",
+                "state_id": "",
+                "id": "10052459",
+                "hosp_type": " ",
+                "naicsdescr": "HOSPITALS, GENERAL MEDICAL AND SURGICAL",
+                "SITEMAPPINGID": 1100.0
+            }"#,
+        )
+        .expect("json map");
+        assert_eq!(
+            lookup_json_str(&map, &["lic_number", "state_id", "id"]).as_deref(),
+            Some("10052459")
+        );
+        assert_eq!(
+            lookup_json_str(&map, &["hosp_type", "naicsdescr"]).as_deref(),
+            Some("HOSPITALS, GENERAL MEDICAL AND SURGICAL")
+        );
+        assert_eq!(
+            lookup_json_str(&map, &["SITEMAPPINGID"]).as_deref(),
+            Some("1100")
+        );
     }
 }
