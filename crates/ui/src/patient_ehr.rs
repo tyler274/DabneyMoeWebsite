@@ -10,21 +10,24 @@ use std::collections::HashMap;
 #[cfg(any(feature = "csr", feature = "hydrate"))]
 use clinical_workspace::parse_health_passport_json;
 use clinical_workspace::{
-    build_health_passport_with_options, build_roi_mailto_uri, build_smart_authorize_url,
-    data_download_uri, dispatch_roi_batch, find_portal_organization, ingest_clinical_document,
-    merge_fhir_import_into_chart, portal_directory, render_passport_fhir_ips_bundle,
-    render_passport_html, render_passport_markdown, render_roi_cover_text,
+    build_health_passport_with_options, build_paper_attachment_record, build_roi_mailto_uri,
+    build_smart_authorize_url, data_download_uri, dispatch_roi_batch, find_portal_organization,
+    ingest_clinical_document, merge_fhir_import_into_chart, parse_pasted_email_or_summary,
+    portal_directory, render_passport_fhir_ips_bundle, render_passport_html,
+    render_passport_markdown, render_passport_one_page_html, render_roi_cover_text,
     render_roi_followup_letter, render_roi_form_html, revoke_roi_request,
     sandbox_ccda_xml_for_patient, sandbox_fhir_bundle_for_org, sandbox_hl7v2_message_for_patient,
     sandbox_kipu_payload_for_patient, sandbox_smart_health_link_uri, search_portal_directory,
-    sign_roi_request, AllergyEntry, ClinicalDocumentFormat, HealthPassport, IntegrationCapability,
-    LinkedPortalConnection, PassportAudience, PassportExportOptions, PatientChart,
-    PatientDemoState, PortalConnectionMode, PortalConnectionStatus, PortalOrganization,
-    PortalVendor, RoiBatchDispatchReport, RoiDateRange, RoiDeliveryChannel, RoiElectronicFormat,
-    RoiLegalBasis, RoiRecipient, RoiRecordCategory, RoiRequest, RoiStatus, SmartHealthLinkPayload,
-    SmartPkceSession,
+    sign_roi_request, AllergyEntry, ClinicalDocumentFormat, ConfidentialityClass, HealthPassport,
+    IntegrationCapability, LinkedPortalConnection, Medication, PassportAudience,
+    PassportExportOptions, PatientChart, PatientDemoState, PortalConnectionMode,
+    PortalConnectionStatus, PortalOrganization, PortalVendor, Problem, RoiBatchDispatchReport,
+    RoiDateRange, RoiDeliveryChannel, RoiElectronicFormat, RoiLegalBasis, RoiRecipient,
+    RoiRecordCategory, RoiRequest, RoiStatus, SmartHealthLinkPayload, SmartPkceSession,
 };
 use leptos::prelude::*;
+
+use crate::i18n::{t, use_locale, Locale, Msg};
 
 const DEMO_TIMESTAMP: &str = "2026-11-26T04:30:00Z";
 const DEMO_DUE_30D: &str = "2026-12-26";
@@ -93,8 +96,10 @@ pub fn PatientEhrPortalsPanel(
     charts: RwSignal<HashMap<String, PatientChart>>,
     allergies_map: RwSignal<HashMap<String, Vec<AllergyEntry>>>,
     demo_states: RwSignal<HashMap<String, PatientDemoState>>,
+    #[prop(optional)] reset_tick: Option<RwSignal<u32>>,
     on_records_updated: Callback<String>,
 ) -> impl IntoView {
+    let locale = use_locale();
     let patient_id = StoredValue::new(patient.id.clone());
     let patient_snapshot = StoredValue::new(patient);
 
@@ -104,9 +109,52 @@ pub fn PatientEhrPortalsPanel(
     let inspected_shlink = RwSignal::new(Option::<SmartHealthLinkPayload>::None);
     let custom_name = RwSignal::new(String::new());
     let custom_fhir_url = RwSignal::new(String::new());
+    let custom_form_error = RwSignal::new(Option::<String>::None);
     let fhir_paste = RwSignal::new(String::new());
     let status_notice = RwSignal::new(Option::<String>::None);
     let error_notice = RwSignal::new(Option::<String>::None);
+
+    // Universal "Add What You Have" intake state (paper/PDF/photo, pasted email, quick med/allergy/condition)
+    let intake_tab = RwSignal::new(0u8); // 0 = Paper/PDF/Photo, 1 = Paste Email/Note, 2 = Quick Med/Allergy/Condition
+    let paper_note = RwSignal::new(String::new());
+    let email_source = RwSignal::new(String::new());
+    let email_text = RwSignal::new(String::new());
+    let manual_med_name = RwSignal::new(String::new());
+    let manual_med_dose = RwSignal::new(String::new());
+    let manual_med_schedule = RwSignal::new(String::new());
+    let manual_allergy_sub = RwSignal::new(String::new());
+    let manual_allergy_react = RwSignal::new(String::new());
+    let manual_cond_label = RwSignal::new(String::new());
+    let intake_notice = RwSignal::new(Option::<String>::None);
+    let intake_error = RwSignal::new(Option::<String>::None);
+
+    if let Some(tick) = reset_tick {
+        Effect::new(move |prev: Option<u32>| {
+            let current = tick.get();
+            if prev.is_some() && prev != Some(current) {
+                pending_session.set(None);
+                inspected_shlink.set(None);
+                custom_name.set(String::new());
+                custom_fhir_url.set(String::new());
+                custom_form_error.set(None);
+                fhir_paste.set(String::new());
+                status_notice.set(None);
+                error_notice.set(None);
+                paper_note.set(String::new());
+                email_source.set(String::new());
+                email_text.set(String::new());
+                manual_med_name.set(String::new());
+                manual_med_dose.set(String::new());
+                manual_med_schedule.set(String::new());
+                manual_allergy_sub.set(String::new());
+                manual_allergy_react.set(String::new());
+                manual_cond_label.set(String::new());
+                intake_notice.set(None);
+                intake_error.set(None);
+            }
+            current
+        });
+    }
 
     let start_smart_launch = move |org: PortalOrganization| {
         error_notice.set(None);
@@ -274,12 +322,13 @@ pub fn PatientEhrPortalsPanel(
 
     let on_custom_smart_submit = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
+        custom_form_error.set(None);
         let name = custom_name.get().trim().to_string();
         let base = custom_fhir_url.get().trim().to_string();
         if name.is_empty() || base.is_empty() {
-            error_notice.set(Some(
-                "Enter both a clinic name and an HTTPS FHIR R4 base URL.".into(),
-            ));
+            let msg = "Enter both a clinic name and an HTTPS FHIR R4 base URL (e.g., https://fhir.yourclinic.org/api/FHIR/R4).".to_string();
+            custom_form_error.set(Some(msg.clone()));
+            error_notice.set(Some(msg));
             return;
         }
         let clean = base.trim_end_matches('/');
@@ -297,7 +346,197 @@ pub fn PatientEhrPortalsPanel(
             is_sandbox: false,
             transport: PortalVendor::CustomSmartFhir.default_transport_profile(),
         };
+        if let Err(err) = build_smart_authorize_url(
+            &org,
+            "dabney-patient-smart-r4",
+            "https://dabney.moe/clinical/patient",
+            None,
+            &format!("dabney-state-{}", org.id),
+            DEMO_PKCE_VERIFIER,
+        ) {
+            custom_form_error.set(Some(err.clone()));
+            error_notice.set(Some(err));
+            return;
+        }
         start_smart_launch(org);
+    };
+
+    let merge_patient_added_record = move |rec: clinical_workspace::ChartRecord, msg: String| {
+        let pid = patient_id.get_value();
+        let rec_id = rec.id.clone();
+        charts.update(|map| {
+            if let Some(chart) = map.get_mut(&pid) {
+                if !chart.records.iter().any(|existing| existing.id == rec.id) {
+                    chart.records.insert(0, rec);
+                }
+            }
+        });
+        demo_states.update(|map| {
+            if let Some(st) = map.get_mut(&pid) {
+                if !st.selected_record_ids.contains(&rec_id) {
+                    st.selected_record_ids.push(rec_id);
+                }
+            }
+        });
+        intake_error.set(None);
+        intake_notice.set(Some(msg.clone()));
+        on_records_updated.run(msg);
+    };
+
+    let on_upload_paper_file = move |ev: leptos::ev::Event| {
+        #[cfg(any(feature = "csr", feature = "hydrate"))]
+        {
+            use wasm_bindgen::JsCast;
+            let Some(input) = ev
+                .target()
+                .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
+            else {
+                return;
+            };
+            let Some(file) = input.files().and_then(|files| files.get(0)) else {
+                return;
+            };
+            let fname = file.name();
+            let ftype = file.type_();
+            let fsize = file.size() as u64;
+            let note = paper_note.get_untracked();
+            let rec = build_paper_attachment_record(&fname, &ftype, fsize, &note, "2026-11-26");
+            paper_note.set(String::new());
+            merge_patient_added_record(
+                rec,
+                format!("Added paper/PDF reference `{fname}` locally to your Health Passport (zero bytes uploaded)."),
+            );
+        }
+        #[cfg(not(any(feature = "csr", feature = "hydrate")))]
+        {
+            let _ = (ev, merge_patient_added_record);
+        }
+    };
+
+    let on_add_pasted_email = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        intake_error.set(None);
+        let src = email_source.get_untracked();
+        let raw = email_text.get_untracked();
+        match parse_pasted_email_or_summary(&src, &raw, "2026-11-26") {
+            Ok(rec) => {
+                let title = rec.title.clone();
+                email_source.set(String::new());
+                email_text.set(String::new());
+                merge_patient_added_record(
+                    rec,
+                    format!("Added `{title}` to your timeline and Health Passport (local only)."),
+                );
+            }
+            Err(err) => {
+                intake_notice.set(None);
+                intake_error.set(Some(err));
+            }
+        }
+    };
+
+    let on_add_manual_med = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        intake_error.set(None);
+        let name = manual_med_name.get_untracked().trim().to_string();
+        if name.is_empty() {
+            intake_error.set(Some(
+                "Enter a medication name first (e.g., Lisinopril).".into(),
+            ));
+            return;
+        }
+        let dose = manual_med_dose.get_untracked().trim().to_string();
+        let schedule = manual_med_schedule.get_untracked().trim().to_string();
+        let pid = patient_id.get_value();
+        charts.update(|map| {
+            if let Some(chart) = map.get_mut(&pid) {
+                chart.medications.push(Medication {
+                    name: name.clone(),
+                    dose: if dose.is_empty() {
+                        "Dose as prescribed".into()
+                    } else {
+                        dose
+                    },
+                    schedule: if schedule.is_empty() {
+                        "Patient-added".into()
+                    } else {
+                        schedule
+                    },
+                    indication: "Added by patient".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
+                });
+            }
+        });
+        manual_med_name.set(String::new());
+        manual_med_dose.set(String::new());
+        manual_med_schedule.set(String::new());
+        let msg = format!("Added medication `{name}` to your Health Passport.");
+        intake_notice.set(Some(msg.clone()));
+        on_records_updated.run(msg);
+    };
+
+    let on_add_manual_allergy = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        intake_error.set(None);
+        let substance = manual_allergy_sub.get_untracked().trim().to_string();
+        if substance.is_empty() {
+            intake_error.set(Some(
+                "Enter an allergy or intolerance substance first (e.g., Penicillin).".into(),
+            ));
+            return;
+        }
+        let reaction = manual_allergy_react.get_untracked().trim().to_string();
+        let pid = patient_id.get_value();
+        allergies_map.update(|map| {
+            let list = map.entry(pid).or_default();
+            let next_idx = list.len() + 1;
+            list.push(AllergyEntry {
+                id: format!("alg-patient-{next_idx}"),
+                substance: substance.clone(),
+                reaction: if reaction.is_empty() {
+                    "Patient-reported reaction / intolerance".into()
+                } else {
+                    reaction
+                },
+                criticality: "High".into(),
+                recorded_at: "2026-11-26".into(),
+                source_label: "Patient-Added".into(),
+                confidentiality: ConfidentialityClass::StandardHipaa,
+            });
+        });
+        manual_allergy_sub.set(String::new());
+        manual_allergy_react.set(String::new());
+        let msg = format!("Added allergy `{substance}` to your Health Passport.");
+        intake_notice.set(Some(msg.clone()));
+        on_records_updated.run(msg);
+    };
+
+    let on_add_manual_condition = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        intake_error.set(None);
+        let label = manual_cond_label.get_untracked().trim().to_string();
+        if label.is_empty() {
+            intake_error.set(Some(
+                "Enter a condition or past surgery first (e.g., Asthma or 2021 Appendectomy)."
+                    .into(),
+            ));
+            return;
+        }
+        let pid = patient_id.get_value();
+        charts.update(|map| {
+            if let Some(chart) = map.get_mut(&pid) {
+                chart.problems.push(Problem {
+                    code: "PATIENT".into(),
+                    label: label.clone(),
+                    status: "Patient-added".into(),
+                    confidentiality: ConfidentialityClass::StandardHipaa,
+                });
+            }
+        });
+        manual_cond_label.set(String::new());
+        let msg = format!("Added condition/history `{label}` to your Health Passport.");
+        intake_notice.set(Some(msg.clone()));
+        on_records_updated.run(msg);
     };
 
     let on_paste_fhir_import = move |ev: leptos::ev::SubmitEvent| {
@@ -364,6 +603,243 @@ pub fn PatientEhrPortalsPanel(
 
     view! {
         <div class="space-y-6" data-patient-ehr-portals="true">
+            // Universal "Add What You Have" Intake (Paper, PDFs, Photos, Emails, Manual Meds/Allergies)
+            <section
+                data-universal-patient-intake="true"
+                class="rounded-2xl border border-emerald-400/35 bg-gradient-to-br from-[#01081b] via-slate-900/90 to-slate-950 p-5 space-y-4"
+            >
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <p class="text-xs font-semibold uppercase tracking-widest text-emerald-300">
+                            "No Portal Required · 100% Local on Your Device"
+                        </p>
+                        <h2 class="mt-1 text-lg font-bold text-white">
+                            {move || t(locale.get(), Msg::PassportAddWhatYouHave)}
+                        </h2>
+                        <p class="mt-1 text-xs leading-relaxed text-slate-300">
+                            "Most health history lives in paper folders, PDF lab reports, portal emails, and memory—not just Epic. Drop in whatever you have right here and it merges straight into your Health Passport."
+                        </p>
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap gap-2" role="tablist" aria-label="Universal record intake modes">
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected=move || (intake_tab.get() == 0).to_string()
+                        on:click=move |_| intake_tab.set(0)
+                        class=move || if intake_tab.get() == 0 {
+                            "min-h-[38px] rounded-full bg-emerald-500 px-3.5 py-1.5 text-xs font-semibold text-slate-950"
+                        } else {
+                            "min-h-[38px] rounded-full border border-white/15 bg-white/5 px-3.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/10"
+                        }
+                    >
+                        "1. Paper / PDF / Photo"
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected=move || (intake_tab.get() == 1).to_string()
+                        on:click=move |_| intake_tab.set(1)
+                        class=move || if intake_tab.get() == 1 {
+                            "min-h-[38px] rounded-full bg-emerald-500 px-3.5 py-1.5 text-xs font-semibold text-slate-950"
+                        } else {
+                            "min-h-[38px] rounded-full border border-white/15 bg-white/5 px-3.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/10"
+                        }
+                    >
+                        "2. Paste Email / Visit Note"
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected=move || (intake_tab.get() == 2).to_string()
+                        on:click=move |_| intake_tab.set(2)
+                        class=move || if intake_tab.get() == 2 {
+                            "min-h-[38px] rounded-full bg-emerald-500 px-3.5 py-1.5 text-xs font-semibold text-slate-950"
+                        } else {
+                            "min-h-[38px] rounded-full border border-white/15 bg-white/5 px-3.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/10"
+                        }
+                    >
+                        "3. Quick Med / Allergy / Condition"
+                    </button>
+                </div>
+
+                {move || match intake_tab.get() {
+                    0 => view! {
+                        <div class="rounded-xl border border-white/10 bg-slate-950/65 p-4 space-y-3 text-xs">
+                            <p class="text-slate-300">
+                                "Attach a PDF lab report, discharge paperwork, or photo of a paper sheet. Only the local reference and your note are added—zero files are ever uploaded."
+                            </p>
+                            <input
+                                type="text"
+                                aria-label="Optional note about this paper record or PDF"
+                                placeholder="Short note about this paper/PDF (e.g., 2025 Cardiology Echo PDF or ER discharge sheet)..."
+                                prop:value=move || paper_note.get()
+                                on:input=move |ev| paper_note.set(event_target_value(&ev))
+                                class="w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-2 text-xs text-white placeholder:text-slate-400 focus:border-emerald-400/60 focus:outline-none"
+                            />
+                            <div class="flex flex-wrap items-center gap-3">
+                                <label class="block">
+                                    <span class="sr-only">"Choose a paper scan, PDF, or photo"</span>
+                                    <input
+                                        type="file"
+                                        aria-label="Choose a paper scan, PDF, or photo"
+                                        accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,application/pdf,image/*"
+                                        on:change=on_upload_paper_file
+                                        class="block text-xs text-slate-300 file:mr-3 file:rounded-full file:border-0 file:bg-emerald-500 file:px-3.5 file:py-1.5 file:text-xs file:font-semibold file:text-slate-950 hover:file:bg-emerald-400"
+                                    />
+                                </label>
+                                <button
+                                    type="button"
+                                    on:click=move |_| {
+                                        let note = paper_note.get_untracked();
+                                        let rec = build_paper_attachment_record(
+                                            "prior-clinic-discharge-summary.pdf",
+                                            "application/pdf",
+                                            184_320,
+                                            if note.trim().is_empty() {
+                                                "Sample paper discharge summary & med reconciliation sheet from prior clinic."
+                                            } else {
+                                                &note
+                                            },
+                                            "2026-11-26",
+                                        );
+                                        paper_note.set(String::new());
+                                        merge_patient_added_record(
+                                            rec,
+                                            "Added sample paper/PDF discharge record locally to your Health Passport.".into(),
+                                        );
+                                    }
+                                    class="rounded-full border border-cyan-400/40 bg-cyan-500/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-200 hover:bg-cyan-500/20"
+                                >
+                                    "+ Try Sample Paper PDF"
+                                </button>
+                            </div>
+                        </div>
+                    }.into_any(),
+                    1 => view! {
+                        <form on:submit=on_add_pasted_email class="rounded-xl border border-white/10 bg-slate-950/65 p-4 space-y-2.5 text-xs">
+                            <input
+                                type="text"
+                                aria-label="Where is this email or note from?"
+                                placeholder="Where is this from? (e.g., Email from Dr. Lin, Quest Lab PDF, Therapist summary)"
+                                prop:value=move || email_source.get()
+                                on:input=move |ev| email_source.set(event_target_value(&ev))
+                                class="w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-2 text-xs text-white placeholder:text-slate-400 focus:border-emerald-400/60 focus:outline-none"
+                            />
+                            <textarea
+                                rows="3"
+                                aria-label="Paste email, visit summary, or lab note text"
+                                placeholder="Paste any doctor email, portal message, or visit summary (e.g., Subject: Lab Results / A1c: 6.7% / Keep current dose)..."
+                                prop:value=move || email_text.get()
+                                on:input=move |ev| email_text.set(event_target_value(&ev))
+                                class="w-full rounded-xl border border-white/15 bg-slate-950 p-2.5 text-xs text-white placeholder:text-slate-400 focus:border-emerald-400/60 focus:outline-none"
+                            />
+                            <div class="flex flex-wrap gap-2">
+                                <button
+                                    type="submit"
+                                    class="rounded-full bg-emerald-500 px-4 py-1.5 text-xs font-semibold text-slate-950 hover:bg-emerald-400"
+                                >
+                                    "Add to My Health Passport"
+                                </button>
+                                <button
+                                    type="button"
+                                    on:click=move |_| {
+                                        email_source.set("Prior Primary Care Email (Sample)".into());
+                                        email_text.set(
+                                            "Subject: Annual Labs & Medication Check\nProvider: Dr. Lin\nA1c: 6.7%\nBP: 124/78\nLabs stable; continue current extended-release dose and recheck in 6 months."
+                                                .into(),
+                                        );
+                                    }
+                                    class="rounded-full border border-cyan-400/40 bg-cyan-500/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-200 hover:bg-cyan-500/20"
+                                >
+                                    "Fill Sample Doctor Email"
+                                </button>
+                            </div>
+                        </form>
+                    }.into_any(),
+                    _ => view! {
+                        <div class="grid gap-3 md:grid-cols-3 text-xs">
+                            <form on:submit=on_add_manual_med class="rounded-xl border border-white/10 bg-slate-950/65 p-3.5 space-y-2">
+                                <p class="font-semibold text-emerald-300">"Quick Add Medication"</p>
+                                <input
+                                    type="text"
+                                    aria-label="Medication name"
+                                    placeholder="Name (e.g., Sertraline)"
+                                    prop:value=move || manual_med_name.get()
+                                    on:input=move |ev| manual_med_name.set(event_target_value(&ev))
+                                    class="w-full rounded-lg border border-white/15 bg-slate-950 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-400"
+                                />
+                                <input
+                                    type="text"
+                                    aria-label="Medication dose"
+                                    placeholder="Dose (e.g., 50 mg)"
+                                    prop:value=move || manual_med_dose.get()
+                                    on:input=move |ev| manual_med_dose.set(event_target_value(&ev))
+                                    class="w-full rounded-lg border border-white/15 bg-slate-950 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-400"
+                                />
+                                <input
+                                    type="text"
+                                    aria-label="Medication schedule"
+                                    placeholder="Schedule (e.g., Once daily AM)"
+                                    prop:value=move || manual_med_schedule.get()
+                                    on:input=move |ev| manual_med_schedule.set(event_target_value(&ev))
+                                    class="w-full rounded-lg border border-white/15 bg-slate-950 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-400"
+                                />
+                                <button type="submit" class="w-full rounded-full border border-emerald-400/40 bg-emerald-500/15 py-1.5 font-semibold text-emerald-200 hover:bg-emerald-500/25">
+                                    "+ Add Medication"
+                                </button>
+                            </form>
+
+                            <form on:submit=on_add_manual_allergy class="rounded-xl border border-white/10 bg-slate-950/65 p-3.5 space-y-2">
+                                <p class="font-semibold text-rose-300">"Quick Add Allergy / Intolerance"</p>
+                                <input
+                                    type="text"
+                                    aria-label="Allergy substance"
+                                    placeholder="Substance (e.g., Sulfa drugs)"
+                                    prop:value=move || manual_allergy_sub.get()
+                                    on:input=move |ev| manual_allergy_sub.set(event_target_value(&ev))
+                                    class="w-full rounded-lg border border-white/15 bg-slate-950 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-400"
+                                />
+                                <input
+                                    type="text"
+                                    aria-label="Allergy reaction"
+                                    placeholder="Reaction (e.g., Rash / hives)"
+                                    prop:value=move || manual_allergy_react.get()
+                                    on:input=move |ev| manual_allergy_react.set(event_target_value(&ev))
+                                    class="w-full rounded-lg border border-white/15 bg-slate-950 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-400"
+                                />
+                                <button type="submit" class="w-full rounded-full border border-rose-400/40 bg-rose-500/15 py-1.5 font-semibold text-rose-200 hover:bg-rose-500/25">
+                                    "+ Add Allergy"
+                                </button>
+                            </form>
+
+                            <form on:submit=on_add_manual_condition class="rounded-xl border border-white/10 bg-slate-950/65 p-3.5 space-y-2">
+                                <p class="font-semibold text-cyan-300">"Quick Add Condition / Surgery"</p>
+                                <input
+                                    type="text"
+                                    aria-label="Condition or past surgery"
+                                    placeholder="e.g., Migraines or 2020 Knee Surgery"
+                                    prop:value=move || manual_cond_label.get()
+                                    on:input=move |ev| manual_cond_label.set(event_target_value(&ev))
+                                    class="w-full rounded-lg border border-white/15 bg-slate-950 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-400"
+                                />
+                                <button type="submit" class="w-full rounded-full border border-cyan-400/40 bg-cyan-500/15 py-1.5 font-semibold text-cyan-200 hover:bg-cyan-500/25">
+                                    "+ Add Condition"
+                                </button>
+                            </form>
+                        </div>
+                    }.into_any(),
+                }}
+
+                {move || intake_notice.get().map(|msg| view! {
+                    <p role="status" class="rounded-xl border border-emerald-400/35 bg-emerald-500/10 px-3.5 py-2 text-xs text-emerald-100">{msg}</p>
+                })}
+                {move || intake_error.get().map(|err| view! {
+                    <p role="alert" class="rounded-xl border border-rose-400/40 bg-rose-500/10 px-3.5 py-2 text-xs text-rose-200">{err}</p>
+                })}
+            </section>
+
             // Top explanation & read-only guarantee
             <section class="rounded-2xl border border-cyan-400/25 bg-slate-900/60 p-5 space-y-3">
                 <div class="flex flex-wrap items-start justify-between gap-3">
@@ -372,7 +848,7 @@ pub fn PatientEhrPortalsPanel(
                             "Patient Portal Link-Through · SMART on FHIR R4 + PKCE"
                         </p>
                         <h2 class="mt-1 text-lg font-semibold text-white">
-                            "Sign Into Your Doctors' Portals & Pull Records Locally"
+                            {move || t(locale.get(), Msg::PassportPortalsHeading)}
                         </h2>
                         <p class="mt-1 text-xs leading-relaxed text-slate-300">
                             "Connect one or more health systems (Epic / MyChart, Oracle Health, athenahealth, VA, Medicare, or any SMART on FHIR R4 clinic) using read-only OAuth 2.0 PKCE (S256), or import a downloaded FHIR R4 bundle. "
@@ -852,13 +1328,16 @@ pub fn PatientEhrPortalsPanel(
                     <p class="text-xs text-slate-300">
                         "Paste any clinic's HTTPS FHIR R4 base URL to generate a read-only PKCE S256 launch session."
                     </p>
-                    <form on:submit=on_custom_smart_submit class="space-y-2.5">
+                    <form on:submit=on_custom_smart_submit novalidate=true class="space-y-2.5">
                         <input
                             type="text"
                             aria-label="Custom clinic name"
                             placeholder="Clinic or hospital name (e.g., Harborview Cardiology)"
                             prop:value=move || custom_name.get()
-                            on:input=move |ev| custom_name.set(event_target_value(&ev))
+                            on:input=move |ev| {
+                                custom_form_error.set(None);
+                                custom_name.set(event_target_value(&ev));
+                            }
                             class="w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-2 text-xs text-white placeholder:text-slate-400 focus:border-cyan-400/60 focus:outline-none"
                         />
                         <input
@@ -866,7 +1345,10 @@ pub fn PatientEhrPortalsPanel(
                             aria-label="Custom clinic FHIR R4 base URL"
                             placeholder="https://fhir.yourclinic.org/api/FHIR/R4"
                             prop:value=move || custom_fhir_url.get()
-                            on:input=move |ev| custom_fhir_url.set(event_target_value(&ev))
+                            on:input=move |ev| {
+                                custom_form_error.set(None);
+                                custom_fhir_url.set(event_target_value(&ev));
+                            }
                             class="w-full rounded-xl border border-white/15 bg-slate-950 px-3 py-2 font-mono text-xs text-white placeholder:text-slate-400 focus:border-cyan-400/60 focus:outline-none"
                         />
                         <button
@@ -875,6 +1357,9 @@ pub fn PatientEhrPortalsPanel(
                         >
                             "Build PKCE S256 Launch URL"
                         </button>
+                        {move || custom_form_error.get().map(|err| view! {
+                            <p role="alert" class="rounded-xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">{err}</p>
+                        })}
                     </form>
                 </section>
 
@@ -889,6 +1374,7 @@ pub fn PatientEhrPortalsPanel(
                         <span class="sr-only">"Choose a clinical document file (.json, .xml, .hl7)"</span>
                         <input
                             type="file"
+                            aria-label="Choose a clinical document file (.json, .xml, .hl7)"
                             accept=".json,.xml,.ccda,.hl7,.txt,application/json,application/fhir+json,application/xml,text/xml,text/plain"
                             on:change=on_upload_fhir_file
                             class="block w-full text-xs text-slate-300 file:mr-3 file:rounded-full file:border-0 file:bg-emerald-500 file:px-3.5 file:py-1.5 file:text-xs file:font-semibold file:text-slate-950 hover:file:bg-emerald-400"
@@ -1000,8 +1486,10 @@ pub fn PortablePassportSection(
     linked_portals: Vec<LinkedPortalConnection>,
     audience: RwSignal<PassportAudience>,
     emergency_note: RwSignal<String>,
+    #[prop(optional)] reset_tick: Option<RwSignal<u32>>,
     on_restore_passport: Callback<HealthPassport>,
 ) -> impl IntoView {
+    let locale = use_locale();
     let patient_sv = StoredValue::new(patient);
     let state_sv = StoredValue::new(state);
     let allergies_sv = StoredValue::new(allergies);
@@ -1010,16 +1498,34 @@ pub fn PortablePassportSection(
     let copy_status = RwSignal::new(Option::<String>::None);
     let import_status = RwSignal::new(Option::<String>::None);
     let import_error = RwSignal::new(Option::<String>::None);
+    let show_waiting_room_card = RwSignal::new(false);
+    let clinic_english_handout = RwSignal::new(true);
     // Hard 42 CFR Part 2 invariants: SUD records AND § 2.31(b) counseling notes
     // are strictly excluded by default unless separately opted in.
     let include_part2_sud = RwSignal::new(false);
     let include_part2_counseling = RwSignal::new(false);
 
+    if let Some(tick) = reset_tick {
+        Effect::new(move |prev: Option<u32>| {
+            let current = tick.get();
+            if prev.is_some() && prev != Some(current) {
+                include_part2_sud.set(false);
+                include_part2_counseling.set(false);
+                copy_status.set(None);
+                import_status.set(None);
+                import_error.set(None);
+                show_waiting_room_card.set(false);
+                clinic_english_handout.set(true);
+            }
+            current
+        });
+    }
+
     let active_passport = Memo::new(move |_| {
         let aud = audience.get();
         let em = emergency_note.get();
         let inc_part2 = include_part2_sud.get();
-        let inc_counseling = include_part2_counseling.get();
+        let inc_counseling = inc_part2 && include_part2_counseling.get();
         patient_sv.with_value(|p| {
             state_sv.with_value(|st| {
                 allergies_sv.with_value(|algs| {
@@ -1128,30 +1634,36 @@ pub fn PortablePassportSection(
     view! {
         <section
             data-portable-health-passport="true"
-            class="rounded-2xl border border-cyan-400/35 bg-gradient-to-br from-[#01081b] via-slate-900/90 to-slate-950 p-5 space-y-4 shadow-lg shadow-cyan-500/5"
+            class="rounded-2xl border border-cyan-400/35 bg-gradient-to-br from-[#01081b] via-slate-900/90 to-slate-950 p-5 space-y-5 shadow-lg shadow-cyan-500/5"
         >
-            <div class="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-3">
-                <div>
+            <div class="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-3.5">
+                <div class="max-w-2xl">
                     <p class="text-xs font-semibold uppercase tracking-widest text-cyan-300">
-                        "Persistent Portable Health File · Share With Any Doctor or Anyone"
+                        {move || t(locale.get(), Msg::PassportEyebrow)}
                     </p>
                     <h2 class="mt-1 text-lg font-bold text-white">
-                        "Your Portable Health Passport (No Repeating Yourself)"
+                        {move || t(locale.get(), Msg::PassportHeading)}
                     </h2>
                     <p class="mt-1 text-xs leading-relaxed text-slate-300">
-                        "Persist one verified file containing your selected records, linked portal labs, medications, allergies, and visit note. "
-                        "Hand it to a new doctor, specialist, ER, caregiver, or family member—or re-open the saved file later on any device with zero cloud account."
+                        {move || t(locale.get(), Msg::PassportSubtitle)}
                     </p>
                 </div>
-                <span class="shrink-0 rounded-full border border-emerald-400/40 bg-emerald-500/15 px-3 py-1 font-mono text-[11px] font-semibold text-emerald-200">
-                    "dabney.health_passport.v1"
-                </span>
+                <label class="inline-flex min-h-[40px] shrink-0 cursor-pointer items-center gap-2 rounded-full border border-emerald-400/45 bg-emerald-500/15 px-3.5 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25">
+                    <span>{move || t(locale.get(), Msg::PassportOpenSaved)}</span>
+                    <input
+                        type="file"
+                        aria-label="Open my saved Health Passport JSON file"
+                        accept=".json,application/json"
+                        on:change=on_upload_passport
+                        class="sr-only"
+                    />
+                </label>
             </div>
 
-            // Recipient Preset Selector
+            // Step 1: Visit-Tailored Recipient Preset Selector
             <div class="space-y-2">
-                <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
-                    "Choose Recipient View"
+                <p class="text-[11px] font-semibold uppercase tracking-wider text-cyan-200">
+                    {move || t(locale.get(), Msg::PassportWhoSeeing)}
                 </p>
                 <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                     {PassportAudience::all()
@@ -1161,11 +1673,12 @@ pub fn PortablePassportSection(
                             view! {
                                 <button
                                     type="button"
+                                    aria-pressed=move || (audience.get() == preset).to_string()
                                     on:click=move |_| audience.set(preset)
                                     class=move || if audience.get() == preset {
-                                        "rounded-xl border border-cyan-400/60 bg-cyan-500/15 p-3 text-left transition"
+                                        "rounded-xl border border-cyan-400/60 bg-cyan-500/15 p-3 text-start transition"
                                     } else {
-                                        "rounded-xl border border-white/10 bg-slate-950/60 p-3 text-left transition hover:border-white/25"
+                                        "rounded-xl border border-white/10 bg-slate-950/60 p-3 text-start transition hover:border-white/25"
                                     }
                                 >
                                     <p class="text-xs font-semibold text-white">{preset.short_label()}</p>
@@ -1177,12 +1690,17 @@ pub fn PortablePassportSection(
                         })
                         .collect_view()}
                 </div>
+                {move || audience.get().suggests_part2_review().then(|| view! {
+                    <p class="rounded-xl border border-violet-400/35 bg-violet-500/10 px-3.5 py-2 text-xs text-violet-100">
+                        {move || t(locale.get(), Msg::PassportPart2BehavioralHint)}
+                    </p>
+                })}
             </div>
 
-            // Optional Emergency / Quick Context Note
+            // Step 2: Optional Emergency / Quick Context Note & 42 CFR Part 2 Privacy Controls
             <div class="space-y-2.5">
                 <label class="block text-xs font-medium text-slate-300">
-                    "Emergency / Quick-Glance Instructions (included in exported file)"
+                    "Step 2 · Emergency / Quick-Glance Instructions (shown at top of handout)"
                     <input
                         type="text"
                         placeholder="e.g., Emergency contact, preferred pharmacy, key allergy or medication note (no real PHI in demo)..."
@@ -1196,7 +1714,13 @@ pub fn PortablePassportSection(
                     <input
                         type="checkbox"
                         prop:checked=move || include_part2_sud.get()
-                        on:change=move |ev| include_part2_sud.set(event_target_checked(&ev))
+                        on:change=move |ev| {
+                            let checked = event_target_checked(&ev);
+                            include_part2_sud.set(checked);
+                            if !checked {
+                                include_part2_counseling.set(false);
+                            }
+                        }
                         class="mt-0.5 accent-amber-400"
                     />
                     <span class="space-y-0.5">
@@ -1209,38 +1733,56 @@ pub fn PortablePassportSection(
                     </span>
                 </label>
 
-                <label class="flex cursor-pointer items-start gap-2.5 rounded-xl border border-rose-400/30 bg-rose-500/[0.06] p-3 text-xs text-rose-100">
+                <label class=move || if include_part2_sud.get() {
+                    "flex cursor-pointer items-start gap-2.5 rounded-xl border border-rose-400/30 bg-rose-500/[0.06] p-3 text-xs text-rose-100"
+                } else {
+                    "flex cursor-not-allowed items-start gap-2.5 rounded-xl border border-white/10 bg-slate-950/40 p-3 text-xs text-slate-400 opacity-75"
+                }>
                     <input
                         type="checkbox"
-                        prop:checked=move || include_part2_counseling.get()
-                        on:change=move |ev| include_part2_counseling.set(event_target_checked(&ev))
+                        disabled=move || !include_part2_sud.get()
+                        prop:checked=move || include_part2_sud.get() && include_part2_counseling.get()
+                        on:change=move |ev| {
+                            if include_part2_sud.get_untracked() {
+                                include_part2_counseling.set(event_target_checked(&ev));
+                            } else {
+                                include_part2_counseling.set(false);
+                            }
+                        }
                         class="mt-0.5 accent-rose-400"
                     />
                     <span class="space-y-0.5">
-                        <strong class="block text-rose-200">
+                        <strong class=move || if include_part2_sud.get() { "block text-rose-200" } else { "block text-slate-300" }>
                             "Separate 42 CFR § 2.31(b) Opt-In (SUD Counseling Notes — Default: Excluded)"
                         </strong>
-                        <span class="block text-[11px] leading-relaxed text-rose-100/90">
-                            "Separately maintained SUD counseling notes are never included under a general Part 2 export and require this separate explicit opt-in."
+                        <span class="block text-[11px] leading-relaxed">
+                            {move || if include_part2_sud.get() {
+                                "Separately maintained SUD counseling notes are never included under a general Part 2 export and require this separate explicit opt-in."
+                            } else {
+                                "Enable general 42 CFR Part 2 opt-in above first. Separately maintained § 2.31(b) SUD counseling notes remain strictly withheld until both boxes are checked."
+                            }}
                         </span>
                     </span>
                 </label>
             </div>
 
-            // Live Export Payload & Actions
+            // Step 3: Live Export Payload, 1-Page Waiting-Room Handout & Actions
             {move || {
                 let passport = active_passport.get();
                 let slug = passport.file_slug();
                 let short_sha: String = passport.integrity_sha256.chars().take(16).collect();
                 let json_body = serde_json::to_string_pretty(&passport).unwrap_or_default();
+                let one_page_body = render_passport_one_page_html(&passport);
                 let html_body = render_passport_html(&passport);
                 let ips_body = serde_json::to_string_pretty(&render_passport_fhir_ips_bundle(&passport))
                     .unwrap_or_default();
                 let md_body = render_passport_markdown(&passport);
 
+                let one_page_href = data_download_uri("text/html", &one_page_body);
                 let html_href = data_download_uri("text/html", &html_body);
                 let json_href = data_download_uri("application/json", &json_body);
                 let ips_href = data_download_uri("application/fhir+json", &ips_body);
+                let waiting_card_passport = passport.clone();
 
                 view! {
                     <div class="space-y-4">
@@ -1264,60 +1806,184 @@ pub fn PortablePassportSection(
                                 </p>
                             </div>
                             <div class="rounded-xl border border-white/10 bg-slate-950/65 p-3">
-                                <p class="text-slate-400">"SHA-256 fingerprint"</p>
-                                <p class="mt-0.5 font-mono text-xs font-semibold text-emerald-200">
-                                    {format!("{short_sha}…")}
+                                <p class="text-slate-400">"Things to know up front"</p>
+                                <p class="mt-0.5 text-base font-bold text-cyan-200">
+                                    {passport.things_to_know.len()}
                                 </p>
                             </div>
                         </div>
 
+                        // Accurate 42 CFR Part 2 status banner: shows BOTH the § 2.32 notice
+                        // confirmation AND any still-withheld Part 2 / § 2.31(b) records!
                         {(passport.part2_sud_included || passport.excluded_part2_record_count > 0).then(|| view! {
-                            <div class="rounded-xl border border-amber-400/35 bg-amber-500/10 px-3.5 py-2 text-xs text-amber-100">
-                                {if passport.part2_sud_included {
-                                    "42 CFR § 2.32 Prohibition on Redisclosure notice embedded in JSON, HTML, Markdown, and FHIR R4 IPS exports."
-                                        .to_string()
-                                } else {
-                                    format!(
-                                        "42 CFR Part 2 protection active: {} SUD-tagged record(s) withheld from this export.",
-                                        passport.excluded_part2_record_count
-                                    )
-                                }}
+                            <div class="rounded-xl border border-amber-400/35 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-100 space-y-1">
+                                {passport.part2_sud_included.then(|| view! {
+                                    <p class="font-medium text-amber-200">
+                                        "42 CFR § 2.32 Prohibition on Redisclosure notice embedded in JSON, HTML, Markdown, and FHIR R4 IPS exports."
+                                    </p>
+                                })}
+                                {(passport.excluded_part2_record_count > 0).then(|| view! {
+                                    <p>
+                                        {if passport.excluded_part2_counseling_note_count > 0
+                                            && passport.excluded_part2_counseling_note_count == passport.excluded_part2_record_count
+                                        {
+                                            format!(
+                                                "42 CFR § 2.31(b) protection active: {} separate SUD counseling note(s) remain withheld from this export.",
+                                                passport.excluded_part2_counseling_note_count
+                                            )
+                                        } else {
+                                            format!(
+                                                "42 CFR Part 2 protection active: {} SUD-tagged record(s) withheld from this export.",
+                                                passport.excluded_part2_record_count
+                                            )
+                                        }}
+                                    </p>
+                                })}
                             </div>
+                        })}
+
+                        // Clinic English Handout toggle when patient UI is in a non-English language (Wave 4)
+                        {move || (locale.get() != Locale::En).then(|| view! {
+                            <label class="flex cursor-pointer items-center gap-2.5 rounded-xl border border-cyan-400/30 bg-cyan-500/[0.06] px-3.5 py-2.5 text-xs text-cyan-100">
+                                <input
+                                    type="checkbox"
+                                    prop:checked=move || clinic_english_handout.get()
+                                    on:change=move |ev| clinic_english_handout.set(event_target_checked(&ev))
+                                    class="accent-cyan-400"
+                                />
+                                <span>
+                                    {move || t(locale.get(), Msg::PassportClinicEnglishToggle)}
+                                    <span class="ms-1.5 text-[11px] text-slate-300">
+                                        {move || if clinic_english_handout.get() {
+                                            "(English handout active for U.S. clinic intake)"
+                                        } else {
+                                            "(Using standard portable handout format)"
+                                        }}
+                                    </span>
+                                </span>
+                            </label>
                         })}
 
                         <div class="flex flex-wrap gap-2.5">
                             <a
-                                href=html_href
-                                download=format!("dabney-health-brief-{slug}.html")
+                                href=one_page_href
+                                download=format!("dabney-1page-handout-{slug}.html")
                                 class="inline-flex min-h-[42px] items-center gap-1.5 rounded-full bg-emerald-500 px-4 py-2 text-xs font-semibold text-slate-950 transition hover:bg-emerald-400"
                             >
-                                "Download Printable Brief (.html / PDF)"
+                                {move || t(locale.get(), Msg::PassportOnePageHandout)}
+                            </a>
+                            <button
+                                type="button"
+                                aria-pressed=move || show_waiting_room_card.get().to_string()
+                                on:click=move |_| show_waiting_room_card.update(|v| *v = !*v)
+                                class="min-h-[42px] rounded-full border border-emerald-400/45 bg-emerald-500/15 px-4 py-2 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
+                            >
+                                {move || if show_waiting_room_card.get() {
+                                    t(locale.get(), Msg::PassportWaitingRoomHide)
+                                } else {
+                                    t(locale.get(), Msg::PassportWaitingRoomShow)
+                                }}
+                            </button>
+                            <a
+                                href=html_href
+                                download=format!("dabney-health-brief-{slug}.html")
+                                class="inline-flex min-h-[42px] items-center gap-1.5 rounded-full border border-emerald-400/35 bg-white/5 px-4 py-2 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/15"
+                            >
+                                {move || t(locale.get(), Msg::PassportPrintableBrief)}
                             </a>
                             <a
                                 href=json_href
                                 download=format!("dabney-health-passport-{slug}.json")
                                 class="inline-flex min-h-[42px] items-center gap-1.5 rounded-full bg-cyan-500 px-4 py-2 text-xs font-semibold text-slate-950 transition hover:bg-cyan-400"
                             >
-                                "Persist Portable File (.json)"
-                            </a>
-                            <a
-                                href=ips_href
-                                download=format!("dabney-ips-{slug}.fhir.json")
-                                class="inline-flex min-h-[42px] items-center gap-1.5 rounded-full border border-cyan-400/40 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
-                            >
-                                "Download FHIR R4 IPS (.fhir.json)"
+                                {move || t(locale.get(), Msg::PassportSaveBackup)}
                             </a>
                             <button
                                 type="button"
                                 on:click=copy_markdown_summary
                                 class="min-h-[42px] rounded-full border border-white/20 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-100 transition hover:bg-white/10"
                             >
-                                "Copy Quick Summary"
+                                {move || t(locale.get(), Msg::PassportCopySummary)}
                             </button>
                         </div>
 
                         {move || copy_status.get().map(|msg| view! {
                             <p role="status" class="text-xs text-emerald-300">{msg}</p>
+                        })}
+
+                        // High-Contrast On-Screen 1-Page Waiting-Room Card (hand phone to nurse/doctor)
+                        {move || show_waiting_room_card.get().then(|| {
+                            let card = waiting_card_passport.clone();
+                            view! {
+                                <section
+                                    data-waiting-room-card="true"
+                                    dir="ltr"
+                                    class="rounded-2xl border-2 border-emerald-400/60 bg-white p-5 text-slate-900 shadow-xl space-y-3"
+                                >
+                                    <div class="flex flex-wrap items-start justify-between gap-2 border-b-2 border-emerald-700 pb-2.5">
+                                        <div>
+                                            <p class="text-[11px] font-bold uppercase tracking-wider text-emerald-800">
+                                                {format!("Waiting-Room Health Summary · {}", card.audience.label())}
+                                            </p>
+                                            <h3 class="text-lg font-bold text-slate-950">{card.owner_name.clone()}</h3>
+                                            <p class="text-xs text-slate-600">
+                                                {format!("DOB: {} · ID: {} · Focus: {}", card.birth_date, card.identifier, card.primary_focus)}
+                                            </p>
+                                        </div>
+                                        <span class="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-900">
+                                            "Synthetic Demo · Zero PHI"
+                                        </span>
+                                    </div>
+
+                                    {(!card.things_to_know.is_empty()).then(|| view! {
+                                        <div class="rounded-xl border border-teal-300 bg-teal-50 p-3 text-xs">
+                                            <p class="font-bold uppercase tracking-wider text-teal-900">"Key Context (Things to Know Up Front)"</p>
+                                            <ul class="mt-1 list-disc ps-5 space-y-0.5 text-slate-800">
+                                                {card.things_to_know.iter().map(|pt| view! { <li>{pt.clone()}</li> }).collect_view()}
+                                            </ul>
+                                        </div>
+                                    })}
+
+                                    {(!card.emergency_note.is_empty()).then(|| view! {
+                                        <div class="rounded-xl border border-amber-400 bg-amber-50 p-3 text-xs">
+                                            <p class="font-bold uppercase tracking-wider text-amber-900">"Emergency / Quick Instructions"</p>
+                                            <p class="mt-1 text-slate-800">{card.emergency_note.clone()}</p>
+                                        </div>
+                                    })}
+
+                                    <div class="grid gap-3 md:grid-cols-2 text-xs">
+                                        <div class="rounded-xl border border-slate-200 p-3">
+                                            <p class="font-bold uppercase tracking-wider text-rose-800">"Allergies & Intolerances"</p>
+                                            <ul class="mt-1 list-disc ps-5 space-y-0.5 text-slate-800">
+                                                {if card.allergies.is_empty() {
+                                                    view! { <li>"None documented"</li> }.into_any()
+                                                } else {
+                                                    card.allergies.iter().map(|a| view! {
+                                                        <li><strong>{a.substance.clone()}</strong>{format!(" — {}", a.reaction)}</li>
+                                                    }).collect_view().into_any()
+                                                }}
+                                            </ul>
+                                        </div>
+                                        <div class="rounded-xl border border-slate-200 p-3">
+                                            <p class="font-bold uppercase tracking-wider text-slate-700">"Active Medications"</p>
+                                            <ul class="mt-1 list-disc ps-5 space-y-0.5 text-slate-800">
+                                                {card.medications.iter().map(|m| view! {
+                                                    <li><strong>{format!("{} {}", m.name, m.dose)}</strong>{format!(" ({})", m.schedule)}</li>
+                                                }).collect_view()}
+                                            </ul>
+                                        </div>
+                                    </div>
+
+                                    {(!card.visit_questions.is_empty()).then(|| view! {
+                                        <div class="rounded-xl border border-slate-200 p-3 text-xs">
+                                            <p class="font-bold uppercase tracking-wider text-slate-700">"Top Questions for Today's Visit"</p>
+                                            <ol class="mt-1 list-decimal ps-5 space-y-0.5 text-slate-800">
+                                                {card.visit_questions.iter().map(|q| view! { <li>{q.clone()}</li> }).collect_view()}
+                                            </ol>
+                                        </div>
+                                    })}
+                                </section>
+                            }
                         })}
 
                         // Restore a previously saved portable passport file
@@ -1327,13 +1993,14 @@ pub fn PortablePassportSection(
                                     "Re-Open a Saved Health Passport File (.json)"
                                 </p>
                                 <p class="text-[11px] text-slate-300">
-                                    "Load a previously persisted `dabney.health_passport.v1` file with automatic SHA-256 verification."
+                                    "Load a previously persisted Health Passport file with automatic integrity verification (42 CFR Part 2 records stay protected)."
                                 </p>
                             </div>
                             <label class="shrink-0">
                                 <span class="sr-only">"Load saved Health Passport JSON file"</span>
                                 <input
                                     type="file"
+                                    aria-label="Load saved Health Passport JSON file"
                                     accept=".json,application/json"
                                     on:change=on_upload_passport
                                     class="block text-xs text-slate-300 file:mr-2 file:rounded-full file:border file:border-white/20 file:bg-white/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-white/15"
@@ -1348,13 +2015,36 @@ pub fn PortablePassportSection(
                             <p role="alert" class="rounded-xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">{err}</p>
                         })}
 
+                        // Progressive Disclosure Drawer for Technical / Clinic Standards (Wave 3)
                         <details class="rounded-xl border border-white/10 bg-slate-950/65 px-3.5 py-2.5 text-xs">
                             <summary class="cursor-pointer select-none font-semibold text-cyan-300 hover:text-cyan-200">
-                                "Preview exact shareable summary text (Markdown)"
+                                {move || t(locale.get(), Msg::PassportTechnicalDrawer)}
                             </summary>
-                            <pre class="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg border border-white/10 bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-slate-200">
-                                {md_body}
-                            </pre>
+                            <div class="mt-3 space-y-3 border-t border-white/10 pt-3">
+                                <div class="flex flex-wrap items-center justify-between gap-2">
+                                    <div class="flex flex-wrap items-center gap-2 font-mono text-[11px] text-slate-300">
+                                        <span class="rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2.5 py-0.5 text-emerald-200">
+                                            "dabney.health_passport.v1"
+                                        </span>
+                                        <span>{format!("SHA-256: {short_sha}…")}</span>
+                                    </div>
+                                    <a
+                                        href=ips_href
+                                        download=format!("dabney-ips-{slug}.fhir.json")
+                                        class="inline-flex min-h-[36px] items-center gap-1.5 rounded-full border border-cyan-400/40 bg-cyan-500/10 px-3.5 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
+                                    >
+                                        "Download FHIR R4 IPS (.fhir.json)"
+                                    </a>
+                                </div>
+                                <div>
+                                    <p class="mb-1.5 text-[11px] font-semibold text-slate-300">
+                                        "Exact Shareable Summary Text (Markdown)"
+                                    </p>
+                                    <pre dir="ltr" class="max-h-72 overflow-auto whitespace-pre-wrap rounded-lg border border-white/10 bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-slate-200">
+                                        {md_body}
+                                    </pre>
+                                </div>
+                            </div>
                         </details>
                     </div>
                 }
@@ -1369,7 +2059,9 @@ pub fn PortablePassportSection(
 pub fn AutomatedRoiPanel(
     patient: PatientChart,
     roi_map: RwSignal<HashMap<String, Vec<RoiRequest>>>,
+    #[prop(optional)] reset_tick: Option<RwSignal<u32>>,
 ) -> impl IntoView {
+    let locale = use_locale();
     let patient_id = StoredValue::new(patient.id.clone());
     let patient_name = StoredValue::new(patient.display_name.clone());
     let patient_dob = StoredValue::new(patient.birth_date.clone());
@@ -1401,6 +2093,29 @@ pub fn AutomatedRoiPanel(
     let batch_report = RwSignal::new(Option::<RoiBatchDispatchReport>::None);
     let roi_notice = RwSignal::new(Option::<String>::None);
     let roi_error = RwSignal::new(Option::<String>::None);
+    let card_sign_errors = RwSignal::new(HashMap::<String, String>::new());
+
+    if let Some(tick) = reset_tick {
+        Effect::new(move |prev: Option<u32>| {
+            let current = tick.get();
+            if prev.is_some() && prev != Some(current) {
+                clinic_name.set(String::new());
+                him_email.set(String::new());
+                him_fax.set(String::new());
+                him_address.set(String::new());
+                legal_basis.set(RoiLegalBasis::HipaaRightOfAccess164524);
+                include_sensitive.set(false);
+                include_part2_sud_cat.set(false);
+                include_part2_counseling.set(false);
+                selected_vendor.set(None);
+                batch_report.set(None);
+                roi_notice.set(None);
+                roi_error.set(None);
+                card_sign_errors.set(HashMap::new());
+            }
+            current
+        });
+    }
 
     let prefill_from_org = move |org_id: String| {
         if let Some(org) = find_portal_organization(&org_id) {
@@ -1587,7 +2302,7 @@ pub fn AutomatedRoiPanel(
                             "Automated Release of Information · 45 CFR § 164.524 & § 164.508"
                         </p>
                         <h2 class="mt-1 text-lg font-bold text-white">
-                            "Automate Sending Release of Information (ROI) Forms"
+                            {move || t(locale.get(), Msg::PassportRoiHeading)}
                         </h2>
                         <p class="mt-1 text-xs leading-relaxed text-slate-300">
                             "Generate signed, legally structured HIPAA Right of Access & Third-Party ROI packets for prior clinics and hospitals, dispatch every signed request in one batch, track the federal 30-day fulfillment clock, and generate Day-15 / Day-30 follow-up reminders automatically."
@@ -2073,31 +2788,48 @@ pub fn AutomatedRoiPanel(
                                                     </span>
                                                 </label>
                                             })}
-                                            <button
-                                                type="button"
-                                                on:click=move |_| {
-                                                    roi_error.set(None);
-                                                    let sig = signer_name.get_untracked();
-                                                    let pid = patient_id.get_value();
-                                                    let rid = req_id_sign.clone();
-                                                    let mut sign_res = Ok(());
-                                                    roi_map.update(|map| {
-                                                        if let Some(list) = map.get_mut(&pid) {
-                                                            if let Some(item) = list.iter_mut().find(|r| r.id == rid) {
-                                                                sign_res = sign_roi_request(item, &sig, DEMO_TIMESTAMP);
+                                            {
+                                                let rid_err_lookup = req_id_sign.clone();
+                                                let rid_sign_click = req_id_sign.clone();
+                                                view! {
+                                                    <div class="space-y-2">
+                                                        <button
+                                                            type="button"
+                                                            on:click=move |_| {
+                                                                roi_error.set(None);
+                                                                let sig = signer_name.get_untracked();
+                                                                let pid = patient_id.get_value();
+                                                                let rid = rid_sign_click.clone();
+                                                                let mut sign_res = Ok(());
+                                                                roi_map.update(|map| {
+                                                                    if let Some(list) = map.get_mut(&pid) {
+                                                                        if let Some(item) = list.iter_mut().find(|r| r.id == rid) {
+                                                                            sign_res = sign_roi_request(item, &sig, DEMO_TIMESTAMP);
+                                                                        }
+                                                                    }
+                                                                });
+                                                                if let Err(err) = sign_res {
+                                                                    card_sign_errors.update(|m| {
+                                                                        m.insert(rid.clone(), err.clone());
+                                                                    });
+                                                                    roi_error.set(Some(err));
+                                                                } else {
+                                                                    card_sign_errors.update(|m| {
+                                                                        m.remove(&rid);
+                                                                    });
+                                                                    roi_notice.set(Some("ROI request signed and queued for batch automation.".into()));
+                                                                }
                                                             }
-                                                        }
-                                                    });
-                                                    if let Err(err) = sign_res {
-                                                        roi_error.set(Some(err));
-                                                    } else {
-                                                        roi_notice.set(Some("ROI request signed and queued for batch automation.".into()));
-                                                    }
+                                                            class="rounded-full bg-cyan-500 px-4 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-400"
+                                                        >
+                                                            "Sign & Queue for Automation"
+                                                        </button>
+                                                        {move || card_sign_errors.with(|m| m.get(&rid_err_lookup).cloned()).map(|err| view! {
+                                                            <p role="alert" class="rounded-xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">{err}</p>
+                                                        })}
+                                                    </div>
                                                 }
-                                                class="rounded-full bg-cyan-500 px-4 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-400"
-                                            >
-                                                "Sign & Queue for Automation"
-                                            </button>
+                                            }
                                         </div>
                                     })}
 
@@ -2107,16 +2839,33 @@ pub fn AutomatedRoiPanel(
                                             download=format!("{}-hipaa-roi.html", req.id)
                                             class="inline-flex min-h-[36px] items-center rounded-full border border-emerald-400/35 bg-emerald-500/10 px-3.5 py-1 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/20"
                                         >
-                                            "Download Signed Form (.html / PDF)"
+                                            {if is_draft {
+                                                "Download Unsigned Draft (.html)"
+                                            } else {
+                                                "Download Signed Form (.html / PDF)"
+                                            }}
                                         </a>
-                                        {mailto_uri.map(|uri| view! {
-                                            <a
-                                                href=uri
-                                                class="inline-flex min-h-[36px] items-center rounded-full border border-cyan-400/35 bg-cyan-500/10 px-3.5 py-1 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
-                                            >
-                                                "Send via HIM Email (mailto:) ↗"
-                                            </a>
-                                        })}
+                                        {if is_draft {
+                                            view! {
+                                                <span class="inline-flex min-h-[36px] items-center rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[11px] text-slate-400">
+                                                    "Sign above to unlock HIM email handoff"
+                                                </span>
+                                            }
+                                            .into_any()
+                                        } else {
+                                            mailto_uri
+                                                .map(|uri| {
+                                                    view! {
+                                                        <a
+                                                            href=uri
+                                                            class="inline-flex min-h-[36px] items-center rounded-full border border-cyan-400/35 bg-cyan-500/10 px-3.5 py-1 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
+                                                        >
+                                                            "Send via HIM Email (mailto:) ↗"
+                                                        </a>
+                                                    }
+                                                })
+                                                .into_any()
+                                        }}
                                         {is_dispatched.then(|| view! {
                                             <button
                                                 type="button"
@@ -2235,6 +2984,9 @@ mod tests {
             />
         }
         .to_html();
+        assert!(portals_html.contains("Add What You Have"));
+        assert!(portals_html
+            .contains("aria-label=\"Choose a clinical document file (.json, .xml, .hl7)\""));
         assert!(portals_html.contains("SMART on FHIR R4 + PKCE"));
         assert!(portals_html.contains("Stanford Health Care"));
         assert!(portals_html.contains("KipuEMR"));
@@ -2261,6 +3013,13 @@ mod tests {
         assert!(passport_html.contains("Your Portable Health Passport"));
         assert!(passport_html.contains("dabney.health_passport.v1"));
         assert!(passport_html.contains("Explicit 42 CFR Part 2 Opt-In"));
+        assert!(passport_html.contains("1-Page Waiting-Room Handout"));
+        assert!(passport_html.contains("New Primary Care"));
+        assert!(passport_html.contains("Psychiatrist"));
+        assert!(passport_html.contains("Therapist"));
+        assert!(passport_html.contains("aria-pressed=\"true\""));
+        assert!(passport_html.contains("aria-label=\"Load saved Health Passport JSON file\""));
+        assert!(passport_html.contains("Enable general 42 CFR Part 2 opt-in above first"));
         assert!(passport_html.contains("Download Printable Brief"));
         assert!(passport_html.contains("Persist Portable File"));
         assert!(passport_html.contains("Download FHIR R4 IPS"));
@@ -2276,6 +3035,8 @@ mod tests {
         assert!(roi_html.contains("45 CFR"));
         assert!(roi_html.contains("42 CFR Part 2 SUD Authorization"));
         assert!(roi_html.contains("Automate Send All Signed ROI Forms (1)"));
+        assert!(roi_html.contains("Download Unsigned Draft (.html)"));
+        assert!(roi_html.contains("Sign above to unlock HIM email handoff"));
         assert!(roi_html.contains("Stanford Health Care"));
 
         let legacy_brand = ["co", "da"].concat();

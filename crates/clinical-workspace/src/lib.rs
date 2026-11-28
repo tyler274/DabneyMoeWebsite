@@ -41,10 +41,10 @@ pub use kipu::{
     KipuSignedRequest, KIPU_API_V3_ACCEPT, KIPU_API_V4_ACCEPT, KIPU_DEFAULT_BASE_URL,
 };
 pub use passport::{
-    build_health_passport, build_health_passport_with_options, parse_health_passport_json,
-    render_passport_fhir_ips_bundle, render_passport_html, render_passport_markdown,
-    HealthPassport, PassportAudience, PassportExportOptions, PassportPortalSummary,
-    HEALTH_PASSPORT_SCHEMA,
+    build_health_passport, build_health_passport_with_options, build_paper_attachment_record,
+    parse_health_passport_json, parse_pasted_email_or_summary, render_passport_fhir_ips_bundle,
+    render_passport_html, render_passport_markdown, render_passport_one_page_html, HealthPassport,
+    PassportAudience, PassportExportOptions, PassportPortalSummary, HEALTH_PASSPORT_SCHEMA,
 };
 pub use roi::{
     build_roi_mailto_uri, default_roi_requests_for_patient, dispatch_roi_batch,
@@ -1168,6 +1168,9 @@ pub struct PatientDemoState {
     pub selected_record_ids: Vec<String>,
     pub visit_questions: Vec<String>,
     pub visit_note: String,
+    /// Plain-language points the patient is tired of repeating at every new visit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub things_to_know: Vec<String>,
     pub personal_notes: Vec<PatientVisitNote>,
     pub delivery_status: ShareDeliveryStatus,
 }
@@ -1228,82 +1231,99 @@ pub fn default_patient_questions(patient_id: &str) -> &'static [&'static str] {
 /// chart has multiple records) and seeds one private device-only note so
 /// patients can immediately inspect inclusion vs. exclusion boundaries.
 pub fn default_patient_demo_state(patient: &PatientChart) -> PatientDemoState {
-    let selected_record_ids: Vec<String> = if patient.records.len() > 2 {
-        patient
-            .records
+    let non_part2_records: Vec<&ChartRecord> = patient
+        .records
+        .iter()
+        .filter(|r| !r.confidentiality.is_part2_sud())
+        .collect();
+    let selected_record_ids: Vec<String> = if non_part2_records.len() > 2 {
+        non_part2_records
             .iter()
             .take(2)
             .map(|r| r.id.clone())
             .collect()
     } else {
-        patient
-            .records
+        non_part2_records
             .iter()
             .take(1)
             .map(|r| r.id.clone())
             .collect()
     };
 
-    let (clinician_name, visit_note, visit_questions, private_note_body) = match patient.id.as_str()
-    {
-        "pt-nadia-kulkarni" => (
-            "Dr. Maya Patel (Demo)",
-            "Overnight glucose stays steady until ~5 AM and rises into the 140s before breakfast. \
-             Hoping to review whether keeping metformin ER 1000 mg with dinner is still best."
-                .to_string(),
-            vec![
-                "Should I keep taking metformin ER with dinner or adjust timing?".to_string(),
-                "Is my 78% 14-day CGM time-in-range on track for our next check?".to_string(),
-            ],
-            "Private reminder (device-only demo): Bring list of breakfast options I tested last week."
-                .to_string(),
-        ),
-        "pt-carlos-mendez" => (
-            "Dr. Maya Patel (Demo)",
-            "Logged 24 seated home blood pressure readings over two weeks averaging 138/84 mmHg \
-             with no headaches, dizziness, or ankle swelling."
-                .to_string(),
-            vec![
-                "Does 138/84 mmHg mean we should adjust amlodipine or wait another month?"
+    let (clinician_name, visit_note, visit_questions, things_to_know, private_note_body) =
+        match patient.id.as_str() {
+            "pt-nadia-kulkarni" => (
+                "Dr. Maya Patel (Demo)",
+                "Overnight glucose stays steady until ~5 AM and rises into the 140s before breakfast. \
+                 Hoping to review whether keeping metformin ER 1000 mg with dinner is still best."
                     .to_string(),
-                "Are my eGFR (74) and potassium (4.3) stable on lisinopril?".to_string(),
-            ],
-            "Private reminder (device-only demo): Ask pharmacy about 90-day refill alignment."
-                .to_string(),
-        ),
-        "pt-priya-nair" => (
-            "Dr. Hannah Brooks (Demo)",
-            "Consistent 23:15 sleep schedule and higher-protein lunches seemed to steady both \
-             afternoon glucose swings and afternoon anxiety over the last two weeks."
-                .to_string(),
-            vec![
-                "My PHQ-9 dropped from 14 to 7—what cadence should we use for next month's check-in?"
+                vec![
+                    "Should I keep taking metformin ER with dinner or adjust timing?".to_string(),
+                    "Is my 78% 14-day CGM time-in-range on track for our next check?".to_string(),
+                ],
+                vec![
+                    "Standard immediate-release metformin caused GI upset in the past; extended-release with dinner works much better.".to_string(),
+                    "Morning fasting rises happen around 5 AM even with no late snacks (dawn pattern visible on CGM).".to_string(),
+                ],
+                "Private reminder (device-only demo): Bring list of breakfast options I tested last week."
                     .to_string(),
-                "Should I keep tracking post-lunch CGM trends alongside mood scores?".to_string(),
-            ],
-            "Private reminder (device-only demo): Note which workdays felt most stressful."
-                .to_string(),
-        ),
-        "pt-david-okafor" => (
-            "Dr. Samuel Cho (Demo)",
-            "Feeling steady with no palpitations, bruising, or bleeding episodes since my last \
-             echocardiogram and blood work."
-                .to_string(),
-            vec![
-                "Do my hemoglobin (14.2) and eGFR (86) confirm standard apixaban dosing?"
+            ),
+            "pt-carlos-mendez" => (
+                "Dr. Maya Patel (Demo)",
+                "Logged 24 seated home blood pressure readings over two weeks averaging 138/84 mmHg \
+                 with no headaches, dizziness, or ankle swelling."
                     .to_string(),
-                "When should I schedule my next routine 6-month lab check?".to_string(),
-            ],
-            "Private reminder (device-only demo): Confirm travel dates before booking May follow-up."
-                .to_string(),
-        ),
-        _ => (
-            "Demo Clinician",
-            "Synthetic sample visit note for demonstration purposes.".to_string(),
-            vec!["Review my selected synthetic records at the next visit.".to_string()],
-            "Private demo note kept strictly on this device.".to_string(),
-        ),
-    };
+                vec![
+                    "Does 138/84 mmHg mean we should adjust amlodipine or wait another month?"
+                        .to_string(),
+                    "Are my eGFR (74) and potassium (4.3) stable on lisinopril?".to_string(),
+                ],
+                vec![
+                    "Office BP readings run higher than calm seated home cuff readings; please review the 14-day home average.".to_string(),
+                ],
+                "Private reminder (device-only demo): Ask pharmacy about 90-day refill alignment."
+                    .to_string(),
+            ),
+            "pt-priya-nair" => (
+                "Dr. Hannah Brooks (Demo)",
+                "Consistent 23:15 sleep schedule and higher-protein lunches seemed to steady both \
+                 afternoon glucose swings and afternoon anxiety over the last two weeks."
+                    .to_string(),
+                vec![
+                    "My PHQ-9 dropped from 14 to 7—what cadence should we use for next month's check-in?"
+                        .to_string(),
+                    "Should I keep tracking post-lunch CGM trends alongside mood scores?".to_string(),
+                ],
+                vec![
+                    "Afternoon blood sugar dips worsen anxiety symptoms — helpful to look at metabolic and mood patterns together.".to_string(),
+                ],
+                "Private reminder (device-only demo): Note which workdays felt most stressful."
+                    .to_string(),
+            ),
+            "pt-david-okafor" => (
+                "Dr. Samuel Cho (Demo)",
+                "Feeling steady with no palpitations, bruising, or bleeding episodes since my last \
+                 echocardiogram and blood work."
+                    .to_string(),
+                vec![
+                    "Do my hemoglobin (14.2) and eGFR (86) confirm standard apixaban dosing?"
+                        .to_string(),
+                    "When should I schedule my next routine 6-month lab check?".to_string(),
+                ],
+                vec![
+                    "On apixaban 5 mg twice daily — always confirm anticoagulation plan before dental or procedural work.".to_string(),
+                ],
+                "Private reminder (device-only demo): Confirm travel dates before booking May follow-up."
+                    .to_string(),
+            ),
+            _ => (
+                "Demo Clinician",
+                "Synthetic sample visit note for demonstration purposes.".to_string(),
+                vec!["Review my selected synthetic records at the next visit.".to_string()],
+                Vec::new(),
+                "Private demo note kept strictly on this device.".to_string(),
+            ),
+        };
 
     let next_visit = patient
         .visit
@@ -1321,6 +1341,7 @@ pub fn default_patient_demo_state(patient: &PatientChart) -> PatientDemoState {
         selected_record_ids,
         visit_questions,
         visit_note,
+        things_to_know,
         personal_notes: vec![PatientVisitNote {
             id: format!("{}-priv-1", patient.id),
             body: private_note_body,
