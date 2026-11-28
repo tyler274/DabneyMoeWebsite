@@ -275,7 +275,7 @@ static MANIFESTS: &[StateLicensingManifest] = &[
                         license_number: &["SITEMAPPINGID", "PROVIDERMAPPINGID", "OBJECTID"],
                         name: &["AGENCY"],
                         dba_or_site_name: &[],
-                        license_type: &["SUD", "MHRS"],
+                        license_type: &[],
                         status: &[],
                         street: &["ADDRESS"],
                         city: &[],
@@ -1089,7 +1089,7 @@ static MANIFESTS: &[StateLicensingManifest] = &[
                 generic_endpoint: Some(GenericEndpointSpec::ArcGisFacility {
                     agency: "NH GRANIT / NH DHHS",
                     layer_query_url: "https://nhgeodata.unh.edu/hosting/rest/services/Hosted/CSD_HSIP_ServiceFacilities/FeatureServer/3/query",
-                    where_clause: "1=1",
+                    where_clause: "naicscode IN ('622110','622210')",
                     page_size: 1000,
                     max_records: 5_000,
                     verification_url_template: None,
@@ -1224,7 +1224,7 @@ static MANIFESTS: &[StateLicensingManifest] = &[
                         license_type: &["type_of_facility"],
                         status: &[],
                         street: &["street_address"],
-                        city: &["county"],
+                        city: &[],
                         zip: &[],
                         phone: &["phone_number"],
                         licensed_beds: &[],
@@ -1371,8 +1371,8 @@ static MANIFESTS: &[StateLicensingManifest] = &[
                 generic_endpoint: Some(GenericEndpointSpec::ArcGisFacility {
                     agency: "SC DPH Healthcare Quality",
                     layer_query_url: "https://services5.arcgis.com/G4BLIH7rTQoIjCFv/arcgis/rest/services/Health_Facilities/FeatureServer/0/query",
-                    where_clause: "1=1",
-                    page_size: 1000,
+                    where_clause: "PERMIT_TYPE_DETAIL_DESC IN ('HL- CDAP Outpatient','HL- CDAP Inpatient','HL- Hospital or Institutional General Infirmary','HL- Residential Treatment for Children & Adolescents','HL- Crisis Stabilization Unit')",
+                    page_size: 500,
                     max_records: 10_000,
                     verification_url_template: None,
                     fields: FacilityFieldMap {

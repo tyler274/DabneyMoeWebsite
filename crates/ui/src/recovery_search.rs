@@ -2404,10 +2404,11 @@ fn render_facility_card(
                                             }
                                         };
                                         let status_text = lic.status.label();
-                                        let agency_num = format!(
-                                            "{} #{}",
-                                            lic.agency, lic.license_number
-                                        );
+                                        let agency_num = if lic.license_number.trim().is_empty() {
+                                            lic.agency.clone()
+                                        } else {
+                                            format!("{} #{}", lic.agency, lic.license_number)
+                                        };
                                         let ltype = lic.license_type.clone();
                                         let beds = lic.licensed_beds.filter(|&b| b > 0);
                                         let verify_url = lic.verification_url.clone().filter(|u| {

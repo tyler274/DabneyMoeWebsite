@@ -94,6 +94,21 @@ pub fn apply_state_licensing_to_catalog(
     }
     summary.facilities_matched = matched_facility_indices.len();
 
+    // Map facility IDs to their normalized city and 5-digit ZIP for provider location disambiguation.
+    let facility_locations: std::collections::HashMap<&str, (String, Option<String>)> = catalog
+        .facilities
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, fac)| {
+            fac.id.as_deref().map(|id| {
+                (
+                    id,
+                    (fac_keys[idx].city_norm.clone(), fac_keys[idx].zip5.clone()),
+                )
+            })
+        })
+        .collect();
+
     // Precompute normalized provider names once.
     let prov_names: Vec<Option<NormalizedPersonName>> = catalog
         .staff_network
@@ -101,40 +116,148 @@ pub fn apply_state_licensing_to_catalog(
         .map(|p| normalize_person_name(&p.name))
         .collect();
 
+    // Precompute normalized names and locations for incoming provider licensing records.
+    let parsed_records: Vec<ParsedProviderRecord<'_>> = outcome
+        .provider_records
+        .iter()
+        .filter_map(|rec| {
+            let name = normalize_person_name(&rec.full_name)?;
+            let license = rec.license?;
+            let zip5 = rec.zip.as_deref().and_then(normalize_zip5);
+            let city_norm = rec
+                .city
+                .as_deref()
+                .map(normalize_city)
+                .filter(|c| !c.is_empty());
+            Some(ParsedProviderRecord {
+                rec,
+                name,
+                license,
+                zip5,
+                city_norm,
+            })
+        })
+        .collect();
+
     let mut matched_provider_indices: BTreeSet<usize> = BTreeSet::new();
 
-    for rec in &outcome.provider_records {
-        let Some(rec_name) = normalize_person_name(&rec.full_name) else {
-            continue;
-        };
-        let Some(rec_lic) = rec.license else {
+    for (idx, provider) in catalog.staff_network.iter_mut().enumerate() {
+        let Some(ref prov_name) = prov_names[idx] else {
             continue;
         };
 
-        let license_entry = StateProviderLicense {
-            state: rec.state.trim().to_ascii_uppercase(),
-            board: rec.board.trim().to_string(),
-            license_number: rec.license_number.trim().to_string(),
-            credential_label: rec.credential_label.trim().to_string(),
-            license: Some(rec_lic),
-            status: rec.status,
-            expires_on: rec.expires_on.clone(),
-            disciplinary_flag: rec.disciplinary_flag,
-            verification_url: rec.verification_url.clone(),
+        let candidates: Vec<&ParsedProviderRecord<'_>> = parsed_records
+            .iter()
+            .filter(|pr| {
+                prov_name.matches(&pr.name) && is_role_compatible(provider.role, pr.license)
+            })
+            .collect();
+        if candidates.is_empty() {
+            continue;
+        }
+
+        // Collect all cities and 5-digit ZIPs from the facilities where this provider practices.
+        let mut prov_zips: BTreeSet<&str> = BTreeSet::new();
+        let mut prov_cities: BTreeSet<&str> = BTreeSet::new();
+        for fac_id in &provider.facility_ids {
+            if let Some((city, zip)) = facility_locations.get(fac_id.as_str()) {
+                if !city.is_empty() {
+                    prov_cities.insert(city.as_str());
+                }
+                if let Some(z) = zip.as_deref() {
+                    prov_zips.insert(z);
+                }
+            }
+        }
+
+        let zip_matches: Vec<&ParsedProviderRecord<'_>> = candidates
+            .iter()
+            .copied()
+            .filter(|pr| pr.zip5.as_deref().is_some_and(|z| prov_zips.contains(z)))
+            .collect();
+        let city_matches: Vec<&ParsedProviderRecord<'_>> = if zip_matches.is_empty() {
+            candidates
+                .iter()
+                .copied()
+                .filter(|pr| {
+                    pr.city_norm
+                        .as_deref()
+                        .is_some_and(|c| prov_cities.contains(c))
+                })
+                .collect()
+        } else {
+            Vec::new()
         };
 
-        for (idx, provider) in catalog.staff_network.iter_mut().enumerate() {
-            let Some(ref prov_name) = prov_names[idx] else {
+        let has_location_match = !zip_matches.is_empty() || !city_matches.is_empty();
+        let selected: Vec<&ParsedProviderRecord<'_>> = if !zip_matches.is_empty() {
+            zip_matches
+        } else if !city_matches.is_empty() {
+            city_matches
+        } else {
+            // No city or ZIP overlap with any of the provider's facilities.
+            // Guard against ambiguous common names in the same state:
+            // - If 2+ distinct active licensees share this name + role, do not guess.
+            // - If 2+ distinct licensees exist overall without a location match, never attach
+            //   a disciplinary record from an unconfirmed namesake.
+            let distinct_active: BTreeSet<String> = candidates
+                .iter()
+                .enumerate()
+                .filter(|(_, pr)| pr.rec.status == crate::schema::LicenseStatus::Active)
+                .map(|(i, pr)| distinct_license_identity(pr.rec, i))
+                .collect();
+            if distinct_active.len() >= 2 {
                 continue;
+            }
+            let distinct_total: BTreeSet<String> = candidates
+                .iter()
+                .enumerate()
+                .map(|(i, pr)| distinct_license_identity(pr.rec, i))
+                .collect();
+            if distinct_total.len() >= 2 {
+                candidates
+                    .into_iter()
+                    .filter(|pr| !pr.rec.disciplinary_flag)
+                    .collect()
+            } else {
+                candidates
+            }
+        };
+
+        if selected.is_empty() {
+            continue;
+        }
+
+        // Even after location narrowing, if 2+ distinct active licensees still match the exact
+        // same name in the same city/ZIP, suppress disciplinary_flag rather than risking a false
+        // disciplinary attribution onto the wrong namesake.
+        let ambiguous_disciplinary = if has_location_match {
+            let distinct_active: BTreeSet<String> = selected
+                .iter()
+                .enumerate()
+                .filter(|(_, pr)| pr.rec.status == crate::schema::LicenseStatus::Active)
+                .map(|(i, pr)| distinct_license_identity(pr.rec, i))
+                .collect();
+            distinct_active.len() >= 2
+        } else {
+            false
+        };
+
+        for pr in selected {
+            let rec = pr.rec;
+            let license_entry = StateProviderLicense {
+                state: rec.state.trim().to_ascii_uppercase(),
+                board: rec.board.trim().to_string(),
+                license_number: rec.license_number.trim().to_string(),
+                credential_label: rec.credential_label.trim().to_string(),
+                license: Some(pr.license),
+                status: rec.status,
+                expires_on: rec.expires_on.clone(),
+                disciplinary_flag: rec.disciplinary_flag && !ambiguous_disciplinary,
+                verification_url: rec.verification_url.clone(),
             };
-            if !prov_name.matches(&rec_name) {
-                continue;
-            }
-            if !is_role_compatible(provider.role, rec_lic) {
-                continue;
-            }
 
-            if attach_provider_license(provider, license_entry.clone()) {
+            if attach_provider_license(provider, license_entry) {
                 summary.provider_licenses_attached += 1;
             }
             if !provider.sources.contains(&DataSource::StateLicense) {
@@ -147,6 +270,26 @@ pub fn apply_state_licensing_to_catalog(
     summary.providers_matched = matched_provider_indices.len();
 
     summary
+}
+
+struct ParsedProviderRecord<'a> {
+    rec: &'a super::types::ProviderLicenseRecord,
+    name: NormalizedPersonName,
+    license: StaffLicense,
+    zip5: Option<String>,
+    city_norm: Option<String>,
+}
+
+fn distinct_license_identity(
+    rec: &super::types::ProviderLicenseRecord,
+    fallback_idx: usize,
+) -> String {
+    let num = rec.license_number.trim().to_ascii_lowercase();
+    if num.is_empty() {
+        format!("idx:{fallback_idx}")
+    } else {
+        num
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1270,5 +1413,132 @@ mod tests {
             catalog.facilities[1].state_licenses[0].license_number,
             "ADHS-SITE-B"
         );
+    }
+
+    #[test]
+    fn disambiguates_providers_by_facility_city_and_zip_and_guards_common_names() {
+        let mut fac_austin = make_facility(
+            "Hill Country Recovery",
+            Some("100 Congress Ave"),
+            "Austin",
+            "TX",
+            "78701",
+            None,
+        );
+        fac_austin.id = Some("fac-austin".to_string());
+
+        let mut fac_dallas = make_facility(
+            "North Texas Behavioral Health",
+            Some("500 Elm St"),
+            "Dallas",
+            "TX",
+            "75201",
+            None,
+        );
+        fac_dallas.id = Some("fac-dallas".to_string());
+
+        let mut prov_john = make_provider(
+            "p-john",
+            "John Smith, MD",
+            ProviderRole::Clinical(StaffLicense::MdPsychiatrist),
+        );
+        prov_john.facility_ids = vec!["fac-austin".to_string()];
+
+        let mut prov_robert = make_provider(
+            "p-robert",
+            "Robert Johnson, MD",
+            ProviderRole::Clinical(StaffLicense::MdPhysician),
+        );
+        prov_robert.facility_ids = vec!["fac-dallas".to_string()];
+
+        let mut catalog = StateCatalog {
+            state: "TX".to_string(),
+            retrieved: "2026-11-28".to_string(),
+            facilities: vec![fac_austin, fac_dallas],
+            staff_network: vec![prov_john, prov_robert],
+        };
+
+        let outcome = StateAdapterOutcome {
+            state: "TX".to_string(),
+            provider_records: vec![
+                // Two active "John Smith" MDs in TX: Austin (clean) vs Houston (disciplined).
+                // Provider practices in Austin 78701 -> must match ONLY Austin record.
+                ProviderLicenseRecord {
+                    state: "TX".to_string(),
+                    board: "Texas Medical Board".to_string(),
+                    license_number: "TX-MD-AUSTIN".to_string(),
+                    full_name: "John Smith".to_string(),
+                    credential_label: "MD - Physician License".to_string(),
+                    license: Some(StaffLicense::MdPhysician),
+                    status: LicenseStatus::Active,
+                    city: Some("AUSTIN".to_string()),
+                    zip: Some("78701".to_string()),
+                    expires_on: None,
+                    disciplinary_flag: false,
+                    verification_url: None,
+                },
+                ProviderLicenseRecord {
+                    state: "TX".to_string(),
+                    board: "Texas Medical Board".to_string(),
+                    license_number: "TX-MD-HOUSTON".to_string(),
+                    full_name: "John Smith".to_string(),
+                    credential_label: "MD - Physician License".to_string(),
+                    license: Some(StaffLicense::MdPhysician),
+                    status: LicenseStatus::Active,
+                    city: Some("HOUSTON".to_string()),
+                    zip: Some("77002".to_string()),
+                    expires_on: None,
+                    disciplinary_flag: true,
+                    verification_url: None,
+                },
+                // Two active "Robert Johnson" MDs in TX, NEITHER in Dallas 75201 (one has discipline).
+                // Without a location match, ambiguous common name must NOT attach either license
+                // or a false disciplinary flag.
+                ProviderLicenseRecord {
+                    state: "TX".to_string(),
+                    board: "Texas Medical Board".to_string(),
+                    license_number: "TX-MD-RJ1".to_string(),
+                    full_name: "Robert Johnson".to_string(),
+                    credential_label: "MD - Physician License".to_string(),
+                    license: Some(StaffLicense::MdPhysician),
+                    status: LicenseStatus::Active,
+                    city: Some("EL PASO".to_string()),
+                    zip: Some("79901".to_string()),
+                    expires_on: None,
+                    disciplinary_flag: false,
+                    verification_url: None,
+                },
+                ProviderLicenseRecord {
+                    state: "TX".to_string(),
+                    board: "Texas Medical Board".to_string(),
+                    license_number: "TX-MD-RJ2".to_string(),
+                    full_name: "Robert Johnson".to_string(),
+                    credential_label: "MD - Physician License".to_string(),
+                    license: Some(StaffLicense::MdPhysician),
+                    status: LicenseStatus::Active,
+                    city: Some("SAN ANTONIO".to_string()),
+                    zip: Some("78205".to_string()),
+                    expires_on: None,
+                    disciplinary_flag: true,
+                    verification_url: None,
+                },
+            ],
+            ..StateAdapterOutcome::default()
+        };
+
+        let summary = apply_state_licensing_to_catalog(&mut catalog, &outcome, "2026-11-28");
+        assert_eq!(summary.providers_matched, 1);
+        assert_eq!(summary.provider_licenses_attached, 1);
+
+        // John Smith matched ONLY the Austin record and has no disciplinary flag.
+        assert_eq!(catalog.staff_network[0].state_licenses.len(), 1);
+        assert_eq!(
+            catalog.staff_network[0].state_licenses[0].license_number,
+            "TX-MD-AUSTIN"
+        );
+        assert!(!catalog.staff_network[0].state_licenses[0].disciplinary_flag);
+
+        // Robert Johnson had 2 distinct active namesakes with no location match -> 0 attached.
+        assert!(catalog.staff_network[1].state_licenses.is_empty());
     }
 }

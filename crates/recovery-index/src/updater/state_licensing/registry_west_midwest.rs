@@ -200,7 +200,7 @@ const IA_SYSTEMS: &[StateBoardDescriptor] = &[
         generic_endpoint: Some(GenericEndpointSpec::ArcGisFacility {
             agency: "Iowa DIAL Health Facilities Division",
             layer_query_url: "https://services.arcgis.com/vPD5PVLI6sfkZ5E4/arcgis/rest/services/Iowa_Licensed_Health_Facilities/FeatureServer/0/query",
-            where_clause: "Status = 'Active'",
+            where_clause: "Status = 'Active' AND Entity_Type IN ('Hospital','Critical Access Hospitals','Psychiatric Medical Institutions for Children','Subacute Mental Health Facilities','Residential Care Facilities for Persons with Mental Illness','Residential Care Facilities','Federally-Qualified Health Centers','Community Mental Health Centers')",
             page_size: 1000,
             max_records: 25_000,
             verification_url_template: None,
@@ -1039,7 +1039,7 @@ const OR_SYSTEMS: &[StateBoardDescriptor] = &[
         generic_endpoint: Some(GenericEndpointSpec::ArcGisFacility {
             agency: "Oregon Health Authority",
             layer_query_url: "https://services.arcgis.com/uUvqNMGPm7axC2dD/ArcGIS/rest/services/OHA_LicensedFacilities/FeatureServer/0/query",
-            where_clause: "1=1",
+            where_clause: "USER_TYPE IN ('Hospital','Hospital Satellite','Federally Qualified Health Centers')",
             page_size: 1000,
             max_records: 25_000,
             verification_url_template: None,
