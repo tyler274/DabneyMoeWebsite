@@ -59,6 +59,8 @@ pub struct RecoveryQuery {
     pub only_shared_network: bool,
     /// Optional provider ID from `StateCatalog::staff_network`: show all facilities served by that provider.
     pub provider_id: Option<String>,
+    /// When true, restrict results to facilities matched to an official state licensing record.
+    pub only_state_licensed: bool,
     /// When true, restrict results to facilities with enriched amenities or staff license data.
     pub only_enriched: bool,
     pub origin: Option<Coordinates>,
@@ -97,6 +99,7 @@ pub struct OfferedFacets {
     pub dedicated_physician_count: usize,
     pub shared_network_facility_count: usize,
     pub network_provider_count: usize,
+    pub state_licensed_count: usize,
 }
 
 impl OfferedFacets {
@@ -108,6 +111,9 @@ impl OfferedFacets {
         for f in &catalog.facilities {
             if f.is_enriched() {
                 out.enriched_count += 1;
+            }
+            if !f.state_licenses.is_empty() {
+                out.state_licensed_count += 1;
             }
             if let Some(profile) = &f.staffing_profile {
                 if profile.dedicated_physicians > 0 {
@@ -208,6 +214,7 @@ pub fn search_catalog(catalog: &StateCatalog, query: &RecoveryQuery) -> Recovery
         .facilities
         .iter()
         .filter(|f| !query.only_enriched || f.is_enriched())
+        .filter(|f| !query.only_state_licensed || !f.state_licenses.is_empty())
         .filter(|f| matches_words(f, &words))
         .filter(|f| query.care.is_empty() || query.care.iter().any(|c| f.care.contains(c)))
         .filter(|f| {

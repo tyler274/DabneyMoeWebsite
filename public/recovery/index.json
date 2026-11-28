@@ -22,21 +22,21 @@
       "state": "AZ",
       "facilities": 569,
       "retrieved": "2026-11-27",
-      "sha256": "f8950308582493cf31255beb67168ed96aa9ae3c18ef57c9b7f7cf5aca922d21",
+      "sha256": "7254d7ad99e718002c0a830d271d8723a8f51547e821313532f26f56d4056ca6",
       "enriched_facilities": 569
     },
     {
       "state": "CA",
       "facilities": 1698,
       "retrieved": "2026-11-27",
-      "sha256": "43b7d9bf581ff5c5f6a7cd82144efef130fd534db1af5483f7aefc4d90d3e6e9",
+      "sha256": "8f563fe7aede5cb1e920a7633118cb1cd42a75dd76cdf05dc1f497ac79acc8a3",
       "enriched_facilities": 1698
     },
     {
       "state": "CO",
       "facilities": 337,
       "retrieved": "2026-11-27",
-      "sha256": "2bd7eeb276525766bf1e8b74a236d50bb113333e9769d1d0dbb0bc67d9cdbd45",
+      "sha256": "ffb6a4ca1ff7cd19d6b67b6ee5dede8c276d75e299ee7ae5de0e1d3b1ca941fe",
       "enriched_facilities": 337
     },
     {
@@ -223,7 +223,7 @@
       "state": "NY",
       "facilities": 1278,
       "retrieved": "2026-11-27",
-      "sha256": "b60ad33b78ac9b05b200830cb2021d6f39f13e7353479312624fb4f328a2071b",
+      "sha256": "4d22d56dc0db241a46e06719a1274166aa5ee9d3e5ad4d772158aa095e297319",
       "enriched_facilities": 1278
     },
     {

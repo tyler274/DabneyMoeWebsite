@@ -98,6 +98,7 @@ pub fn rebuild_state_staff_network(
                 arrangement: obs.arrangement_hint,
                 facility_ids: Vec::new(),
                 sources: Vec::new(),
+                state_licenses: Vec::new(),
                 notes: obs.notes.clone(),
             });
         // Prefer a real person name over a placeholder "NPI ..." label.

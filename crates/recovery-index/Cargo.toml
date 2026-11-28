@@ -15,6 +15,7 @@ serde_json = { workspace = true }
 
 # Native CLI / cached enrichment pipeline dependencies (never pulled into WASM).
 chrono = { version = "0.4", default-features = false, features = ["std"], optional = true }
+csv = { version = "1", optional = true }
 futures-util = { workspace = true, optional = true }
 regex = { version = "1", optional = true }
 reqwest = { workspace = true, optional = true }
@@ -28,6 +29,7 @@ url = { workspace = true, optional = true }
 default = []
 cli = [
   "dep:chrono",
+  "dep:csv",
   "dep:futures-util",
   "dep:regex",
   "dep:reqwest",
