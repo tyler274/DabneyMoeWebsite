@@ -84,8 +84,8 @@
       "state": "HI",
       "facilities": 95,
       "retrieved": "2026-11-25",
-      "sha256": "6d1b8e4af730fa500d826256daec7e4fa7a5d867548698112434b920d4ed02b4",
-      "enriched_facilities": 12
+      "sha256": "226cf4505ac34d79574a1f0d6160e212158c83c85c21a8c9d80944680f1d5760",
+      "enriched_facilities": 7
     },
     {
       "state": "IA",
@@ -129,8 +129,8 @@
       "state": "LA",
       "facilities": 223,
       "retrieved": "2026-11-25",
-      "sha256": "dec42090ef072874279cffb229c5fe1e48e58ebf5dceb02fa20a861413db9dd5",
-      "enriched_facilities": 66
+      "sha256": "9b1e508742fce7621b2588697f2b37a4700102eb0d62ea23c81cd188fdbfc659",
+      "enriched_facilities": 59
     },
     {
       "state": "MA",
@@ -310,8 +310,8 @@
       "state": "UT",
       "facilities": 422,
       "retrieved": "2026-11-25",
-      "sha256": "34fb9224b9c43e7f13ea33e775e02dd132da34b69b651b2571e339d89b256ab6",
-      "enriched_facilities": 22
+      "sha256": "ad9dabd29200e275267c1cf881a1a04a42f2d892dbf330654b77ea5beb1d797f",
+      "enriched_facilities": 12
     },
     {
       "state": "VA",
