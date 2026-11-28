@@ -66,99 +66,118 @@ pub async fn fetch_cached_text(
 
     let stale = cache.get_stale::<String>(STATE_LICENSING_CACHE_NAMESPACE, url);
 
-    let mut req = client.get(url);
-    if let Some(ref env) = stale {
-        if let Some(ref etag) = env.etag {
-            req = req.header(reqwest::header::IF_NONE_MATCH, etag.as_str());
-        }
-        if let Some(ref last_mod) = env.last_modified {
-            req = req.header(reqwest::header::IF_MODIFIED_SINCE, last_mod.as_str());
-        }
-    }
+    const MAX_ATTEMPTS: usize = 4;
+    const RETRY_BACKOFF_MS: [u64; 3] = [1_000, 2_500, 5_000];
 
-    let resp = match req.send().await {
-        Ok(r) => r,
-        Err(source) => {
-            if let Some(env) = stale {
-                if !detect_captcha_or_block(200, &env.value) {
-                    return Ok((env.value, true));
-                }
+    let mut last_err: Option<StateLicenseError> = None;
+
+    for attempt in 0..MAX_ATTEMPTS {
+        if attempt > 0 {
+            let delay_ms = RETRY_BACKOFF_MS[(attempt - 1).min(RETRY_BACKOFF_MS.len() - 1)];
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        }
+
+        let mut req = client.get(url);
+        if let Some(ref env) = stale {
+            if let Some(ref etag) = env.etag {
+                req = req.header(reqwest::header::IF_NONE_MATCH, etag.as_str());
             }
-            return Err(StateLicenseError::Http {
+            if let Some(ref last_mod) = env.last_modified {
+                req = req.header(reqwest::header::IF_MODIFIED_SINCE, last_mod.as_str());
+            }
+        }
+
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(source) => {
+                last_err = Some(StateLicenseError::Http {
+                    url: url.to_string(),
+                    source,
+                });
+                continue;
+            }
+        };
+
+        let status = resp.status().as_u16();
+        if status == 304 {
+            if let Some(env) = stale {
+                let _ = cache.put(
+                    STATE_LICENSING_CACHE_NAMESPACE,
+                    url,
+                    &env.value,
+                    env.etag.clone(),
+                    env.last_modified.clone(),
+                );
+                return Ok((env.value, true));
+            }
+        }
+
+        let etag = resp
+            .headers()
+            .get(reqwest::header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        let last_modified = resp
+            .headers()
+            .get(reqwest::header::LAST_MODIFIED)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+
+        let body = match resp.text().await {
+            Ok(text) => text,
+            Err(source) => {
+                last_err = Some(StateLicenseError::Http {
+                    url: url.to_string(),
+                    source,
+                });
+                continue;
+            }
+        };
+
+        if detect_captcha_or_block(status, &body) {
+            return Err(StateLicenseError::CaptchaBlocked {
                 url: url.to_string(),
-                source,
             });
         }
-    };
 
-    let status = resp.status().as_u16();
-    if status == 304 {
-        if let Some(env) = stale {
-            let _ = cache.put(
-                STATE_LICENSING_CACHE_NAMESPACE,
-                url,
-                &env.value,
-                env.etag.clone(),
-                env.last_modified.clone(),
-            );
+        if !(200..300).contains(&status) {
+            let retryable = matches!(status, 429 | 500 | 502 | 503 | 504);
+            last_err = Some(StateLicenseError::HttpStatus {
+                url: url.to_string(),
+                status,
+            });
+            if retryable && attempt + 1 < MAX_ATTEMPTS {
+                continue;
+            }
+            if retryable {
+                if let Some(env) = stale {
+                    if !detect_captcha_or_block(200, &env.value) {
+                        return Ok((env.value, true));
+                    }
+                }
+            }
+            return Err(last_err.expect("last_err set"));
+        }
+
+        let _ = cache.put(
+            STATE_LICENSING_CACHE_NAMESPACE,
+            url,
+            &body,
+            etag,
+            last_modified,
+        );
+        return Ok((body, false));
+    }
+
+    if let Some(env) = stale {
+        if !detect_captcha_or_block(200, &env.value) {
             return Ok((env.value, true));
         }
     }
-
-    let etag = resp
-        .headers()
-        .get(reqwest::header::ETAG)
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_string);
-    let last_modified = resp
-        .headers()
-        .get(reqwest::header::LAST_MODIFIED)
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_string);
-
-    let body = match resp.text().await {
-        Ok(text) => text,
-        Err(source) => {
-            if let Some(env) = stale {
-                if !detect_captcha_or_block(200, &env.value) {
-                    return Ok((env.value, true));
-                }
-            }
-            return Err(StateLicenseError::Http {
-                url: url.to_string(),
-                source,
-            });
-        }
-    };
-
-    if detect_captcha_or_block(status, &body) {
-        return Err(StateLicenseError::CaptchaBlocked {
-            url: url.to_string(),
-        });
-    }
-
-    if !(200..300).contains(&status) {
-        if (status >= 500 || status == 429) && stale.is_some() {
-            if let Some(env) = stale {
-                if !detect_captcha_or_block(200, &env.value) {
-                    return Ok((env.value, true));
-                }
-            }
-        }
-        return Err(StateLicenseError::HttpStatus {
-            url: url.to_string(),
-            status,
-        });
-    }
-
-    let _ = cache.put(
-        STATE_LICENSING_CACHE_NAMESPACE,
-        url,
-        &body,
-        etag,
-        last_modified,
-    );
-    Ok((body, false))
+    Err(last_err.unwrap_or_else(|| StateLicenseError::HttpStatus {
+        url: url.to_string(),
+        status: 503,
+    }))
 }
 
 /// Detects CAPTCHA, Turnstile, hCaptcha, reCAPTCHA, Incapsula, PerimeterX, or similar
@@ -404,19 +423,50 @@ pub async fn execute_generic_endpoint(
                 let (body, from_cache) = fetch_cached_text(client, cache, url.as_str()).await?;
                 record_fetch_stat(&mut outcome, from_cache);
 
-                let (records, raw_count, exceeded_limit) = parse_arcgis_facility_page(
+                let page_res = parse_arcgis_facility_page(
                     &body,
                     &state_upper,
                     agency,
                     *verification_url_template,
                     fields,
                     system_id,
-                )?;
+                );
+                let (records, raw_count, exceeded_limit, unpaginated_fallback) = match page_res {
+                    Ok((r, c, e)) => (r, c, e, false),
+                    Err(StateLicenseError::InvalidConfig(ref msg))
+                        if offset == 0 && msg.contains("ArcGIS error") =>
+                    {
+                        // Older ArcGIS MapServer layers with supportsPagination=false reject
+                        // resultOffset/resultRecordCount; retry once without pagination params.
+                        let fallback_params = vec![
+                            ("where", where_expr.to_string()),
+                            ("outFields", "*".to_string()),
+                            ("returnGeometry", "false".to_string()),
+                            ("f", "json".to_string()),
+                        ];
+                        let fallback_url =
+                            build_url_with_params(layer_query_url, &fallback_params)?;
+                        let (fb_body, fb_cached) =
+                            fetch_cached_text(client, cache, fallback_url.as_str()).await?;
+                        record_fetch_stat(&mut outcome, fb_cached);
+                        let (r, c, e) = parse_arcgis_facility_page(
+                            &fb_body,
+                            &state_upper,
+                            agency,
+                            *verification_url_template,
+                            fields,
+                            system_id,
+                        )?;
+                        (r, c, e, true)
+                    }
+                    Err(err) => return Err(err),
+                };
                 outcome.facility_records.extend(records);
                 total_seen += raw_count;
                 offset += raw_count;
 
-                if raw_count == 0 || (raw_count < limit && !exceeded_limit) {
+                if unpaginated_fallback || raw_count == 0 || (raw_count < limit && !exceeded_limit)
+                {
                     break;
                 }
             }
@@ -709,6 +759,7 @@ pub fn classify_state_provider_license(
         || has_tok("PA")
         || has_tok("PAC")
         || has_tok("RPA")
+        || has_tok("MPAS")
         || (board_lower.contains("physician assistant") && !cred_lower.contains("nurse"))
     {
         return Some(StaffLicense::Pa);
@@ -1198,6 +1249,29 @@ fn parse_csv_facilities(
         let verification_url = detail_url
             .or_else(|| build_verification_url(verification_url_template, &license_number, ""));
 
+        let mut street = header_idx.get_str(&row, fields.street);
+        let mut city = header_idx.get_str(&row, fields.city);
+        let mut zip = header_idx
+            .get_str(&row, fields.zip)
+            .and_then(|z| normalize_zip_opt(&z));
+        if city.is_none() || zip.is_none() {
+            if let Some(ref raw_street) = street {
+                let (parsed_street, parsed_city, parsed_zip) =
+                    parse_combined_us_address(raw_street, state);
+                if parsed_city.is_some() || parsed_zip.is_some() {
+                    if let Some(clean_street) = parsed_street {
+                        street = Some(clean_street);
+                    }
+                    if city.is_none() {
+                        city = parsed_city;
+                    }
+                    if zip.is_none() {
+                        zip = parsed_zip;
+                    }
+                }
+            }
+        }
+
         out.push(FacilityLicenseRecord {
             state: state.to_string(),
             agency: agency.to_string(),
@@ -1206,11 +1280,9 @@ fn parse_csv_facilities(
             dba_name,
             license_type,
             status: LicenseStatus::parse_loose(&status_raw),
-            street: header_idx.get_str(&row, fields.street),
-            city: header_idx.get_str(&row, fields.city),
-            zip: header_idx
-                .get_str(&row, fields.zip)
-                .and_then(|z| normalize_zip_opt(&z)),
+            street,
+            city,
+            zip,
             phone: header_idx.get_str(&row, fields.phone),
             licensed_beds: header_idx
                 .get_str(&row, fields.licensed_beds)
@@ -1272,9 +1344,7 @@ fn parse_csv_providers(
         let board = header_idx
             .get_str(&row, fields.board_name)
             .unwrap_or_else(|| default_board.to_string());
-        let credential_label = header_idx
-            .get_str(&row, fields.credential_or_type)
-            .unwrap_or_default();
+        let credential_label = header_idx.get_combined_str(&row, fields.credential_or_type);
         let license = classify_state_provider_license(&board, &credential_label);
         let status_raw = header_idx.get_str(&row, fields.status).unwrap_or_default();
         let disciplinary_flag = header_idx
@@ -1323,6 +1393,41 @@ fn facility_from_json_map(
     let verification_url = detail_url
         .or_else(|| build_verification_url(verification_url_template, &license_number, ""));
 
+    let mut street = lookup_json_str(map, fields.street);
+    let mut city = lookup_json_str(map, fields.city);
+    let mut zip = lookup_json_str(map, fields.zip).and_then(|z| normalize_zip_opt(&z));
+
+    if street.is_none() || city.is_none() || zip.is_none() {
+        let (loc_street, loc_city, loc_zip) = extract_socrata_human_address(map);
+        if street.is_none() {
+            street = loc_street;
+        }
+        if city.is_none() {
+            city = loc_city;
+        }
+        if zip.is_none() {
+            zip = loc_zip;
+        }
+    }
+
+    if city.is_none() || zip.is_none() {
+        if let Some(ref raw_street) = street {
+            let (parsed_street, parsed_city, parsed_zip) =
+                parse_combined_us_address(raw_street, state);
+            if parsed_city.is_some() || parsed_zip.is_some() {
+                if let Some(clean_street) = parsed_street {
+                    street = Some(clean_street);
+                }
+                if city.is_none() {
+                    city = parsed_city;
+                }
+                if zip.is_none() {
+                    zip = parsed_zip;
+                }
+            }
+        }
+    }
+
     Some(FacilityLicenseRecord {
         state: state.to_string(),
         agency: agency.to_string(),
@@ -1331,9 +1436,9 @@ fn facility_from_json_map(
         dba_name,
         license_type,
         status: LicenseStatus::parse_loose(&status_raw),
-        street: lookup_json_str(map, fields.street),
-        city: lookup_json_str(map, fields.city),
-        zip: lookup_json_str(map, fields.zip).and_then(|z| normalize_zip_opt(&z)),
+        street,
+        city,
+        zip,
         phone: lookup_json_str(map, fields.phone),
         licensed_beds: lookup_json_u32(map, fields.licensed_beds),
         expires_on: lookup_json_str(map, fields.expires_on),
@@ -1365,7 +1470,7 @@ fn provider_from_json_map(
 
     let board =
         lookup_json_str(map, fields.board_name).unwrap_or_else(|| default_board.to_string());
-    let credential_label = lookup_json_str(map, fields.credential_or_type).unwrap_or_default();
+    let credential_label = combine_json_str_fields(map, fields.credential_or_type);
     let license = classify_state_provider_license(&board, &credential_label);
     let status_raw = lookup_json_str(map, fields.status).unwrap_or_default();
     let disciplinary_flag = lookup_json_disciplinary(map, fields.disciplinary_flag);
@@ -1504,6 +1609,18 @@ impl HeaderIndex {
             Some(val.to_string())
         }
     }
+
+    /// Collects all distinct non-empty values across `candidates` in order so secondary fields
+    /// (such as `license_type` alongside `degree`) are never shadowed.
+    fn get_combined_str(&self, row: &csv::StringRecord, candidates: &[&str]) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        for cand in candidates {
+            if let Some(val) = self.get_str(row, &[*cand]) {
+                push_distinct_label_part(&mut parts, val);
+            }
+        }
+        parts.join(" - ")
+    }
 }
 
 fn lookup_json_value<'a>(map: &'a Map<String, Value>, candidates: &[&str]) -> Option<&'a Value> {
@@ -1530,6 +1647,10 @@ fn lookup_json_value<'a>(map: &'a Map<String, Value>, candidates: &[&str]) -> Op
 
 fn lookup_json_str(map: &Map<String, Value>, candidates: &[&str]) -> Option<String> {
     let val = lookup_json_value(map, candidates)?;
+    json_value_to_str(val)
+}
+
+fn json_value_to_str(val: &Value) -> Option<String> {
     match val {
         Value::String(s) => {
             let t = s.trim();
@@ -1539,6 +1660,271 @@ fn lookup_json_str(map: &Map<String, Value>, candidates: &[&str]) -> Option<Stri
         Value::Bool(b) => Some(b.to_string()),
         _ => None,
     }
+}
+
+/// Collects all distinct non-empty string values across `candidates` in order so a degree
+/// column like `"MPAS"` never shadows `license_type = "Physician Assistant License"`.
+fn combine_json_str_fields(map: &Map<String, Value>, candidates: &[&str]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for cand in candidates {
+        if let Some(val) = lookup_json_str(map, &[*cand]) {
+            push_distinct_label_part(&mut parts, val);
+        }
+    }
+    parts.join(" - ")
+}
+
+fn push_distinct_label_part(parts: &mut Vec<String>, candidate: String) {
+    let cand_lower = candidate.to_ascii_lowercase();
+    if parts
+        .iter()
+        .any(|existing| existing.to_ascii_lowercase().contains(&cand_lower))
+    {
+        return;
+    }
+    parts.push(candidate);
+}
+
+/// Extracts `(street, city, zip5)` from Socrata nested location objects such as `location_1`
+/// or `location` whose `human_address` field holds a JSON-encoded address object (used by PA
+/// DDAP `eswt-bam9.json` and similar Socrata datasets).
+fn extract_socrata_human_address(
+    map: &Map<String, Value>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    for key in ["location_1", "location", "geocoded_column"] {
+        let Some(obj) = map.get(key).and_then(Value::as_object) else {
+            continue;
+        };
+        let Some(human_raw) = obj.get("human_address").and_then(Value::as_str) else {
+            continue;
+        };
+        let Ok(parsed) = serde_json::from_str::<Map<String, Value>>(human_raw) else {
+            continue;
+        };
+        let street = lookup_json_str(&parsed, &["address", "street"]);
+        let city = lookup_json_str(&parsed, &["city"]);
+        let zip =
+            lookup_json_str(&parsed, &["zip", "postal_code"]).and_then(|z| normalize_zip_opt(&z));
+        if street.is_some() || city.is_some() || zip.is_some() {
+            return (street, city, zip);
+        }
+    }
+    (None, None, None)
+}
+
+/// Parses a single-line US address such as:
+/// - `"1100 THIRD STREET, TILLAMOOK, OR   97141"` (OR OHA `USER_FULL_ADDRESS`)
+/// - `"1100 3rd St, Tillamook, Oregon, 97141"` (OR OHA `Match_addr`)
+/// - `"425 2nd Street NW, 2 North   Washington, DC 20001"` (DC DBH `ADDRESS`)
+/// - `"1930 Martin Luther King Jr., Avenue SEWashington, DC 20020"` (DC DBH concatenated)
+///
+/// Returns `(cleaned_street, city, zip5)`.
+fn parse_combined_us_address(
+    raw: &str,
+    expected_state: &str,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let normalized = raw.replace('\u{00a0}', " ");
+    let trimmed = normalized.trim();
+    if trimmed.is_empty() {
+        return (None, None, None);
+    }
+
+    // 1. Extract trailing 5-digit ZIP (optionally with -4 extension).
+    let (before_zip, zip5) = split_trailing_zip(trimmed);
+    let Some(zip5) = zip5 else {
+        return (None, None, None);
+    };
+
+    // 2. Strip trailing comma/whitespace and state code or full state name before the ZIP.
+    let before_zip = before_zip.trim_end_matches(|c: char| c.is_whitespace() || c == ',');
+    let state_upper = expected_state.trim().to_ascii_uppercase();
+    let before_state = strip_trailing_state(before_zip, &state_upper);
+    let before_state = before_state.trim_end_matches(|c: char| c.is_whitespace() || c == ',');
+
+    if before_state.is_empty() {
+        return (None, None, Some(zip5));
+    }
+
+    // 3. Special handling for DC where "Washington" is occasionally concatenated directly onto
+    //    the street quadrant (e.g. "Avenue SEWashington") or separated by multiple spaces.
+    if state_upper == "DC" {
+        let lower = before_state.to_ascii_lowercase();
+        if lower.ends_with("washington") {
+            let street_part = before_state[..before_state.len() - "washington".len()]
+                .trim_end_matches(|c: char| c.is_whitespace() || c == ',');
+            let street = (!street_part.is_empty()).then(|| street_part.to_string());
+            return (street, Some("Washington".to_string()), Some(zip5));
+        }
+    }
+
+    // 4. Comma-delimited: "... , CITY" (with guard for "2 North   Washington" style multi-space).
+    if let Some(comma_idx) = before_state.rfind(',') {
+        let left = before_state[..comma_idx].trim();
+        let right = before_state[comma_idx + 1..].trim();
+        if !right.is_empty() {
+            if let Some((extra_street, city_part)) = split_last_double_space(right) {
+                let combined_street = if left.is_empty() {
+                    extra_street.to_string()
+                } else {
+                    format!("{left}, {extra_street}")
+                };
+                return (
+                    Some(combined_street),
+                    Some(city_part.to_string()),
+                    Some(zip5),
+                );
+            }
+            let street = (!left.is_empty()).then(|| left.to_string());
+            return (street, Some(right.to_string()), Some(zip5));
+        }
+    }
+
+    // 5. No comma before state/ZIP: split on the last run of 2+ consecutive spaces.
+    if let Some((street_part, city_part)) = split_last_double_space(before_state) {
+        return (
+            Some(street_part.to_string()),
+            Some(city_part.to_string()),
+            Some(zip5),
+        );
+    }
+
+    (Some(before_state.to_string()), None, Some(zip5))
+}
+
+fn split_trailing_zip(s: &str) -> (&str, Option<String>) {
+    let bytes = s.as_bytes();
+    let mut end = bytes.len();
+    while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    let slice = &s[..end];
+    // Match optional "-1234" suffix first.
+    let base = if slice.len() >= 10 {
+        let tail = &slice[slice.len() - 5..];
+        if tail.starts_with('-') && tail[1..].bytes().all(|b| b.is_ascii_digit()) {
+            &slice[..slice.len() - 5]
+        } else {
+            slice
+        }
+    } else {
+        slice
+    };
+    if base.len() < 5 {
+        return (s, None);
+    }
+    let zip_cand = &base[base.len() - 5..];
+    if !zip_cand.bytes().all(|b| b.is_ascii_digit()) {
+        return (s, None);
+    }
+    let prefix = &base[..base.len() - 5];
+    if let Some(prev) = prefix.chars().next_back() {
+        if prev.is_ascii_alphanumeric() {
+            return (s, None);
+        }
+    }
+    (prefix, Some(zip_cand.to_string()))
+}
+
+fn strip_trailing_state<'a>(s: &'a str, expected_state: &str) -> &'a str {
+    let trimmed = s.trim_end();
+    if expected_state.len() == 2 {
+        if let Some(tail) = trimmed.get(trimmed.len().saturating_sub(2)..) {
+            if tail.eq_ignore_ascii_case(expected_state) {
+                let prefix = &trimmed[..trimmed.len() - 2];
+                if prefix
+                    .chars()
+                    .next_back()
+                    .is_none_or(|c| !c.is_ascii_alphabetic())
+                {
+                    return prefix;
+                }
+            }
+        }
+    }
+    if let Some(full_name) = state_full_name(expected_state) {
+        if trimmed.len() >= full_name.len() {
+            let tail = &trimmed[trimmed.len() - full_name.len()..];
+            if tail.eq_ignore_ascii_case(full_name) {
+                let prefix = &trimmed[..trimmed.len() - full_name.len()];
+                if prefix
+                    .chars()
+                    .next_back()
+                    .is_none_or(|c| !c.is_ascii_alphabetic())
+                {
+                    return prefix;
+                }
+            }
+        }
+    }
+    trimmed
+}
+
+fn split_last_double_space(s: &str) -> Option<(&str, &str)> {
+    let idx = s.rfind("  ")?;
+    let left = s[..idx].trim_end();
+    let right = s[idx..].trim_start();
+    if left.is_empty() || right.is_empty() {
+        None
+    } else {
+        Some((left, right))
+    }
+}
+
+fn state_full_name(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "AL" => "Alabama",
+        "AK" => "Alaska",
+        "AZ" => "Arizona",
+        "AR" => "Arkansas",
+        "CA" => "California",
+        "CO" => "Colorado",
+        "CT" => "Connecticut",
+        "DE" => "Delaware",
+        "DC" => "District of Columbia",
+        "FL" => "Florida",
+        "GA" => "Georgia",
+        "HI" => "Hawaii",
+        "ID" => "Idaho",
+        "IL" => "Illinois",
+        "IN" => "Indiana",
+        "IA" => "Iowa",
+        "KS" => "Kansas",
+        "KY" => "Kentucky",
+        "LA" => "Louisiana",
+        "ME" => "Maine",
+        "MD" => "Maryland",
+        "MA" => "Massachusetts",
+        "MI" => "Michigan",
+        "MN" => "Minnesota",
+        "MS" => "Mississippi",
+        "MO" => "Missouri",
+        "MT" => "Montana",
+        "NE" => "Nebraska",
+        "NV" => "Nevada",
+        "NH" => "New Hampshire",
+        "NJ" => "New Jersey",
+        "NM" => "New Mexico",
+        "NY" => "New York",
+        "NC" => "North Carolina",
+        "ND" => "North Dakota",
+        "OH" => "Ohio",
+        "OK" => "Oklahoma",
+        "OR" => "Oregon",
+        "PA" => "Pennsylvania",
+        "RI" => "Rhode Island",
+        "SC" => "South Carolina",
+        "SD" => "South Dakota",
+        "TN" => "Tennessee",
+        "TX" => "Texas",
+        "UT" => "Utah",
+        "VT" => "Vermont",
+        "VA" => "Virginia",
+        "WA" => "Washington",
+        "WV" => "West Virginia",
+        "WI" => "Wisconsin",
+        "WY" => "Wyoming",
+        _ => return None,
+    })
 }
 
 fn lookup_json_u32(map: &Map<String, Value>, candidates: &[&str]) -> Option<u32> {
@@ -2243,5 +2629,141 @@ SNF-200,Oakwood Nursing Home,Skilled Nursing Facility,Active,200 Oak Ave,Phoenix
             build_verification_url(Some("javascript:alert(1)"), "123", ""),
             None
         );
+    }
+
+    #[test]
+    fn parses_combined_us_addresses_for_or_and_dc() {
+        let (st, city, zip) =
+            parse_combined_us_address("1100 THIRD STREET, TILLAMOOK, OR   97141", "OR");
+        assert_eq!(st.as_deref(), Some("1100 THIRD STREET"));
+        assert_eq!(city.as_deref(), Some("TILLAMOOK"));
+        assert_eq!(zip.as_deref(), Some("97141"));
+
+        let (st2, city2, zip2) =
+            parse_combined_us_address("12350 NW Main St, Ste 112, Banks, Oregon, 97106", "OR");
+        assert_eq!(st2.as_deref(), Some("12350 NW Main St, Ste 112"));
+        assert_eq!(city2.as_deref(), Some("Banks"));
+        assert_eq!(zip2.as_deref(), Some("97106"));
+
+        let (st3, city3, zip3) =
+            parse_combined_us_address("425 2nd Street NW, 2 North   Washington, DC 20001", "DC");
+        assert_eq!(st3.as_deref(), Some("425 2nd Street NW, 2 North"));
+        assert_eq!(city3.as_deref(), Some("Washington"));
+        assert_eq!(zip3.as_deref(), Some("20001"));
+
+        let (st4, city4, zip4) = parse_combined_us_address(
+            "2041 Martin Luther King Jr. Avenue SE   Suite 109   Washington,\u{00a0}DC 20020",
+            "DC",
+        );
+        assert_eq!(
+            st4.as_deref(),
+            Some("2041 Martin Luther King Jr. Avenue SE   Suite 109")
+        );
+        assert_eq!(city4.as_deref(), Some("Washington"));
+        assert_eq!(zip4.as_deref(), Some("20020"));
+
+        let (st5, city5, zip5) = parse_combined_us_address(
+            "1930 Martin Luther King Jr., Avenue SEWashington, DC 20020",
+            "DC",
+        );
+        assert_eq!(
+            st5.as_deref(),
+            Some("1930 Martin Luther King Jr., Avenue SE")
+        );
+        assert_eq!(city5.as_deref(), Some("Washington"));
+        assert_eq!(zip5.as_deref(), Some("20020"));
+    }
+
+    #[test]
+    fn extracts_pa_socrata_human_address_city_and_zip() {
+        let json = r#"[{
+            "type_of_facility": "DDAP-Licensed Treatment Facility",
+            "name_of_facility": "Choices Recovery Program",
+            "street_address": "Rear 307 Laird Street",
+            "phone_number": "570-408-9320",
+            "location_1": {
+                "latitude": "41.2563695",
+                "longitude": "-75.8278712",
+                "human_address": "{\"address\": \"\", \"city\": \"Wilkes Barre\", \"state\": \"Pennsylvania\", \"zip\": \"18702\"}"
+            }
+        }]"#;
+        let fields = FacilityFieldMap {
+            license_number: &[],
+            name: &["name_of_facility"],
+            dba_or_site_name: &[],
+            license_type: &["type_of_facility"],
+            status: &[],
+            street: &["street_address"],
+            city: &[],
+            zip: &[],
+            phone: &["phone_number"],
+            licensed_beds: &[],
+            expires_on: &[],
+            detail_url: &[],
+        };
+        let (records, raw_count) =
+            parse_socrata_facility_page(json, "PA", "PA DDAP", None, &fields, "pa-ddap-test")
+                .expect("pa parse");
+        assert_eq!(raw_count, 1);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].street.as_deref(), Some("Rear 307 Laird Street"));
+        assert_eq!(records[0].city.as_deref(), Some("Wilkes Barre"));
+        assert_eq!(records[0].zip.as_deref(), Some("18702"));
+    }
+
+    #[test]
+    fn tx_tmb_degree_does_not_shadow_physician_assistant_license_type() {
+        let json = r#"[
+            {
+                "license_number": "PA10001",
+                "first_name": "Alex",
+                "last_name": "Rivera",
+                "degree": "MPAS",
+                "license_type": "Physician Assistant License",
+                "registration_status": "ACTIVE"
+            },
+            {
+                "license_number": "M20002",
+                "first_name": "Priya",
+                "last_name": "Nair",
+                "degree": "MD",
+                "license_type": "Physician License",
+                "registration_status": "ACTIVE"
+            },
+            {
+                "license_number": "D30003",
+                "first_name": "Sam",
+                "last_name": "Carter",
+                "degree": "DO",
+                "license_type": "Physician License",
+                "registration_status": "ACTIVE"
+            }
+        ]"#;
+        let fields = ProviderFieldMap {
+            license_number: &["license_number"],
+            full_name: &[],
+            first_name: &["first_name"],
+            last_name: &["last_name"],
+            credential_or_type: &["degree", "license_type"],
+            board_name: &[],
+            status: &["registration_status"],
+            city: &[],
+            zip: &[],
+            expires_on: &[],
+            disciplinary_flag: &[],
+        };
+        let (records, raw_count) = parse_socrata_provider_page(
+            json,
+            "TX",
+            "Texas Medical Board",
+            None,
+            &fields,
+            "tx-tmb-test",
+        )
+        .expect("tx parse");
+        assert_eq!(raw_count, 3);
+        assert_eq!(records[0].license, Some(StaffLicense::Pa));
+        assert_eq!(records[1].license, Some(StaffLicense::MdPhysician));
+        assert_eq!(records[2].license, Some(StaffLicense::DoPhysician));
     }
 }
