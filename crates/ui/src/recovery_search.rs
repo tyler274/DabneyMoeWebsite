@@ -1728,6 +1728,8 @@ pub fn RecoverySearchSection(
                                         .as_deref()
                                         .map(|o| format!(" · {o}"))
                                         .unwrap_or_default();
+                                    let has_board_licenses = !prov.state_licenses.is_empty();
+                                    let dot_class = provider_license_dot_class(&prov.state_licenses);
                                     let label = format!(
                                         "{}{} · {} ({} sites)",
                                         prov.name,
@@ -1757,13 +1759,21 @@ pub fn RecoverySearchSection(
                                                 if selected_provider_id.get().as_deref()
                                                     == Some(pid_class.as_str())
                                                 {
-                                                    "min-h-[32px] rounded-full border border-indigo-400/70 bg-indigo-500/25 px-3 py-1 text-xs font-semibold text-indigo-100 transition"
+                                                    "inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-indigo-400/70 bg-indigo-500/25 px-3 py-1 text-xs font-semibold text-indigo-100 transition"
                                                 } else {
-                                                    "min-h-[32px] rounded-full border border-white/15 bg-white/[0.03] px-3 py-1 text-xs text-slate-200 transition hover:border-indigo-400/45 hover:text-white"
+                                                    "inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-white/15 bg-white/[0.03] px-3 py-1 text-xs text-slate-200 transition hover:border-indigo-400/45 hover:text-white"
                                                 }
                                             }
                                         >
-                                            {label}
+                                            <span>{label}</span>
+                                            {has_board_licenses.then(|| {
+                                                view! {
+                                                    <span class="inline-flex items-center gap-1 text-[10px] font-medium text-cyan-200/90">
+                                                        <span class=dot_class aria-hidden="true"></span>
+                                                        "Board verified"
+                                                    </span>
+                                                }
+                                            })}
                                         </button>
                                     }
                                 })
@@ -1790,17 +1800,90 @@ pub fn RecoverySearchSection(
                     prov.facility_ids.len()
                 );
                 let notes = prov.notes.clone();
+                let state_licenses = prov.state_licenses.clone();
                 Some(view! {
                     <div
                         role="status"
-                        class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-indigo-400/40 bg-indigo-500/15 px-4 py-2.5 text-xs text-indigo-100"
+                        class="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-indigo-400/40 bg-indigo-500/15 px-4 py-2.5 text-xs text-indigo-100"
                     >
-                        <div>
+                        <div class="space-y-1.5">
                             <p>
                                 <strong>"Shared provider filter: "</strong>
                                 {summary}
                             </p>
-                            {notes.map(|n| view! { <p class="mt-0.5 text-[11px] text-indigo-200/80">{n}</p> })}
+                            {notes.map(|n| view! { <p class="text-[11px] text-indigo-200/80">{n}</p> })}
+                            {(!state_licenses.is_empty()).then(|| {
+                                view! {
+                                    <div class="space-y-1 pt-0.5">
+                                        <span class="block text-[10px] font-semibold uppercase tracking-wider text-cyan-200/90">
+                                            "State Board Licenses"
+                                        </span>
+                                        <div class="space-y-1">
+                                            {state_licenses
+                                                .into_iter()
+                                                .map(|lic| {
+                                                    let status_class = match lic.status {
+                                                        LicenseStatus::Active
+                                                        | LicenseStatus::Provisional => {
+                                                            "rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-200"
+                                                        }
+                                                        LicenseStatus::Unknown => {
+                                                            "rounded bg-slate-500/20 px-1.5 py-0.5 text-[10px] font-medium text-slate-300"
+                                                        }
+                                                        LicenseStatus::Probation
+                                                        | LicenseStatus::Suspended
+                                                        | LicenseStatus::Revoked
+                                                        | LicenseStatus::Inactive => {
+                                                            "rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-rose-200"
+                                                        }
+                                                    };
+                                                    let status_text = lic.status.label();
+                                                    let board_num = if lic.license_number.trim().is_empty() {
+                                                        lic.board.clone()
+                                                    } else {
+                                                        format!("{} #{}", lic.board, lic.license_number)
+                                                    };
+                                                    let cred = lic.credential_label.clone();
+                                                    let disciplinary = lic.disciplinary_flag;
+                                                    let verify_url = lic.verification_url.clone().filter(|u| {
+                                                        u.starts_with("https://") || u.starts_with("http://")
+                                                    });
+                                                    view! {
+                                                        <div class="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-200">
+                                                            <span class=status_class>{status_text}</span>
+                                                            <span class="font-medium text-white">{board_num}</span>
+                                                            {(!cred.trim().is_empty()).then(|| {
+                                                                view! {
+                                                                    <span class="text-indigo-200/90">{format!("· {cred}")}</span>
+                                                                }
+                                                            })}
+                                                            {disciplinary.then(|| {
+                                                                view! {
+                                                                    <span class="rounded border border-rose-400/50 bg-rose-500/25 px-1.5 py-0.5 text-[10px] font-semibold text-rose-100">
+                                                                        "Disciplinary action"
+                                                                    </span>
+                                                                }
+                                                            })}
+                                                            {verify_url.map(|url| {
+                                                                view! {
+                                                                    <a
+                                                                        href=url
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        class="text-[10px] font-medium text-cyan-300 underline-offset-2 hover:underline"
+                                                                    >
+                                                                        "Verify"
+                                                                    </a>
+                                                                }
+                                                            })}
+                                                        </div>
+                                                    }
+                                                })
+                                                .collect_view()}
+                                        </div>
+                                    </div>
+                                }
+                            })}
                         </div>
                         <button
                             type="button"
@@ -2145,6 +2228,26 @@ fn toggle_vec<T: PartialEq + Copy + Send + Sync + 'static>(sig: RwSignal<Vec<T>>
     });
 }
 
+fn provider_license_dot_class(licenses: &[StateProviderLicense]) -> &'static str {
+    let has_adverse = licenses.iter().any(|lic| {
+        lic.disciplinary_flag
+            || matches!(
+                lic.status,
+                LicenseStatus::Probation
+                    | LicenseStatus::Suspended
+                    | LicenseStatus::Revoked
+                    | LicenseStatus::Inactive
+            )
+    });
+    if has_adverse {
+        "inline-block h-1.5 w-1.5 rounded-full bg-rose-400"
+    } else if licenses.iter().any(|lic| lic.status.is_good_standing()) {
+        "inline-block h-1.5 w-1.5 rounded-full bg-emerald-400"
+    } else {
+        "inline-block h-1.5 w-1.5 rounded-full bg-slate-400"
+    }
+}
+
 fn staff_badge_class(lic: StaffLicense) -> &'static str {
     match lic.tier() {
         StaffLicenseTier::Physicians => {
@@ -2447,6 +2550,8 @@ fn render_facility_card(
                                                 .into_iter()
                                                 .map(|sp| {
                                                     let pid = sp.id.clone();
+                                                    let has_board_licenses = !sp.state_licenses.is_empty();
+                                                    let dot_class = provider_license_dot_class(&sp.state_licenses);
                                                     let chip_label = format!(
                                                         "{} · {} ({} sites)",
                                                         sp.name,
@@ -2460,9 +2565,17 @@ fn render_facility_card(
                                                                 selected_provider_id.set(Some(pid.clone()));
                                                                 page.set(0);
                                                             }
-                                                            class="rounded-full border border-indigo-400/35 bg-indigo-500/15 px-2 py-0.5 text-[10px] font-medium text-indigo-100 transition hover:bg-indigo-500/30"
+                                                            class="inline-flex items-center gap-1 rounded-full border border-indigo-400/35 bg-indigo-500/15 px-2 py-0.5 text-[10px] font-medium text-indigo-100 transition hover:bg-indigo-500/30"
                                                         >
-                                                            {chip_label}
+                                                            <span>{chip_label}</span>
+                                                            {has_board_licenses.then(|| {
+                                                                view! {
+                                                                    <span class="inline-flex items-center gap-1 text-[9px] font-medium text-cyan-200/90">
+                                                                        <span class=dot_class aria-hidden="true"></span>
+                                                                        "Board verified"
+                                                                    </span>
+                                                                }
+                                                            })}
                                                         </button>
                                                     }
                                                 })

@@ -16,7 +16,8 @@
       "state": "AR",
       "facilities": 231,
       "retrieved": "2026-11-25",
-      "sha256": "00abb71d49eb4bd6ebf587dba991e0f35f67695947ab01e58481115d1da21ca0"
+      "sha256": "9ea14bd5916dfbeade4ae91e7dcec3550566b40bbf95d85c81f58cf61e1f15e0",
+      "enriched_facilities": 27
     },
     {
       "state": "AZ",
@@ -36,32 +37,36 @@
       "state": "CO",
       "facilities": 337,
       "retrieved": "2026-11-27",
-      "sha256": "ffb6a4ca1ff7cd19d6b67b6ee5dede8c276d75e299ee7ae5de0e1d3b1ca941fe",
+      "sha256": "cbefde5403a08dc00d294d770cd299d3ce7b53d0fca60ad49aee2e3acd1555e1",
       "enriched_facilities": 337
     },
     {
       "state": "CT",
       "facilities": 251,
       "retrieved": "2026-11-25",
-      "sha256": "bc8b40296bbc025a221e000b1f4c3f0fec00a600e40de09a164ad47c5eaa7223"
+      "sha256": "b2d1f106e43672b480324a58ec7e17f534f2da8ef767cc12342a8ec036182007",
+      "enriched_facilities": 183
     },
     {
       "state": "DC",
       "facilities": 39,
       "retrieved": "2026-11-25",
-      "sha256": "a575ce7f0265e52f36bf9a78ae546e0ac36f68758c5ffe504e28c71a25962926"
+      "sha256": "07e2ef31d7d0aeb4d21ac016bb693c21618caf1403c39afa71307d65c2e1eec1",
+      "enriched_facilities": 3
     },
     {
       "state": "DE",
       "facilities": 63,
       "retrieved": "2026-11-25",
-      "sha256": "a5eaa13d2e780d1b722b7e98b57408a5026469a1d2f38118f1ba41d1fc93ef17"
+      "sha256": "040a18f15680bdafc8e8b5bdfd187a60a0af81b067c9e1d3bcf711046b7bb55d",
+      "enriched_facilities": 4
     },
     {
       "state": "FL",
       "facilities": 803,
       "retrieved": "2026-11-25",
-      "sha256": "5e7a76da5393af3f00b921eee7abaa482007353a7e2dc9a6d80877f5cd78c206"
+      "sha256": "43e10b3b415c37e10d002f51b12f6ea96aa04dc615fb27ca25e75d5a2975c319",
+      "enriched_facilities": 35
     },
     {
       "state": "GA",
@@ -79,7 +84,8 @@
       "state": "HI",
       "facilities": 95,
       "retrieved": "2026-11-25",
-      "sha256": "a1bb6acf1f539ddae5b3ca39ae574de8488f9dec43c9defd693ddb1c49693eea"
+      "sha256": "226cf4505ac34d79574a1f0d6160e212158c83c85c21a8c9d80944680f1d5760",
+      "enriched_facilities": 7
     },
     {
       "state": "IA",
@@ -91,7 +97,8 @@
       "state": "ID",
       "facilities": 250,
       "retrieved": "2026-11-25",
-      "sha256": "9272076d24ef0f9dad8d9e5efe64cec6adafc6c94203d7d5378177595b48a4c8"
+      "sha256": "22de5ac25772983a41bc75ad8811998022856ccd0cbe1e3c6113848ce98f8b5d",
+      "enriched_facilities": 9
     },
     {
       "state": "IL",
@@ -115,25 +122,29 @@
       "state": "KY",
       "facilities": 557,
       "retrieved": "2026-11-25",
-      "sha256": "9a272484e7c795f4c5d1b8f4c71090ddd3845a5f4a2377c1a86865452f758d38"
+      "sha256": "88616d17f5ece26120c866fcd4f3b2b035a58afbe3dfaf04583b92ac2d0d2bda",
+      "enriched_facilities": 21
     },
     {
       "state": "LA",
       "facilities": 223,
       "retrieved": "2026-11-25",
-      "sha256": "c4e2030279a16732139ff12d3510ed231de9ff5b2c41029f05cdb4b105d45637"
+      "sha256": "9b1e508742fce7621b2588697f2b37a4700102eb0d62ea23c81cd188fdbfc659",
+      "enriched_facilities": 59
     },
     {
       "state": "MA",
       "facilities": 447,
       "retrieved": "2026-11-25",
-      "sha256": "dc1f4f17be14822569df35744952768f524818fae1af56c658a1adbe5145db02"
+      "sha256": "7c7b22d52569a60677c6551202ef20ecfef8ec72ac4bc1e63ad7f2f79edc7509",
+      "enriched_facilities": 26
     },
     {
       "state": "MD",
       "facilities": 640,
       "retrieved": "2026-11-25",
-      "sha256": "60017ece3d58a1f83c3dacce87a583b2d4f528a281c59aaa9a02a5cfc0eb76dc"
+      "sha256": "81580ef8509f3afc165a6585be32eafa63dc5296d0f64202eaeef7451219f1b2",
+      "enriched_facilities": 2
     },
     {
       "state": "ME",
@@ -145,7 +156,8 @@
       "state": "MI",
       "facilities": 530,
       "retrieved": "2026-11-25",
-      "sha256": "7093e6ea3ca2e71c311ab1f73efe785b25c479559f278e1c6029efa52a309648"
+      "sha256": "6b950c8fcf5ba7a77775b8706b9d20a65d7b9f3dc61c527cc2906f88ccbde176",
+      "enriched_facilities": 281
     },
     {
       "state": "MN",
@@ -157,7 +169,8 @@
       "state": "MO",
       "facilities": 385,
       "retrieved": "2026-11-25",
-      "sha256": "5524ab33fd5adcefcc38c72582aca75075cbd4fa6ac63c6a239739203d01f1cc"
+      "sha256": "0f8957ea8adf9043843ec616f110e8f71ce181d4628bd34a4678ef3aded5935d",
+      "enriched_facilities": 22
     },
     {
       "state": "MP",
@@ -175,19 +188,22 @@
       "state": "MT",
       "facilities": 95,
       "retrieved": "2026-11-25",
-      "sha256": "b290b72021a2df8edefe0c879ea1d1ac65a9bee3cc8f8b0a2e4cd1381a1aeed9"
+      "sha256": "e70793423a74508bfdec7eed24af22375f228c6d89913b37a1c4f6211b192c17",
+      "enriched_facilities": 1
     },
     {
       "state": "NC",
       "facilities": 553,
       "retrieved": "2026-11-25",
-      "sha256": "945a90dcd7f2e8c7aebb646c529630d4be1fec8ed598a4dce98a4345032f150e"
+      "sha256": "2b337bb8f1b854d4aaacd1fd6104e6cf9791cf2fee19e39c619fd53b03e55ca7",
+      "enriched_facilities": 19
     },
     {
       "state": "ND",
       "facilities": 83,
       "retrieved": "2026-11-25",
-      "sha256": "2c7ad7adeafe1cb39fad02aec7c19725d5df85aa7034b5542fff24f6aaad919e"
+      "sha256": "c6e44ced9251f9a2e7f63a8d7727b8e6cc58f91519c2f841333306890583fd94",
+      "enriched_facilities": 3
     },
     {
       "state": "NE",
@@ -205,13 +221,15 @@
       "state": "NJ",
       "facilities": 520,
       "retrieved": "2026-11-25",
-      "sha256": "43df9dab3006c534e97beaf24ce58634b92dbcef87bbe79926bf2c128808d995"
+      "sha256": "a0579c1da556e30ca7703a7caa43610ae3f39c5ecde4f312f9c1614223d0bcc6",
+      "enriched_facilities": 34
     },
     {
       "state": "NM",
       "facilities": 147,
       "retrieved": "2026-11-25",
-      "sha256": "f578b92322b21ef4d7876365da9ec4dd912450d09cd128d131a49a53a0afcb18"
+      "sha256": "d932700856c6a4f068d97a2d33edd78fcbfffe25c08db727c9b46381a2940de0",
+      "enriched_facilities": 70
     },
     {
       "state": "NV",
@@ -230,7 +248,8 @@
       "state": "OH",
       "facilities": 903,
       "retrieved": "2026-11-25",
-      "sha256": "dcd335cfeb934bb75d5f4d6871b6674cd7d93347f780d85170a773c0432fd538"
+      "sha256": "d9121e82b629fa6e846f30a206348fb25acb9da9f4b7d7d01ff933525798e578",
+      "enriched_facilities": 36
     },
     {
       "state": "OK",
@@ -278,7 +297,8 @@
       "state": "TN",
       "facilities": 440,
       "retrieved": "2026-11-25",
-      "sha256": "d848ca196bfe81bcef2378df1ffcbc6d6e1ff3cd41b5f7b0edd76049187fc2f4"
+      "sha256": "714a174713c3300abcc268dd3da126df7a1a44b9b514d59c5467e6c138c520eb",
+      "enriched_facilities": 8
     },
     {
       "state": "TX",
@@ -290,13 +310,15 @@
       "state": "UT",
       "facilities": 422,
       "retrieved": "2026-11-25",
-      "sha256": "57e2595b281ab21ffa8dc4704d72f4f7f1144dfdd545c1b6da81306900aaae35"
+      "sha256": "ad9dabd29200e275267c1cf881a1a04a42f2d892dbf330654b77ea5beb1d797f",
+      "enriched_facilities": 12
     },
     {
       "state": "VA",
       "facilities": 407,
       "retrieved": "2026-11-25",
-      "sha256": "22e799f5390033aa02e6ae9e9d1732b8d9e2f430f1456be07470be5263f48041"
+      "sha256": "4943dd71905c41e904b58dc2542cdd661b944c7abb42b6ff8fe93deb78c05e76",
+      "enriched_facilities": 18
     },
     {
       "state": "VI",
@@ -320,7 +342,8 @@
       "state": "WI",
       "facilities": 372,
       "retrieved": "2026-11-25",
-      "sha256": "18ecd29a48ad071f85630799a0a979282d0419fdee31c48349126af75cea27c3"
+      "sha256": "b6c1ef5fce3fe64de72c32bd1f34f680785383c2b1bccc2a756c569252c3c717",
+      "enriched_facilities": 6
     },
     {
       "state": "WV",
