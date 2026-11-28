@@ -11,10 +11,11 @@
 }:
 pkgs.writeShellApplication {
   name = "ci";
-  runtimeInputs = [ rustToolchain pkgs.git ] ++ baseTools ++ tauriDeps;
+  runtimeInputs = [ rustToolchain pkgs.git pkgs.mold ] ++ baseTools ++ tauriDeps;
   text = ''
     export PKG_CONFIG_PATH="${pkgConfigPath}"
     export LD_LIBRARY_PATH="${ldLibraryPath}"
+    export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld=mold"
 
     echo "==> nixpkgs-fmt (--check)"
     nixpkgs-fmt --check flake.nix nix/

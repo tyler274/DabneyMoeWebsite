@@ -102,6 +102,7 @@
       in
       {
         devShells.default = shells.default;
+        devShells.ci = shells.ci;
         devShells.deploy = shells.deploy;
         devShells.android = shells.android;
         devShells.freebsd = shells.freebsd;

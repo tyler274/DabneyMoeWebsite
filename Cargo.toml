@@ -81,26 +81,16 @@ opt-level = "z"
 lto = "thin"
 panic = "abort"
 
-# Faster incremental dependency builds during development.
+# Faster incremental workspace builds during development while keeping
+# third-party dependencies optimized via `[profile.dev.package."*"]`.
+# Skip DWARF debuginfo (`debug = 0`): the SSR crate pulls in huge Leptos
+# macro expansions whose `.debug_info` both slows dev/test compiles by 5x+
+# and exceeds rust-lld's 32-bit relocation range. Rust panics still report
+# file:line locations without DWARF.
 [profile.dev]
-opt-level = 1
-# Line tables only: the SSR link pulls in a huge static closure (Leptos → gloo →
-# js-sys/web-sys) whose combined `.debug_info` exceeds rust-lld's 32-bit relocation
-# range on 1.96+. Full DWARF is still the default for `--release` builds.
-debug = 1
-# Keep DWARF in sidecar `.dwo` files so dev binaries stay small and the linker
-# never has to pack a multi-gigabyte `.debug_info` section into the executable.
-split-debuginfo = "unpacked"
-# `opt-level > 0` enables thin-local LTO unless explicitly disabled. With
-# cargo-leptos rebuilding SSR + WASM targets, incremental reuse can leave stale
-# internalized symbols and break the native link (undefined hidden hashbrown /
-# ub_checks symbols under rust-lld on 1.96+).
+opt-level = 0
+debug = 0
 lto = "off"
 
 [profile.dev.package."*"]
 opt-level = 2
-
-# Shared between SSR and hydrate feature sets; disable incremental to avoid
-# cross-build artifact reuse in target/debug/deps.
-[profile.dev.package.ui]
-incremental = false
