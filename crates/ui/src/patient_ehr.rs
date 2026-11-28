@@ -27,6 +27,7 @@ use clinical_workspace::{
 };
 use leptos::prelude::*;
 
+use crate::dashboard_layout::PatientTextScale;
 use crate::i18n::{t, use_locale, Locale, Msg};
 
 const DEMO_TIMESTAMP: &str = "2026-11-26T04:30:00Z";
@@ -97,9 +98,14 @@ pub fn PatientEhrPortalsPanel(
     allergies_map: RwSignal<HashMap<String, Vec<AllergyEntry>>>,
     demo_states: RwSignal<HashMap<String, PatientDemoState>>,
     #[prop(optional)] reset_tick: Option<RwSignal<u32>>,
+    #[prop(optional)] simple_mode: Option<Signal<bool>>,
+    #[prop(optional)] text_scale: Option<Signal<PatientTextScale>>,
     on_records_updated: Callback<String>,
 ) -> impl IntoView {
     let locale = use_locale();
+    let is_simple = move || simple_mode.is_some_and(|s| s.get());
+    let scale = move || text_scale.map(|s| s.get()).unwrap_or_default();
+    let show_portal_directory_in_simple = RwSignal::new(false);
     let patient_id = StoredValue::new(patient.id.clone());
     let patient_snapshot = StoredValue::new(patient);
 
@@ -840,7 +846,40 @@ pub fn PatientEhrPortalsPanel(
                 })}
             </section>
 
+            // In Easy Reading / Simple Mode, keep the 20-clinic EHR portal directory &
+            // technical SMART/FHIR sections neatly tucked behind a single big toggle so
+            // older adults aren't overwhelmed right after "Add What You Have".
+            {move || is_simple().then(|| view! {
+                <div class="rounded-2xl border border-cyan-400/30 bg-slate-900/70 p-4 flex flex-wrap items-center justify-between gap-3">
+                    <div class="space-y-0.5">
+                        <p class=move || format!("font-semibold text-white {}", scale().body_class())>
+                            "Want to connect an online doctor portal (Epic MyChart, VA, Medicare)?"
+                        </p>
+                        <p class=move || format!("text-slate-300 {}", scale().detail_class())>
+                            "Optional — open the portal directory below if you want to pull records directly from a hospital website."
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        aria-expanded=move || show_portal_directory_in_simple.get().to_string()
+                        on:click=move |_| show_portal_directory_in_simple.update(|v| *v = !*v)
+                        class=move || format!(
+                            "{} rounded-full border border-cyan-400/50 bg-cyan-500/15 px-4 py-2 font-semibold text-cyan-100 transition hover:bg-cyan-500/25 {}",
+                            scale().tap_target_class(),
+                            scale().detail_class()
+                        )
+                    >
+                        {move || if show_portal_directory_in_simple.get() {
+                            "Hide Online Doctor Portals ▲"
+                        } else {
+                            "Show Online Doctor Portals (20 Clinics) ▼"
+                        }}
+                    </button>
+                </div>
+            })}
+
             // Top explanation & read-only guarantee
+            <div class=move || if is_simple() && !show_portal_directory_in_simple.get() { "hidden" } else { "space-y-6" }>
             <section class="rounded-2xl border border-cyan-400/25 bg-slate-900/60 p-5 space-y-3">
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div>
@@ -1468,6 +1507,7 @@ pub fn PatientEhrPortalsPanel(
                     </form>
                 </section>
             </div>
+            </div>
         </div>
     }
 }
@@ -1487,9 +1527,14 @@ pub fn PortablePassportSection(
     audience: RwSignal<PassportAudience>,
     emergency_note: RwSignal<String>,
     #[prop(optional)] reset_tick: Option<RwSignal<u32>>,
+    #[prop(optional)] simple_mode: Option<Signal<bool>>,
+    #[prop(optional)] text_scale: Option<Signal<PatientTextScale>>,
     on_restore_passport: Callback<HealthPassport>,
 ) -> impl IntoView {
     let locale = use_locale();
+    let is_simple = move || simple_mode.is_some_and(|s| s.get());
+    let scale = move || text_scale.map(|s| s.get()).unwrap_or_default();
+    let show_all_presets = RwSignal::new(false);
     let patient_sv = StoredValue::new(patient);
     let state_sv = StoredValue::new(state);
     let allergies_sv = StoredValue::new(allergies);
@@ -1661,28 +1706,67 @@ pub fn PortablePassportSection(
             </div>
 
             // Step 1: Visit-Tailored Recipient Preset Selector
-            <div class="space-y-2">
-                <p class="text-[11px] font-semibold uppercase tracking-wider text-cyan-200">
-                    {move || t(locale.get(), Msg::PassportWhoSeeing)}
-                </p>
-                <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <div class="space-y-2.5">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <p class=move || format!("font-semibold uppercase tracking-wider text-cyan-200 {}", scale().detail_class())>
+                        {move || t(locale.get(), Msg::PassportWhoSeeing)}
+                    </p>
+                    {move || is_simple().then(|| view! {
+                        <button
+                            type="button"
+                            on:click=move |_| show_all_presets.update(|v| *v = !*v)
+                            class="min-h-[38px] rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs font-medium text-slate-200 hover:bg-white/10"
+                        >
+                            {move || if show_all_presets.get() {
+                                "Show 4 main visit types"
+                            } else {
+                                "More visit types (Therapist, Family, Backup) ▾"
+                            }}
+                        </button>
+                    })}
+                </div>
+                <div class=move || if is_simple() {
+                    "grid gap-3 sm:grid-cols-2"
+                } else {
+                    "grid gap-2 sm:grid-cols-2 lg:grid-cols-4"
+                }>
                     {PassportAudience::all()
                         .iter()
                         .copied()
                         .map(|preset| {
+                            let is_primary_preset = matches!(
+                                preset,
+                                PassportAudience::NewPrimaryCare
+                                    | PassportAudience::DoctorOrSpecialist
+                                    | PassportAudience::Psychiatrist
+                                    | PassportAudience::EmergencyCard
+                            );
                             view! {
                                 <button
                                     type="button"
                                     aria-pressed=move || (audience.get() == preset).to_string()
                                     on:click=move |_| audience.set(preset)
-                                    class=move || if audience.get() == preset {
-                                        "rounded-xl border border-cyan-400/60 bg-cyan-500/15 p-3 text-start transition"
-                                    } else {
-                                        "rounded-xl border border-white/10 bg-slate-950/60 p-3 text-start transition hover:border-white/25"
+                                    class=move || {
+                                        let hidden_cls = if is_simple()
+                                            && !show_all_presets.get()
+                                            && !is_primary_preset
+                                            && audience.get() != preset
+                                        {
+                                            "hidden "
+                                        } else {
+                                            ""
+                                        };
+                                        let pad_cls = if is_simple() { "p-4" } else { "p-3" };
+                                        let tap_cls = scale().tap_target_class();
+                                        if audience.get() == preset {
+                                            format!("{hidden_cls}{tap_cls} rounded-xl border-2 border-cyan-400/70 bg-cyan-500/15 {pad_cls} text-start transition")
+                                        } else {
+                                            format!("{hidden_cls}{tap_cls} rounded-xl border border-white/15 bg-slate-950/60 {pad_cls} text-start transition hover:border-white/30")
+                                        }
                                     }
                                 >
-                                    <p class="text-xs font-semibold text-white">{preset.short_label()}</p>
-                                    <p class="mt-1 text-[11px] leading-snug text-slate-300">
+                                    <p class=move || format!("font-semibold text-white {}", scale().body_class())>{preset.short_label()}</p>
+                                    <p class=move || format!("mt-1 text-slate-300 {}", scale().detail_class())>
                                         {preset.description()}
                                     </p>
                                 </button>

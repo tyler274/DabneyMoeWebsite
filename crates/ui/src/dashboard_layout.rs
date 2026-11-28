@@ -280,8 +280,82 @@ impl PatientStartTab {
     }
 }
 
+/// Readable text & tap-target scale for the patient companion (`/clinical/patient`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PatientTextScale {
+    #[default]
+    Standard,
+    Large,
+    ExtraLarge,
+}
+
+impl PatientTextScale {
+    pub const ALL: &'static [Self] = &[Self::Standard, Self::Large, Self::ExtraLarge];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Standard => "Standard text",
+            Self::Large => "Large text",
+            Self::ExtraLarge => "Extra-large text",
+        }
+    }
+
+    pub const fn short_chip(self) -> &'static str {
+        match self {
+            Self::Standard => "A",
+            Self::Large => "A+",
+            Self::ExtraLarge => "A++",
+        }
+    }
+
+    pub const fn label_for(self, locale: Locale) -> &'static str {
+        match self {
+            Self::Standard => t(locale, Msg::LayoutTextStandard),
+            Self::Large => t(locale, Msg::LayoutTextLarge),
+            Self::ExtraLarge => t(locale, Msg::LayoutTextExtraLarge),
+        }
+    }
+
+    /// Readable body typography class applied to primary patient cards.
+    pub const fn body_class(self) -> &'static str {
+        match self {
+            Self::Standard => "text-sm leading-relaxed",
+            Self::Large => "text-base leading-relaxed",
+            Self::ExtraLarge => "text-lg leading-relaxed",
+        }
+    }
+
+    /// Secondary helper typography class (never drops below readable sizes in Large/XL).
+    pub const fn detail_class(self) -> &'static str {
+        match self {
+            Self::Standard => "text-xs leading-relaxed",
+            Self::Large => "text-sm leading-relaxed",
+            Self::ExtraLarge => "text-base leading-relaxed",
+        }
+    }
+
+    /// Card section heading class.
+    pub const fn heading_class(self) -> &'static str {
+        match self {
+            Self::Standard => "text-lg font-semibold text-white",
+            Self::Large => "text-xl font-bold text-white",
+            Self::ExtraLarge => "text-2xl font-bold text-white",
+        }
+    }
+
+    /// Accessible minimum tap target height class for buttons & tabs.
+    pub const fn tap_target_class(self) -> &'static str {
+        match self {
+            Self::Standard => "min-h-[44px]",
+            Self::Large => "min-h-[52px]",
+            Self::ExtraLarge => "min-h-[58px]",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PatientLayoutPreset {
+    EasyReading,
     #[default]
     CalmCompanion,
     RecordsFirstCompact,
@@ -290,6 +364,7 @@ pub enum PatientLayoutPreset {
 
 impl PatientLayoutPreset {
     pub const ALL: &'static [Self] = &[
+        Self::EasyReading,
         Self::CalmCompanion,
         Self::RecordsFirstCompact,
         Self::VisitPrepFocus,
@@ -297,6 +372,7 @@ impl PatientLayoutPreset {
 
     pub const fn label(self) -> &'static str {
         match self {
+            Self::EasyReading => "Simple & Large Text",
             Self::CalmCompanion => "Calm Companion",
             Self::RecordsFirstCompact => "Records-First Compact",
             Self::VisitPrepFocus => "Visit Prep Focus",
@@ -305,6 +381,7 @@ impl PatientLayoutPreset {
 
     pub const fn label_for(self, locale: Locale) -> &'static str {
         match self {
+            Self::EasyReading => t(locale, Msg::LayoutPresetEasyReading),
             Self::CalmCompanion => t(locale, Msg::LayoutPresetCalmCompanion),
             Self::RecordsFirstCompact => t(locale, Msg::LayoutPresetRecordsFirstCompact),
             Self::VisitPrepFocus => t(locale, Msg::LayoutPresetVisitPrepFocus),
@@ -313,11 +390,14 @@ impl PatientLayoutPreset {
 
     pub const fn description(self) -> &'static str {
         match self {
+            Self::EasyReading => {
+                "Elder-friendly large text, extra spacing, bigger buttons, and technical clutter tucked out of the way."
+            }
             Self::CalmCompanion => {
                 "Balanced layout starting on Your Health with plain-language Q&A right under your summary."
             }
             Self::RecordsFirstCompact => {
-                "Compact density putting your health records directly after your summary above Q&A."
+                "Power-user compact density putting your health records directly after your summary above Q&A."
             }
             Self::VisitPrepFocus => {
                 "Spacious layout opening straight to For My Doctor so you can review what you'll share."
@@ -327,29 +407,61 @@ impl PatientLayoutPreset {
 
     pub fn build(self) -> PatientLayoutPrefs {
         match self {
+            Self::EasyReading => PatientLayoutPrefs {
+                preset: Some(Self::EasyReading),
+                density: LayoutDensity::Spacious,
+                text_scale: PatientTextScale::Large,
+                simple_mode: true,
+                order: PatientSectionOrder::RecordsFirst,
+                start_tab: PatientStartTab::You,
+                show_meds_and_conditions: true,
+                show_ask_section: true,
+                show_records_section: true,
+                show_private_notes: true,
+                show_technical_chrome: false,
+                show_jump_bar: false,
+            },
             Self::CalmCompanion => PatientLayoutPrefs {
                 preset: Some(Self::CalmCompanion),
                 density: LayoutDensity::Balanced,
+                text_scale: PatientTextScale::Standard,
+                simple_mode: false,
                 order: PatientSectionOrder::AskFirst,
                 start_tab: PatientStartTab::You,
+                show_meds_and_conditions: true,
                 show_ask_section: true,
+                show_records_section: true,
                 show_private_notes: true,
+                show_technical_chrome: true,
+                show_jump_bar: true,
             },
             Self::RecordsFirstCompact => PatientLayoutPrefs {
                 preset: Some(Self::RecordsFirstCompact),
                 density: LayoutDensity::Compact,
+                text_scale: PatientTextScale::Standard,
+                simple_mode: false,
                 order: PatientSectionOrder::RecordsFirst,
                 start_tab: PatientStartTab::You,
+                show_meds_and_conditions: true,
                 show_ask_section: true,
+                show_records_section: true,
                 show_private_notes: true,
+                show_technical_chrome: true,
+                show_jump_bar: true,
             },
             Self::VisitPrepFocus => PatientLayoutPrefs {
                 preset: Some(Self::VisitPrepFocus),
                 density: LayoutDensity::Spacious,
+                text_scale: PatientTextScale::Standard,
+                simple_mode: false,
                 order: PatientSectionOrder::RecordsFirst,
                 start_tab: PatientStartTab::Shared,
+                show_meds_and_conditions: true,
                 show_ask_section: true,
+                show_records_section: true,
                 show_private_notes: true,
+                show_technical_chrome: true,
+                show_jump_bar: true,
             },
         }
     }
@@ -360,10 +472,16 @@ impl PatientLayoutPreset {
 pub struct PatientLayoutPrefs {
     pub preset: Option<PatientLayoutPreset>,
     pub density: LayoutDensity,
+    pub text_scale: PatientTextScale,
+    pub simple_mode: bool,
     pub order: PatientSectionOrder,
     pub start_tab: PatientStartTab,
+    pub show_meds_and_conditions: bool,
     pub show_ask_section: bool,
+    pub show_records_section: bool,
     pub show_private_notes: bool,
+    pub show_technical_chrome: bool,
+    pub show_jump_bar: bool,
 }
 
 impl Default for PatientLayoutPrefs {
@@ -963,7 +1081,7 @@ pub fn PatientLayoutCustomizer(
                     </div>
                 </div>
 
-                <div class="grid gap-3 md:grid-cols-3">
+                <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
                     {PatientLayoutPreset::ALL
                         .iter()
                         .copied()
@@ -1002,7 +1120,44 @@ pub fn PatientLayoutCustomizer(
                         .collect_view()}
                 </div>
 
-                <div class="grid gap-4 border-t border-white/10 pt-4 md:grid-cols-3 text-xs">
+                <div class="grid gap-4 border-t border-white/10 pt-4 md:grid-cols-2 lg:grid-cols-4 text-xs">
+                    <div class="space-y-2">
+                        <p class="font-semibold uppercase tracking-wider text-slate-400">
+                            {move || t(locale.get(), Msg::PatientComfortBarLabel)}
+                        </p>
+                        <div class="flex flex-wrap gap-1.5">
+                            {PatientTextScale::ALL
+                                .iter()
+                                .copied()
+                                .map(|scale| {
+                                    let active = move || prefs.get().text_scale == scale;
+                                    view! {
+                                        <button
+                                            type="button"
+                                            aria-pressed=move || active().to_string()
+                                            on:click=move |_| {
+                                                let mut next = prefs.get();
+                                                next.preset = None;
+                                                next.text_scale = scale;
+                                                let loc = locale.get_untracked();
+                                                persist(next, scale.label_for(loc), false);
+                                            }
+                                            class=move || {
+                                                if active() {
+                                                    "min-h-[38px] rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 font-semibold text-emerald-100"
+                                                } else {
+                                                    "min-h-[38px] rounded-full border border-white/10 bg-slate-950/60 px-3 py-1 text-slate-300 hover:text-white"
+                                                }
+                                            }
+                                        >
+                                            {move || scale.label_for(locale.get())}
+                                        </button>
+                                    }
+                                })
+                                .collect_view()}
+                        </div>
+                    </div>
+
                     <div class="space-y-2">
                         <p class="font-semibold uppercase tracking-wider text-slate-400">"Density"</p>
                         <div class="flex flex-wrap gap-1.5">
@@ -1024,9 +1179,9 @@ pub fn PatientLayoutCustomizer(
                                             }
                                             class=move || {
                                                 if active() {
-                                                    "min-h-[34px] rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 font-semibold text-emerald-100"
+                                                    "min-h-[38px] rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 font-semibold text-emerald-100"
                                                 } else {
-                                                    "min-h-[34px] rounded-full border border-white/10 bg-slate-950/60 px-3 py-1 text-slate-300 hover:text-white"
+                                                    "min-h-[38px] rounded-full border border-white/10 bg-slate-950/60 px-3 py-1 text-slate-300 hover:text-white"
                                                 }
                                             }
                                         >
@@ -1058,9 +1213,9 @@ pub fn PatientLayoutCustomizer(
                                             }
                                             class=move || {
                                                 if active() {
-                                                    "min-h-[34px] rounded-full border border-cyan-400/60 bg-cyan-500/20 px-3 py-1 font-semibold text-cyan-100"
+                                                    "min-h-[38px] rounded-full border border-cyan-400/60 bg-cyan-500/20 px-3 py-1 font-semibold text-cyan-100"
                                                 } else {
-                                                    "min-h-[34px] rounded-full border border-white/10 bg-slate-950/60 px-3 py-1 text-slate-300 hover:text-white"
+                                                    "min-h-[38px] rounded-full border border-white/10 bg-slate-950/60 px-3 py-1 text-slate-300 hover:text-white"
                                                 }
                                             }
                                         >
@@ -1073,8 +1228,36 @@ pub fn PatientLayoutCustomizer(
                     </div>
 
                     <div class="space-y-2">
-                        <p class="font-semibold uppercase tracking-wider text-slate-400">"Visible Sections"</p>
+                        <p class="font-semibold uppercase tracking-wider text-slate-400">"Visible Sections & Tools"</p>
                         <div class="flex flex-wrap gap-2">
+                            <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/60 px-2.5 py-1.5 text-slate-200">
+                                <input
+                                    type="checkbox"
+                                    prop:checked=move || prefs.get().simple_mode
+                                    on:change=move |ev| {
+                                        let mut next = prefs.get();
+                                        next.preset = None;
+                                        next.simple_mode = event_target_checked(&ev);
+                                        let loc = locale.get_untracked();
+                                        persist(next, t(loc, Msg::LayoutCustomLabel), false);
+                                    }
+                                />
+                                "Simplified flow"
+                            </label>
+                            <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/60 px-2.5 py-1.5 text-slate-200">
+                                <input
+                                    type="checkbox"
+                                    prop:checked=move || prefs.get().show_meds_and_conditions
+                                    on:change=move |ev| {
+                                        let mut next = prefs.get();
+                                        next.preset = None;
+                                        next.show_meds_and_conditions = event_target_checked(&ev);
+                                        let loc = locale.get_untracked();
+                                        persist(next, t(loc, Msg::LayoutCustomLabel), false);
+                                    }
+                                />
+                                {move || t(locale.get(), Msg::PatientMedicationsHeading)}
+                            </label>
                             <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/60 px-2.5 py-1.5 text-slate-200">
                                 <input
                                     type="checkbox"
@@ -1092,6 +1275,20 @@ pub fn PatientLayoutCustomizer(
                             <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/60 px-2.5 py-1.5 text-slate-200">
                                 <input
                                     type="checkbox"
+                                    prop:checked=move || prefs.get().show_records_section
+                                    on:change=move |ev| {
+                                        let mut next = prefs.get();
+                                        next.preset = None;
+                                        next.show_records_section = event_target_checked(&ev);
+                                        let loc = locale.get_untracked();
+                                        persist(next, t(loc, Msg::LayoutCustomLabel), false);
+                                    }
+                                />
+                                {move || t(locale.get(), Msg::PatientJumpRecords)}
+                            </label>
+                            <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/60 px-2.5 py-1.5 text-slate-200">
+                                <input
+                                    type="checkbox"
                                     prop:checked=move || prefs.get().show_private_notes
                                     on:change=move |ev| {
                                         let mut next = prefs.get();
@@ -1102,6 +1299,34 @@ pub fn PatientLayoutCustomizer(
                                     }
                                 />
                                 {move || t(locale.get(), Msg::PatientJumpNotes)}
+                            </label>
+                            <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/60 px-2.5 py-1.5 text-slate-200">
+                                <input
+                                    type="checkbox"
+                                    prop:checked=move || prefs.get().show_technical_chrome
+                                    on:change=move |ev| {
+                                        let mut next = prefs.get();
+                                        next.preset = None;
+                                        next.show_technical_chrome = event_target_checked(&ev);
+                                        let loc = locale.get_untracked();
+                                        persist(next, t(loc, Msg::LayoutCustomLabel), false);
+                                    }
+                                />
+                                "Technical & demo tools"
+                            </label>
+                            <label class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/60 px-2.5 py-1.5 text-slate-200">
+                                <input
+                                    type="checkbox"
+                                    prop:checked=move || prefs.get().show_jump_bar
+                                    on:change=move |ev| {
+                                        let mut next = prefs.get();
+                                        next.preset = None;
+                                        next.show_jump_bar = event_target_checked(&ev);
+                                        let loc = locale.get_untracked();
+                                        persist(next, t(loc, Msg::LayoutCustomLabel), false);
+                                    }
+                                />
+                                "Quick-jump bar"
                             </label>
                         </div>
                     </div>
@@ -1440,6 +1665,20 @@ mod tests {
         for p in PatientLayoutPreset::ALL {
             assert_eq!(p.label_for(Locale::En), p.label());
         }
+        for s in PatientTextScale::ALL {
+            assert_eq!(s.label_for(Locale::En), s.label());
+            assert_ne!(s.label_for(Locale::Es), s.label());
+        }
+        // Backward-compatibility check: legacy PatientLayoutPrefs JSON without newer fields
+        // deserializes cleanly with safe defaults.
+        let legacy_json = r#"{"preset":"CalmCompanion","density":"Balanced","order":"AskFirst","start_tab":"You","show_ask_section":true,"show_private_notes":true}"#;
+        let legacy: PatientLayoutPrefs =
+            serde_json::from_str(legacy_json).expect("legacy patient prefs");
+        assert_eq!(legacy.text_scale, PatientTextScale::Standard);
+        assert!(!legacy.simple_mode);
+        assert!(legacy.show_meds_and_conditions);
+        assert!(legacy.show_records_section);
+        assert!(legacy.show_technical_chrome);
         for p in MentalHealthLayoutPreset::ALL {
             assert_eq!(p.label_for(Locale::En), p.label());
         }

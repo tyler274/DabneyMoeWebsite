@@ -25,10 +25,10 @@ use crate::chart_citations::{
     record_anchor_id, scroll_to_record_anchor, CitationAccent, CitationBadgeLink,
 };
 #[cfg(any(feature = "csr", feature = "hydrate"))]
-use crate::dashboard_layout::{load_layout_prefs, STORAGE_KEY_PATIENT_LAYOUT};
+use crate::dashboard_layout::{load_layout_prefs, save_layout_prefs, STORAGE_KEY_PATIENT_LAYOUT};
 use crate::dashboard_layout::{
     LayoutDensity, PatientLayoutCustomizer, PatientLayoutPrefs, PatientLayoutPreset,
-    PatientSectionOrder, PatientStartTab,
+    PatientSectionOrder, PatientStartTab, PatientTextScale,
 };
 use crate::health_bridge::LocalLlmStatusUi;
 #[cfg(any(feature = "csr", feature = "hydrate"))]
@@ -726,6 +726,17 @@ pub fn PatientDemoPage() -> impl IntoView {
         new_visit_question.set(String::new());
     };
 
+    let apply_quick_layout = move |next: PatientLayoutPrefs, label: &str| {
+        #[cfg(any(feature = "csr", feature = "hydrate"))]
+        save_layout_prefs(STORAGE_KEY_PATIENT_LAYOUT, &next);
+        layout_prefs.set(next);
+        let loc = locale.get_untracked();
+        layout_notice.set(Some(format!(
+            "{}: {label}",
+            t(loc, Msg::LayoutButtonPrefix)
+        )));
+    };
+
     let open_web_demo = move |ev: leptos::ev::MouseEvent| {
         #[cfg(any(feature = "csr", feature = "hydrate"))]
         {
@@ -797,115 +808,111 @@ pub fn PatientDemoPage() -> impl IntoView {
                 })}
             </header>
 
-            // Prominent Zero-PHI Synthetic Demo Disclaimer
+            // 1-Tap Reading Comfort Bar (Elder-Friendly Simple & Large Text + Power-User Layout)
             <section
-                class="rounded-2xl border border-emerald-400/35 bg-emerald-500/10 px-5 py-4"
-                role="note"
-                aria-label="Zero PHI synthetic demo notice"
+                data-patient-comfort-bar="true"
+                role="region"
+                aria-label="Reading comfort and layout controls"
+                class="rounded-2xl border border-cyan-400/30 bg-slate-900/80 px-4 py-3 flex flex-wrap items-center justify-between gap-3"
             >
-                <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div class="space-y-1">
-                        <p class="text-xs font-semibold uppercase tracking-widest text-emerald-300">
-                            {move || t(locale.get(), Msg::SyntheticDemoNotice)}
-                        </p>
-                        <p class="text-xs leading-relaxed text-emerald-50/90 sm:text-sm">
-                            "Every name, lab value, medication, and message here is fictional sample data running "
-                            "locally on your device. Nothing is uploaded, stored on servers, or shared with "
-                            "third parties. Educational software demonstration only—not medical advice or a diagnostic tool."
-                        </p>
-                    </div>
-                    <span class="shrink-0 self-start rounded-full border border-emerald-400/40 bg-slate-950/70 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-emerald-300 sm:self-center">
-                        {move || t(locale.get(), Msg::OnDeviceOnlyBadge)}
+                <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-xs font-semibold uppercase tracking-wider text-cyan-200 pe-1">
+                        {move || t(locale.get(), Msg::PatientComfortBarLabel)}
                     </span>
+                    <button
+                        type="button"
+                        aria-pressed=move || layout_prefs.get().simple_mode.to_string()
+                        on:click=move |_| {
+                            let loc = locale.get_untracked();
+                            apply_quick_layout(
+                                PatientLayoutPreset::EasyReading.build(),
+                                PatientLayoutPreset::EasyReading.label_for(loc),
+                            );
+                        }
+                        class=move || if layout_prefs.get().simple_mode {
+                            "min-h-[42px] rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-bold text-slate-950 shadow-sm transition"
+                        } else {
+                            "min-h-[42px] rounded-full border border-emerald-400/45 bg-emerald-500/10 px-4 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/20"
+                        }
+                    >
+                        {move || t(locale.get(), Msg::LayoutPresetEasyReading)}
+                    </button>
+                    <button
+                        type="button"
+                        aria-pressed=move || (!layout_prefs.get().simple_mode).to_string()
+                        on:click=move |_| {
+                            let loc = locale.get_untracked();
+                            apply_quick_layout(
+                                PatientLayoutPreset::CalmCompanion.build(),
+                                PatientLayoutPreset::CalmCompanion.label_for(loc),
+                            );
+                        }
+                        class=move || if !layout_prefs.get().simple_mode {
+                            "min-h-[42px] rounded-full border border-cyan-400/50 bg-cyan-500/15 px-3.5 py-1.5 text-xs font-semibold text-cyan-100 transition"
+                        } else {
+                            "min-h-[42px] rounded-full border border-white/15 bg-slate-950/60 px-3.5 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-white/10"
+                        }
+                    >
+                        {move || t(locale.get(), Msg::LayoutPresetPowerUser)}
+                    </button>
                 </div>
-            </section>
 
-            // Suite navigation across all 3 interactive demos + overview
-            <ClinicalSuiteSwitcher />
-
-            // Sample Fictional Patient Switcher
-            <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                    <h2 class="text-xs font-semibold uppercase tracking-widest text-slate-300">
-                        {move || t(locale.get(), Msg::PatientChooseProfile)}
-                    </h2>
-                    <div class="flex flex-wrap items-center gap-2">
-                        <button
-                            type="button"
-                            aria-expanded=move || layout_open.get().to_string()
-                            on:click=move |_| layout_open.update(|v| *v = !*v)
-                            class=move || {
-                                if layout_open.get() {
-                                    "min-h-[34px] rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 text-[11px] font-semibold text-emerald-100 transition"
-                                } else {
-                                    "min-h-[34px] rounded-full border border-white/15 bg-slate-950/60 px-3 py-1 text-[11px] font-medium text-slate-200 transition hover:border-emerald-400/40 hover:text-white"
-                                }
-                            }
-                        >
-                            {move || {
-                                let loc = locale.get();
-                                let preset_label = match layout_prefs.get().preset {
-                                    Some(PatientLayoutPreset::CalmCompanion) => {
-                                        t(loc, Msg::LayoutPresetCalmCompanion)
-                                    }
-                                    Some(PatientLayoutPreset::RecordsFirstCompact) => {
-                                        t(loc, Msg::LayoutPresetRecordsFirstCompact)
-                                    }
-                                    Some(PatientLayoutPreset::VisitPrepFocus) => {
-                                        t(loc, Msg::LayoutPresetVisitPrepFocus)
-                                    }
-                                    None => t(loc, Msg::LayoutCustomLabel),
-                                };
-                                format!("{}: {} ▾", t(loc, Msg::LayoutButtonPrefix), preset_label)
-                            }}
-                        </button>
-                        <button
-                            type="button"
-                            on:click=reset_active_demo
-                            class="min-h-[34px] rounded-full border border-white/15 px-3 py-1 text-[11px] font-medium text-slate-300 transition hover:border-white/30 hover:text-white"
-                        >
-                            {move || t(locale.get(), Msg::PatientResetSample)}
-                        </button>
-                    </div>
-                </div>
-                <div class="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
-                    {patient_order.with_value(|ids| {
-                        ids.iter()
-                            .filter_map(|pid| {
-                                baseline_charts.with_value(|list| {
-                                    list.iter().find(|p| p.id == *pid).cloned()
-                                })
-                            })
-                            .map(|chart| {
-                                let pid_click = chart.id.clone();
-                                let pid_aria = chart.id.clone();
-                                let pid_class = chart.id.clone();
-                                let name = chart.display_name.clone();
-                                let focus = chart.primary_focus.clone();
-                                let mrn = chart.mrn.clone();
+                <div class="flex flex-wrap items-center gap-2">
+                    <div class="inline-flex items-center gap-1 rounded-full border border-white/15 bg-slate-950/70 p-1" role="group" aria-label="Text size">
+                        {PatientTextScale::ALL
+                            .iter()
+                            .copied()
+                            .map(|scale| {
+                                let is_active = move || layout_prefs.get().text_scale == scale;
                                 view! {
                                     <button
                                         type="button"
-                                        aria-pressed=move || selected_id.get() == pid_aria
-                                        on:click=move |_| select_profile(pid_click.clone())
-                                        class=move || {
-                                            if selected_id.get() == pid_class {
-                                                "min-h-[44px] w-full rounded-xl border border-emerald-400/60 bg-emerald-500/15 p-3 text-start transition"
-                                            } else {
-                                                "min-h-[44px] w-full rounded-xl border border-white/10 bg-slate-950/60 p-3 text-start transition hover:border-white/25 hover:bg-white/[0.04]"
-                                            }
+                                        aria-pressed=move || is_active().to_string()
+                                        aria-label=move || scale.label_for(locale.get())
+                                        on:click=move |_| {
+                                            let mut next = layout_prefs.get_untracked();
+                                            next.preset = None;
+                                            next.text_scale = scale;
+                                            let loc = locale.get_untracked();
+                                            apply_quick_layout(next, scale.label_for(loc));
+                                        }
+                                        class=move || if is_active() {
+                                            "min-h-[34px] min-w-[38px] rounded-full bg-cyan-400 px-2.5 text-xs font-bold text-slate-950"
+                                        } else {
+                                            "min-h-[34px] min-w-[38px] rounded-full px-2.5 text-xs font-semibold text-slate-200 hover:bg-white/10"
                                         }
                                     >
-                                        <div class="flex items-center justify-between gap-2">
-                                            <span class="text-sm font-semibold text-white">{name}</span>
-                                            <span class="font-mono text-[10px] text-emerald-300">{mrn}</span>
-                                        </div>
-                                        <p class="mt-1 line-clamp-1 text-xs text-slate-300">{focus}</p>
+                                        {scale.short_chip()}
                                     </button>
                                 }
                             })
-                            .collect_view()
-                    })}
+                            .collect_view()}
+                    </div>
+                    <button
+                        type="button"
+                        aria-expanded=move || layout_open.get().to_string()
+                        on:click=move |_| layout_open.update(|v| *v = !*v)
+                        class=move || {
+                            if layout_open.get() {
+                                "min-h-[40px] rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3.5 py-1.5 text-xs font-semibold text-emerald-100 transition"
+                            } else {
+                                "min-h-[40px] rounded-full border border-white/15 bg-slate-950/60 px-3.5 py-1.5 text-xs font-medium text-slate-200 transition hover:border-emerald-400/40 hover:text-white"
+                            }
+                        }
+                    >
+                        {move || {
+                            let loc = locale.get();
+                            let preset_label = layout_prefs.get().active_label_for(loc);
+                            format!("{}: {} ▾", t(loc, Msg::LayoutButtonPrefix), preset_label)
+                        }}
+                    </button>
+                    <button
+                        type="button"
+                        on:click=reset_active_demo
+                        class="min-h-[40px] rounded-full border border-white/15 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-white/30 hover:text-white"
+                    >
+                        {move || t(locale.get(), Msg::PatientResetSample)}
+                    </button>
                 </div>
             </section>
 
@@ -920,6 +927,160 @@ pub fn PatientDemoPage() -> impl IntoView {
                     });
                 })
             />
+
+            // Prominent Zero-PHI Synthetic Demo Disclaimer (compact 1-line pill in Simple Mode)
+            {move || if layout_prefs.get().simple_mode {
+                view! {
+                    <section
+                        class="rounded-2xl border border-emerald-400/35 bg-emerald-500/10 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2"
+                        role="note"
+                        aria-label="Zero PHI synthetic demo notice"
+                    >
+                        <p class=move || format!("font-semibold text-emerald-200 {}", layout_prefs.get().text_scale.detail_class())>
+                            {move || t(locale.get(), Msg::SyntheticDemoNotice)}
+                        </p>
+                        <span class="rounded-full border border-emerald-400/40 bg-slate-950/70 px-3 py-0.5 text-xs font-semibold text-emerald-300">
+                            {move || t(locale.get(), Msg::OnDeviceOnlyBadge)}
+                        </span>
+                    </section>
+                }
+                .into_any()
+            } else {
+                view! {
+                    <section
+                        class="rounded-2xl border border-emerald-400/35 bg-emerald-500/10 px-5 py-4"
+                        role="note"
+                        aria-label="Zero PHI synthetic demo notice"
+                    >
+                        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div class="space-y-1">
+                                <p class="text-xs font-semibold uppercase tracking-widest text-emerald-300">
+                                    {move || t(locale.get(), Msg::SyntheticDemoNotice)}
+                                </p>
+                                <p class="text-xs leading-relaxed text-emerald-50/90 sm:text-sm">
+                                    "Every name, lab value, medication, and message here is fictional sample data running "
+                                    "locally on your device. Nothing is uploaded, stored on servers, or shared with "
+                                    "third parties. Educational software demonstration only—not medical advice or a diagnostic tool."
+                                </p>
+                            </div>
+                            <span class="shrink-0 self-start rounded-full border border-emerald-400/40 bg-slate-950/70 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-emerald-300 sm:self-center">
+                                {move || t(locale.get(), Msg::OnDeviceOnlyBadge)}
+                            </span>
+                        </div>
+                    </section>
+                }
+                .into_any()
+            }}
+
+            // Suite navigation across all 3 interactive demos + overview (hidden in Simple Mode to reduce clutter)
+            <div class=move || if layout_prefs.get().show_technical_chrome { "" } else { "hidden" }>
+                <ClinicalSuiteSwitcher />
+            </div>
+
+            // Sample Fictional Patient Switcher (compact collapsible bar in Simple Mode)
+            {move || if layout_prefs.get().simple_mode {
+                let active_name = charts.with(|map| {
+                    map.get(&selected_id.get())
+                        .map(|p| p.display_name.clone())
+                        .unwrap_or_else(|| "Sample Person".into())
+                });
+                view! {
+                    <details class="rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-3">
+                        <summary class="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 text-base font-semibold text-white">
+                            <span>{format!("Viewing: {active_name}")}</span>
+                            <span class="rounded-full border border-white/20 bg-white/5 px-3 py-1 text-xs font-medium text-cyan-200">
+                                {move || format!("{} ▾", t(locale.get(), Msg::PatientSwitchDemoPerson))}
+                            </span>
+                        </summary>
+                        <div class="mt-3 grid gap-2.5 sm:grid-cols-2">
+                            {patient_order.with_value(|ids| {
+                                ids.iter()
+                                    .filter_map(|pid| {
+                                        baseline_charts.with_value(|list| {
+                                            list.iter().find(|p| p.id == *pid).cloned()
+                                        })
+                                    })
+                                    .map(|chart| {
+                                        let pid_click = chart.id.clone();
+                                        let pid_aria = chart.id.clone();
+                                        let pid_class = chart.id.clone();
+                                        let name = chart.display_name.clone();
+                                        let focus = chart.primary_focus.clone();
+                                        view! {
+                                            <button
+                                                type="button"
+                                                aria-pressed=move || selected_id.get() == pid_aria
+                                                on:click=move |_| select_profile(pid_click.clone())
+                                                class=move || {
+                                                    if selected_id.get() == pid_class {
+                                                        "min-h-[54px] w-full rounded-xl border-2 border-emerald-400/70 bg-emerald-500/15 p-3.5 text-start transition"
+                                                    } else {
+                                                        "min-h-[54px] w-full rounded-xl border border-white/15 bg-slate-950/60 p-3.5 text-start transition hover:border-white/30"
+                                                    }
+                                                }
+                                            >
+                                                <span class="block text-base font-bold text-white">{name}</span>
+                                                <span class="mt-0.5 block text-sm text-slate-300">{focus}</span>
+                                            </button>
+                                        }
+                                    })
+                                    .collect_view()
+                            })}
+                        </div>
+                    </details>
+                }
+                .into_any()
+            } else {
+                view! {
+                    <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <h2 class="text-xs font-semibold uppercase tracking-widest text-slate-300">
+                                {move || t(locale.get(), Msg::PatientChooseProfile)}
+                            </h2>
+                        </div>
+                        <div class="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+                            {patient_order.with_value(|ids| {
+                                ids.iter()
+                                    .filter_map(|pid| {
+                                        baseline_charts.with_value(|list| {
+                                            list.iter().find(|p| p.id == *pid).cloned()
+                                        })
+                                    })
+                                    .map(|chart| {
+                                        let pid_click = chart.id.clone();
+                                        let pid_aria = chart.id.clone();
+                                        let pid_class = chart.id.clone();
+                                        let name = chart.display_name.clone();
+                                        let focus = chart.primary_focus.clone();
+                                        let mrn = chart.mrn.clone();
+                                        view! {
+                                            <button
+                                                type="button"
+                                                aria-pressed=move || selected_id.get() == pid_aria
+                                                on:click=move |_| select_profile(pid_click.clone())
+                                                class=move || {
+                                                    if selected_id.get() == pid_class {
+                                                        "min-h-[44px] w-full rounded-xl border border-emerald-400/60 bg-emerald-500/15 p-3 text-start transition"
+                                                    } else {
+                                                        "min-h-[44px] w-full rounded-xl border border-white/10 bg-slate-950/60 p-3 text-start transition hover:border-white/25 hover:bg-white/[0.04]"
+                                                    }
+                                                }
+                                            >
+                                                <div class="flex items-center justify-between gap-2">
+                                                    <span class="text-sm font-semibold text-white">{name}</span>
+                                                    <span class="font-mono text-[10px] text-emerald-300">{mrn}</span>
+                                                </div>
+                                                <p class="mt-1 line-clamp-1 text-xs text-slate-300">{focus}</p>
+                                            </button>
+                                        }
+                                    })
+                                    .collect_view()
+                            })}
+                        </div>
+                    </section>
+                }
+                .into_any()
+            }}
 
             // Patient Tab Bar ("Your Health", "Doctor Portals", "For My Doctor & Portable File", "Release of Info")
             // Kept outside chart/ROI data closures so mutating linked portals or ROI
@@ -938,126 +1099,229 @@ pub fn PatientDemoPage() -> impl IntoView {
                     </div>
                 })}
 
-                <div
-                    role="tablist"
-                    aria-label="Patient companion sections"
-                    class="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-slate-900/70 p-1.5 lg:grid-cols-4"
-                >
-                    <button
-                        id="patient-tab-you"
-                        type="button"
-                        role="tab"
-                        aria-controls="patient-panel-you"
-                        aria-selected=move || (active_tab.get() == PatientTab::You).to_string()
-                        on:click=move |_| active_tab.set(PatientTab::You)
-                        class=move || {
-                            if active_tab.get() == PatientTab::You {
-                                "min-h-[44px] rounded-xl bg-emerald-500 px-3.5 py-2.5 text-xs font-semibold text-slate-950 shadow-sm transition sm:text-sm"
-                            } else {
-                                "min-h-[44px] rounded-xl px-3.5 py-2.5 text-xs font-medium text-slate-300 transition hover:bg-white/5 hover:text-white sm:text-sm"
-                            }
-                        }
-                    >
-                        {move || t(locale.get(), Msg::PatientTabYou)}
-                    </button>
-                    <button
-                        id="patient-tab-portals"
-                        type="button"
-                        role="tab"
-                        aria-controls="patient-panel-portals"
-                        aria-selected=move || (active_tab.get() == PatientTab::Portals).to_string()
-                        on:click=move |_| active_tab.set(PatientTab::Portals)
-                        class=move || {
-                            if active_tab.get() == PatientTab::Portals {
-                                "min-h-[44px] rounded-xl bg-emerald-500 px-3.5 py-2.5 text-xs font-semibold text-slate-950 shadow-sm transition sm:text-sm"
-                            } else {
-                                "min-h-[44px] rounded-xl px-3.5 py-2.5 text-xs font-medium text-slate-300 transition hover:bg-white/5 hover:text-white sm:text-sm"
-                            }
-                        }
-                    >
-                        {move || {
-                            let id = selected_id.get();
-                            let connected_portal_count = linked_portals.with(|map| {
-                                map.get(&id)
-                                    .map(|list| list.iter().filter(|c| c.status.is_connected()).count())
-                                    .unwrap_or(0)
-                            });
-                            if connected_portal_count > 0 {
-                                format!("{} ({connected_portal_count})", t(locale.get(), Msg::PatientTabPortals))
-                            } else {
-                                t(locale.get(), Msg::PatientTabPortals).to_string()
-                            }
-                        }}
-                    </button>
-                    <button
-                        id="patient-tab-shared"
-                        type="button"
-                        role="tab"
-                        aria-controls="patient-panel-shared"
-                        aria-selected=move || (active_tab.get() == PatientTab::Shared).to_string()
-                        on:click=move |_| active_tab.set(PatientTab::Shared)
-                        class=move || {
-                            if active_tab.get() == PatientTab::Shared {
-                                "min-h-[44px] rounded-xl bg-emerald-500 px-3.5 py-2.5 text-xs font-semibold text-slate-950 shadow-sm transition sm:text-sm"
-                            } else {
-                                "min-h-[44px] rounded-xl px-3.5 py-2.5 text-xs font-medium text-slate-300 transition hover:bg-white/5 hover:text-white sm:text-sm"
-                            }
-                        }
-                    >
-                        {move || {
-                            let id = selected_id.get();
-                            let (selected_count, total_records) = charts.with(|cmap| {
-                                cmap.get(&id)
-                                    .map(|patient| {
-                                        let state = demo_states.with(|dmap| {
-                                            dmap.get(&patient.id)
-                                                .cloned()
-                                                .unwrap_or_else(|| default_patient_demo_state(patient))
-                                        });
-                                        let preview = build_doctor_share_preview(patient, &state);
-                                        (preview.shared_records.len(), patient.records.len())
-                                    })
-                                    .unwrap_or((0, 0))
-                            });
-                            format!("{} ({selected_count}/{total_records})", t(locale.get(), Msg::PatientTabDoctor))
-                        }}
-                    </button>
-                    <button
-                        id="patient-tab-roi"
-                        type="button"
-                        role="tab"
-                        aria-controls="patient-panel-roi"
-                        aria-selected=move || (active_tab.get() == PatientTab::Roi).to_string()
-                        on:click=move |_| active_tab.set(PatientTab::Roi)
-                        class=move || {
-                            if active_tab.get() == PatientTab::Roi {
-                                "min-h-[44px] rounded-xl bg-emerald-500 px-3.5 py-2.5 text-xs font-semibold text-slate-950 shadow-sm transition sm:text-sm"
-                            } else {
-                                "min-h-[44px] rounded-xl px-3.5 py-2.5 text-xs font-medium text-slate-300 transition hover:bg-white/5 hover:text-white sm:text-sm"
-                            }
-                        }
-                    >
-                        {move || {
-                            let id = selected_id.get();
-                            let roi_queued_count = roi_map.with(|map| {
-                                map.get(&id)
-                                    .map(|list| {
-                                        list.iter()
-                                            .filter(|r| {
-                                                matches!(
-                                                    r.status,
-                                                    RoiStatus::SignedReadyToSend { .. }
-                                                        | RoiStatus::Dispatched { .. }
-                                                )
+                {move || if layout_prefs.get().simple_mode {
+                    view! {
+                        <section class="space-y-3" aria-label="Main patient tasks">
+                            <p class=move || format!("font-bold text-white {}", layout_prefs.get().text_scale.heading_class())>
+                                {move || t(locale.get(), Msg::PatientTaskWhatToDo)}
+                            </p>
+                            <div
+                                role="tablist"
+                                aria-label="Patient companion sections"
+                                class="grid gap-3 md:grid-cols-3"
+                            >
+                                <button
+                                    id="patient-tab-you"
+                                    type="button"
+                                    role="tab"
+                                    aria-controls="patient-panel-you"
+                                    aria-selected=move || (active_tab.get() == PatientTab::You).to_string()
+                                    on:click=move |_| active_tab.set(PatientTab::You)
+                                    class=move || if active_tab.get() == PatientTab::You {
+                                        "min-h-[76px] rounded-2xl border-2 border-emerald-300 bg-emerald-500 p-4 text-start text-slate-950 shadow-md transition"
+                                    } else {
+                                        "min-h-[76px] rounded-2xl border border-white/15 bg-slate-900/80 p-4 text-start text-white transition hover:border-emerald-400/50"
+                                    }
+                                >
+                                    <span class="block text-base font-bold">"1. My Health & Medicines"</span>
+                                    <span class=move || if active_tab.get() == PatientTab::You { "mt-1 block text-sm text-slate-900" } else { "mt-1 block text-sm text-slate-300" }>
+                                        "See your summary, medicines, allergies, and records"
+                                    </span>
+                                </button>
+                                <button
+                                    id="patient-tab-shared"
+                                    type="button"
+                                    role="tab"
+                                    aria-controls="patient-panel-shared"
+                                    aria-selected=move || (active_tab.get() == PatientTab::Shared).to_string()
+                                    on:click=move |_| active_tab.set(PatientTab::Shared)
+                                    class=move || if active_tab.get() == PatientTab::Shared {
+                                        "min-h-[76px] rounded-2xl border-2 border-emerald-300 bg-emerald-500 p-4 text-start text-slate-950 shadow-md transition"
+                                    } else {
+                                        "min-h-[76px] rounded-2xl border border-white/15 bg-slate-900/80 p-4 text-start text-white transition hover:border-emerald-400/50"
+                                    }
+                                >
+                                    <span class="block text-base font-bold">"2. Bring to My Doctor"</span>
+                                    <span class=move || if active_tab.get() == PatientTab::Shared { "mt-1 block text-sm text-slate-900" } else { "mt-1 block text-sm text-slate-300" }>
+                                        "Show or print a simple 1-page sheet for your visit"
+                                    </span>
+                                </button>
+                                <button
+                                    id="patient-tab-portals"
+                                    type="button"
+                                    role="tab"
+                                    aria-controls="patient-panel-portals"
+                                    aria-selected=move || (active_tab.get() == PatientTab::Portals).to_string()
+                                    on:click=move |_| active_tab.set(PatientTab::Portals)
+                                    class=move || if active_tab.get() == PatientTab::Portals {
+                                        "min-h-[76px] rounded-2xl border-2 border-emerald-300 bg-emerald-500 p-4 text-start text-slate-950 shadow-md transition"
+                                    } else {
+                                        "min-h-[76px] rounded-2xl border border-white/15 bg-slate-900/80 p-4 text-start text-white transition hover:border-emerald-400/50"
+                                    }
+                                >
+                                    <span class="block text-base font-bold">"3. Add Papers or Portals"</span>
+                                    <span class=move || if active_tab.get() == PatientTab::Portals { "mt-1 block text-sm text-slate-900" } else { "mt-1 block text-sm text-slate-300" }>
+                                        "Add paper sheets, emails, medicines, or a portal"
+                                    </span>
+                                </button>
+                            </div>
+                            <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
+                                <button
+                                    id="patient-tab-roi"
+                                    type="button"
+                                    on:click=move |_| active_tab.set(PatientTab::Roi)
+                                    class=move || if active_tab.get() == PatientTab::Roi {
+                                        "min-h-[44px] rounded-full bg-emerald-500 px-4 py-2 text-sm font-bold text-slate-950"
+                                    } else {
+                                        "min-h-[44px] rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-medium text-cyan-200 hover:bg-white/10"
+                                    }
+                                >
+                                    "Need records from an old clinic? Request them here →"
+                                </button>
+                                <A
+                                    href="/mental-health?tab=recovery"
+                                    attr:class="inline-flex min-h-[44px] items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-200 hover:bg-emerald-500/20"
+                                >
+                                    <span>{move || t(locale.get(), Msg::PatientFindRecoveryLink)}</span>
+                                    <span class="inline-block rtl:rotate-180" aria-hidden="true">"→"</span>
+                                </A>
+                            </div>
+                        </section>
+                    }
+                    .into_any()
+                } else {
+                    view! {
+                        <div
+                            role="tablist"
+                            aria-label="Patient companion sections"
+                            class="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-slate-900/70 p-1.5 lg:grid-cols-4"
+                        >
+                            <button
+                                id="patient-tab-you"
+                                type="button"
+                                role="tab"
+                                aria-controls="patient-panel-you"
+                                aria-selected=move || (active_tab.get() == PatientTab::You).to_string()
+                                on:click=move |_| active_tab.set(PatientTab::You)
+                                class=move || {
+                                    let tap = layout_prefs.get().text_scale.tap_target_class();
+                                    let txt = layout_prefs.get().text_scale.body_class();
+                                    if active_tab.get() == PatientTab::You {
+                                        format!("{tap} rounded-xl bg-emerald-500 px-3.5 py-2.5 font-semibold text-slate-950 shadow-sm transition {txt}")
+                                    } else {
+                                        format!("{tap} rounded-xl px-3.5 py-2.5 font-medium text-slate-300 transition hover:bg-white/5 hover:text-white {txt}")
+                                    }
+                                }
+                            >
+                                {move || t(locale.get(), Msg::PatientTabYou)}
+                            </button>
+                            <button
+                                id="patient-tab-portals"
+                                type="button"
+                                role="tab"
+                                aria-controls="patient-panel-portals"
+                                aria-selected=move || (active_tab.get() == PatientTab::Portals).to_string()
+                                on:click=move |_| active_tab.set(PatientTab::Portals)
+                                class=move || {
+                                    let tap = layout_prefs.get().text_scale.tap_target_class();
+                                    let txt = layout_prefs.get().text_scale.body_class();
+                                    if active_tab.get() == PatientTab::Portals {
+                                        format!("{tap} rounded-xl bg-emerald-500 px-3.5 py-2.5 font-semibold text-slate-950 shadow-sm transition {txt}")
+                                    } else {
+                                        format!("{tap} rounded-xl px-3.5 py-2.5 font-medium text-slate-300 transition hover:bg-white/5 hover:text-white {txt}")
+                                    }
+                                }
+                            >
+                                {move || {
+                                    let id = selected_id.get();
+                                    let connected_portal_count = linked_portals.with(|map| {
+                                        map.get(&id)
+                                            .map(|list| list.iter().filter(|c| c.status.is_connected()).count())
+                                            .unwrap_or(0)
+                                    });
+                                    if connected_portal_count > 0 {
+                                        format!("{} ({connected_portal_count})", t(locale.get(), Msg::PatientTabPortals))
+                                    } else {
+                                        t(locale.get(), Msg::PatientTabPortals).to_string()
+                                    }
+                                }}
+                            </button>
+                            <button
+                                id="patient-tab-shared"
+                                type="button"
+                                role="tab"
+                                aria-controls="patient-panel-shared"
+                                aria-selected=move || (active_tab.get() == PatientTab::Shared).to_string()
+                                on:click=move |_| active_tab.set(PatientTab::Shared)
+                                class=move || {
+                                    let tap = layout_prefs.get().text_scale.tap_target_class();
+                                    let txt = layout_prefs.get().text_scale.body_class();
+                                    if active_tab.get() == PatientTab::Shared {
+                                        format!("{tap} rounded-xl bg-emerald-500 px-3.5 py-2.5 font-semibold text-slate-950 shadow-sm transition {txt}")
+                                    } else {
+                                        format!("{tap} rounded-xl px-3.5 py-2.5 font-medium text-slate-300 transition hover:bg-white/5 hover:text-white {txt}")
+                                    }
+                                }
+                            >
+                                {move || {
+                                    let id = selected_id.get();
+                                    let (selected_count, total_records) = charts.with(|cmap| {
+                                        cmap.get(&id)
+                                            .map(|patient| {
+                                                let state = demo_states.with(|dmap| {
+                                                    dmap.get(&patient.id)
+                                                        .cloned()
+                                                        .unwrap_or_else(|| default_patient_demo_state(patient))
+                                                });
+                                                let preview = build_doctor_share_preview(patient, &state);
+                                                (preview.shared_records.len(), patient.records.len())
                                             })
-                                            .count()
-                                    })
-                                    .unwrap_or(0)
-                            });
-                            format!("{} · {roi_queued_count}", t(locale.get(), Msg::PatientTabRoi))
-                        }}
-                    </button>
-                </div>
+                                            .unwrap_or((0, 0))
+                                    });
+                                    format!("{} ({selected_count}/{total_records})", t(locale.get(), Msg::PatientTabDoctor))
+                                }}
+                            </button>
+                            <button
+                                id="patient-tab-roi"
+                                type="button"
+                                role="tab"
+                                aria-controls="patient-panel-roi"
+                                aria-selected=move || (active_tab.get() == PatientTab::Roi).to_string()
+                                on:click=move |_| active_tab.set(PatientTab::Roi)
+                                class=move || {
+                                    let tap = layout_prefs.get().text_scale.tap_target_class();
+                                    let txt = layout_prefs.get().text_scale.body_class();
+                                    if active_tab.get() == PatientTab::Roi {
+                                        format!("{tap} rounded-xl bg-emerald-500 px-3.5 py-2.5 font-semibold text-slate-950 shadow-sm transition {txt}")
+                                    } else {
+                                        format!("{tap} rounded-xl px-3.5 py-2.5 font-medium text-slate-300 transition hover:bg-white/5 hover:text-white {txt}")
+                                    }
+                                }
+                            >
+                                {move || {
+                                    let id = selected_id.get();
+                                    let roi_queued_count = roi_map.with(|map| {
+                                        map.get(&id)
+                                            .map(|list| {
+                                                list.iter()
+                                                    .filter(|r| {
+                                                        matches!(
+                                                            r.status,
+                                                            RoiStatus::SignedReadyToSend { .. }
+                                                                | RoiStatus::Dispatched { .. }
+                                                        )
+                                                    })
+                                                    .count()
+                                            })
+                                            .unwrap_or(0)
+                                    });
+                                    format!("{} · {roi_queued_count}", t(locale.get(), Msg::PatientTabRoi))
+                                }}
+                            </button>
+                        </div>
+                    }
+                    .into_any()
+                }}
 
                 {move || {
                     let active_id = selected_id.get();
@@ -1080,6 +1344,8 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         allergies_map=allergies_map
                                         demo_states=demo_states
                                         reset_tick=reset_tick
+                                        simple_mode=Signal::derive(move || layout_prefs.get().simple_mode)
+                                        text_scale=Signal::derive(move || layout_prefs.get().text_scale)
                                         on_records_updated=Callback::new(move |msg| {
                                             ehr_sync_banner.set(Some(msg));
                                         })
@@ -1162,10 +1428,14 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         format!("flex flex-col {gap}")
                                     }
                                 >
-                                    // Quick jump pills inside Your Health
+                                    // Quick jump pills inside Your Health (configurable via Layout)
                                     <nav
                                         aria-label="Jump to section"
-                                        class="order-1 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-xs"
+                                        class=move || if layout_prefs.get().show_jump_bar {
+                                            "order-1 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-xs"
+                                        } else {
+                                            "hidden"
+                                        }
                                     >
                                         <div class="flex flex-wrap items-center gap-1.5">
                                             <span class="pe-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
@@ -1221,7 +1491,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                                 </div>
                                             })}
                                         </div>
-                                        <p class="text-sm leading-relaxed text-slate-200">
+                                        <p class=move || format!("text-slate-100 {}", layout_prefs.get().text_scale.body_class())>
                                             <bdi dir="ltr">{patient.summary.clone()}</bdi>
                                         </p>
                                         <div class="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-3">
@@ -1270,8 +1540,18 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         })}
                                     </section>
 
-                                    // Medications & Conditions
-                                    <div class="order-3 grid gap-4 md:grid-cols-2">
+                                    // Medications & Conditions (configurable & single-column in Large/Simple mode)
+                                    <div class=move || {
+                                        let prefs = layout_prefs.get();
+                                        if !prefs.show_meds_and_conditions {
+                                            return "hidden".to_string();
+                                        }
+                                        if prefs.simple_mode || prefs.text_scale != PatientTextScale::Standard {
+                                            "order-3 grid gap-5 grid-cols-1".to_string()
+                                        } else {
+                                            "order-3 grid gap-4 md:grid-cols-2".to_string()
+                                        }
+                                    }>
                                         <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
                                             <h3 class="text-xs font-semibold uppercase tracking-widest text-emerald-300">
                                                 {move || t(locale.get(), Msg::PatientMedicationsHeading)}
@@ -1344,18 +1624,29 @@ pub fn PatientDemoPage() -> impl IntoView {
                                     >
                                         <div class="flex flex-wrap items-start justify-between gap-3">
                                             <div>
-                                                <p class="text-xs font-semibold uppercase tracking-widest text-cyan-300">
+                                                <p class=move || if layout_prefs.get().show_technical_chrome {
+                                                    "text-xs font-semibold uppercase tracking-widest text-cyan-300"
+                                                } else {
+                                                    "hidden"
+                                                }>
                                                     "Bounded Agentic Chat Harness (Patient Mode)"
                                                 </p>
-                                                <h3 class="mt-1 text-lg font-semibold text-white">
+                                                <h3 class=move || format!("mt-1 {}", layout_prefs.get().text_scale.heading_class())>
                                                     {move || t(locale.get(), Msg::PatientAskHeading)}
                                                 </h3>
-                                                <p class="mt-1 text-xs text-slate-300">
-                                                    "Multi-step tool-calling explanation scoped strictly to this sample profile on-device. "
-                                                    "Clinician-only review drafts remain hidden and unmatched questions cite nothing."
+                                                <p class=move || format!("mt-1 text-slate-300 {}", layout_prefs.get().text_scale.detail_class())>
+                                                    {move || if layout_prefs.get().simple_mode {
+                                                        "Ask a plain-language question about your medicines, labs, or visits. Everything stays privately on your device."
+                                                    } else {
+                                                        "Multi-step tool-calling explanation scoped strictly to this sample profile on-device. Clinician-only review drafts remain hidden and unmatched questions cite nothing."
+                                                    }}
                                                 </p>
                                             </div>
-                                            <div class="flex flex-wrap items-center gap-2 text-xs">
+                                            <div class=move || if layout_prefs.get().show_technical_chrome {
+                                                "flex flex-wrap items-center gap-2 text-xs"
+                                            } else {
+                                                "hidden"
+                                            }>
                                                 <label class="inline-flex items-center gap-1.5 text-slate-300">
                                                     <span class="text-[11px] text-slate-400">"Step budget"</span>
                                                     <select
@@ -1383,7 +1674,9 @@ pub fn PatientDemoPage() -> impl IntoView {
                                             </div>
                                         </div>
 
-                                        <AgentToolCatalogBar audience=AgentAudience::Patient />
+                                        <div class=move || if layout_prefs.get().show_technical_chrome { "" } else { "hidden" }>
+                                            <AgentToolCatalogBar audience=AgentAudience::Patient />
+                                        </div>
 
                                         {move || {
                                             llm_status.get().filter(|s| s.enabled).map(|status| {
@@ -1488,11 +1781,13 @@ pub fn PatientDemoPage() -> impl IntoView {
                                     <section
                                         id="patient-records"
                                         class=move || {
-                                            let ord = match layout_prefs.get().order {
+                                            let prefs = layout_prefs.get();
+                                            let vis = if prefs.show_records_section { "" } else { "hidden " };
+                                            let ord = match prefs.order {
                                                 PatientSectionOrder::AskFirst => "order-5",
                                                 PatientSectionOrder::RecordsFirst => "order-4",
                                             };
-                                            format!("{ord} scroll-mt-32 rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4")
+                                            format!("{vis}{ord} scroll-mt-32 rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4")
                                         }
                                     >
                                         <div class="flex flex-wrap items-center justify-between gap-2">
@@ -1704,6 +1999,8 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         audience=passport_audience
                                         emergency_note=emergency_note
                                         reset_tick=reset_tick
+                                        simple_mode=Signal::derive(move || layout_prefs.get().simple_mode)
+                                        text_scale=Signal::derive(move || layout_prefs.get().text_scale)
                                         on_restore_passport=restore_from_passport
                                     />
 
@@ -1771,8 +2068,12 @@ pub fn PatientDemoPage() -> impl IntoView {
                                             </section>
                                         }
                                     }
-                                    // Practice Connection Control
-                                    <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4">
+                                    // Practice Connection Control (collapsed into details in Simple Mode to reduce clutter)
+                                    <section class=move || if layout_prefs.get().simple_mode {
+                                        "hidden"
+                                    } else {
+                                        "rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4"
+                                    }>
                                         <div class="flex flex-wrap items-start justify-between gap-3">
                                             <div>
                                                 <p class="text-xs font-semibold uppercase tracking-widest text-emerald-300">
@@ -1923,38 +2224,93 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         </div>
                                     </section>
 
-                                    // Exact Clinician-Visible Visit Packet Preview
-                                    <SharePacketPreviewCard
-                                        preview=preview
-                                        delivery=delivery
-                                        can_send=can_send
-                                        on_toggle_record=Callback::new(toggle_record_selection)
-                                        on_select_record=jump_to_record
-                                        on_simulate_send=Callback::new(move |_| {
-                                            let pid = active_pid_send.clone();
-                                            demo_states.update(|map| {
-                                                if let Some(st) = map.get_mut(&pid) {
-                                                    st.delivery_status =
-                                                        ShareDeliveryStatus::SimulatedLocalSend {
-                                                            sent_record_count: sent_records_count,
-                                                            question_count: sent_questions_count,
-                                                        };
-                                                }
-                                            });
-                                        })
-                                        on_withdraw=Callback::new(move |_| {
-                                            let pid = active_pid_withdraw.clone();
-                                            demo_states.update(|map| {
-                                                if let Some(st) = map.get_mut(&pid) {
-                                                    st.delivery_status =
-                                                        ShareDeliveryStatus::Withdrawn;
-                                                }
-                                            });
-                                        })
-                                        on_back_to_records=Callback::new(move |_| {
-                                            active_tab.set(PatientTab::You);
-                                        })
-                                    />
+                                    // Exact Clinician-Visible Visit Packet Preview (tucked into expandable details in Simple Mode)
+                                    {move || if layout_prefs.get().simple_mode {
+                                        view! {
+                                            <details class="rounded-2xl border border-white/15 bg-slate-900/70 p-4">
+                                                <summary class="cursor-pointer select-none text-base font-semibold text-emerald-200">
+                                                    "Optional: Inspect Full Clinic Packet & Simulated Send ▾"
+                                                </summary>
+                                                <div class="mt-4">
+                                                    <SharePacketPreviewCard
+                                                        preview=preview.clone()
+                                                        delivery=delivery
+                                                        can_send=can_send
+                                                        on_toggle_record=Callback::new(toggle_record_selection)
+                                                        on_select_record=jump_to_record
+                                                        on_simulate_send=Callback::new({
+                                                            let pid = active_pid_send.clone();
+                                                            move |_| {
+                                                                demo_states.update(|map| {
+                                                                    if let Some(st) = map.get_mut(&pid) {
+                                                                        st.delivery_status =
+                                                                            ShareDeliveryStatus::SimulatedLocalSend {
+                                                                                sent_record_count: sent_records_count,
+                                                                                question_count: sent_questions_count,
+                                                                            };
+                                                                    }
+                                                                });
+                                                            }
+                                                        })
+                                                        on_withdraw=Callback::new({
+                                                            let pid = active_pid_withdraw.clone();
+                                                            move |_| {
+                                                                demo_states.update(|map| {
+                                                                    if let Some(st) = map.get_mut(&pid) {
+                                                                        st.delivery_status =
+                                                                            ShareDeliveryStatus::Withdrawn;
+                                                                    }
+                                                                });
+                                                            }
+                                                        })
+                                                        on_back_to_records=Callback::new(move |_| {
+                                                            active_tab.set(PatientTab::You);
+                                                        })
+                                                    />
+                                                </div>
+                                            </details>
+                                        }
+                                        .into_any()
+                                    } else {
+                                        view! {
+                                            <SharePacketPreviewCard
+                                                preview=preview.clone()
+                                                delivery=delivery
+                                                can_send=can_send
+                                                on_toggle_record=Callback::new(toggle_record_selection)
+                                                on_select_record=jump_to_record
+                                                on_simulate_send=Callback::new({
+                                                    let pid = active_pid_send.clone();
+                                                    move |_| {
+                                                        demo_states.update(|map| {
+                                                            if let Some(st) = map.get_mut(&pid) {
+                                                                st.delivery_status =
+                                                                    ShareDeliveryStatus::SimulatedLocalSend {
+                                                                        sent_record_count: sent_records_count,
+                                                                        question_count: sent_questions_count,
+                                                                    };
+                                                            }
+                                                        });
+                                                    }
+                                                })
+                                                on_withdraw=Callback::new({
+                                                    let pid = active_pid_withdraw.clone();
+                                                    move |_| {
+                                                        demo_states.update(|map| {
+                                                            if let Some(st) = map.get_mut(&pid) {
+                                                                st.delivery_status =
+                                                                    ShareDeliveryStatus::Withdrawn;
+                                                            }
+                                                        });
+                                                    }
+                                                })
+                                                on_back_to_records=Callback::new(move |_| {
+                                                    active_tab.set(PatientTab::You);
+                                                })
+                                            />
+                                        }
+                                        .into_any()
+                                    }}
                                 </div>
                             }
                             .into_any()
@@ -2335,6 +2691,10 @@ mod tests {
     #[test]
     fn patient_demo_page_renders_zero_phi_notice_and_synthetic_profiles() {
         let html = render_with_mode("/clinical/patient", AppShellMode::Website);
+        assert!(html.contains("data-patient-comfort-bar=\"true\""));
+        assert!(html.contains("Simple & Large Text"));
+        assert!(html.contains("Power User (All Tools)"));
+        assert!(html.contains("A++"));
         assert!(html.contains("Curie Mobile"));
         assert!(html.contains("Patient Experience Demo"));
         assert!(html.contains("100% Synthetic Demo"));
