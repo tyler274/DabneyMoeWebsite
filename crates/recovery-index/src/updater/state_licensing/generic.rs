@@ -752,38 +752,51 @@ pub fn classify_state_provider_license(
         return Some(StaffLicense::PhdPsychologist);
     }
 
-    // 3. Master's Therapists & Clinical Social Workers (strictly distinct).
-    if has_tok("LCSW")
-        || has_tok("LICSW")
-        || has_tok("LISW")
-        || has_tok("LCSWC")
-        || has_tok("LCSWR")
-        || has_tok("LSCSW")
-        || has_tok("CISW")
-        || cred_lower.contains("clinical social worker")
-    {
-        return Some(StaffLicense::Lcsw);
-    }
-    if has_tok("LMFT")
-        || has_tok("MFT")
-        || has_tok("LCMFT")
-        || cred_lower.contains("marriage and family therapist")
-        || cred_lower.contains("marriage & family therapist")
-    {
-        return Some(StaffLicense::Lmft);
-    }
-    if has_tok("LPC")
-        || has_tok("LPCC")
-        || has_tok("LMHC")
-        || has_tok("LCPC")
-        || has_tok("LCMHC")
+    // 3. Master's Therapists & Clinical Social Workers (strictly distinct; exclude pre-licensed
+    // associates/interns such as ASW, AMFT, APCC, and Associate Clinical Social Workers).
+    let is_prelicensed_associate = has_tok("ASW")
+        || has_tok("AMFT")
+        || has_tok("APCC")
+        || has_tok("ACSW")
+        || has_tok("LPC-A")
         || has_tok("LPCA")
-        || has_tok("LPCMH")
-        || has_tok("MHSP")
-        || cred_lower.contains("professional counselor")
-        || cred_lower.contains("mental health counselor")
-    {
-        return Some(StaffLicense::LpcLmhc);
+        || cred_lower.contains("associate ")
+        || cred_lower.contains("intern")
+        || cred_lower.contains("trainee")
+        || cred_lower.contains("resident in counseling");
+
+    if !is_prelicensed_associate {
+        if has_tok("LCSW")
+            || has_tok("LICSW")
+            || has_tok("LISW")
+            || has_tok("LCSWC")
+            || has_tok("LCSWR")
+            || has_tok("LSCSW")
+            || has_tok("CISW")
+            || cred_lower.contains("clinical social worker")
+        {
+            return Some(StaffLicense::Lcsw);
+        }
+        if has_tok("LMFT")
+            || has_tok("MFT")
+            || has_tok("LCMFT")
+            || cred_lower.contains("marriage and family therapist")
+            || cred_lower.contains("marriage & family therapist")
+        {
+            return Some(StaffLicense::Lmft);
+        }
+        if has_tok("LPC")
+            || has_tok("LPCC")
+            || has_tok("LMHC")
+            || has_tok("LCPC")
+            || has_tok("LCMHC")
+            || has_tok("LPCMH")
+            || has_tok("MHSP")
+            || cred_lower.contains("professional counselor")
+            || cred_lower.contains("mental health counselor")
+        {
+            return Some(StaffLicense::LpcLmhc);
+        }
     }
 
     // 4. Addiction Counselors, Peer Support, and Nursing (RN vs LPN distinct).
@@ -880,10 +893,21 @@ pub fn classify_state_provider_license(
     }
 
     let board_mentions_osteo = board_lower.contains("osteopath");
-    let board_mentions_medical = board_lower.contains("medical board")
-        || board_lower.contains("board of medicine")
-        || board_lower.contains("allopathic");
-    let board_is_combined = (board_mentions_osteo && board_mentions_medical)
+    let board_is_explicit_allopathic_only = board_lower.contains("allopathic")
+        || board_lower.contains("medical board of california")
+        || board_lower.contains("arizona medical board")
+        || board_lower.contains("florida board of medicine")
+        || board_lower.contains("michigan board of medicine")
+        || board_lower.contains("pennsylvania state board of medicine")
+        || board_lower.contains("maine board of licensure in medicine")
+        || board_lower.contains("vermont board of medical practice")
+        || board_lower.contains("west virginia board of medicine")
+        || board_lower.contains("nevada state board of medical examiners")
+        || board_lower.contains("oklahoma state board of medical licensure")
+        || board_lower.contains("utah physicians and surgeons")
+        || board_lower.contains("washington medical commission")
+        || board_lower.contains("tennessee board of medical examiners");
+    let board_is_combined = (board_mentions_osteo && board_is_explicit_allopathic_only)
         || board_lower.contains("healing arts")
         || board_lower.contains("medical and osteopathic")
         || board_lower.contains("medical & osteopathic");
@@ -901,7 +925,7 @@ pub fn classify_state_provider_license(
             StaffLicense::DoPhysician
         });
     }
-    if board_mentions_medical {
+    if board_is_explicit_allopathic_only {
         return Some(if is_psych_specialty {
             StaffLicense::MdPsychiatrist
         } else if is_addiction_specialty {
@@ -1519,14 +1543,15 @@ fn lookup_json_str(map: &Map<String, Value>, candidates: &[&str]) -> Option<Stri
 
 fn lookup_json_u32(map: &Map<String, Value>, candidates: &[&str]) -> Option<u32> {
     let val = lookup_json_value(map, candidates)?;
-    match val {
+    let parsed = match val {
         Value::Number(n) => n
             .as_u64()
             .and_then(|v| u32::try_from(v).ok())
             .or_else(|| n.as_f64().filter(|f| *f >= 0.0).map(|f| f.round() as u32)),
         Value::String(s) => parse_u32_loose(s),
         _ => None,
-    }
+    };
+    parsed.filter(|&n| n > 0)
 }
 
 fn lookup_json_disciplinary(map: &Map<String, Value>, candidates: &[&str]) -> bool {
@@ -1569,13 +1594,14 @@ fn parse_u32_loose(raw: &str) -> Option<u32> {
         return None;
     }
     if let Ok(v) = cleaned.parse::<u32>() {
-        return Some(v);
+        return (v > 0).then_some(v);
     }
     cleaned
         .parse::<f64>()
         .ok()
-        .filter(|f| *f >= 0.0 && *f <= f64::from(u32::MAX))
+        .filter(|f| *f > 0.0 && *f <= f64::from(u32::MAX))
         .map(|f| f.round() as u32)
+        .filter(|&n| n > 0)
 }
 
 fn normalize_zip_opt(raw: &str) -> Option<String> {

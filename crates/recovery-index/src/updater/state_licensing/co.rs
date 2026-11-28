@@ -356,7 +356,11 @@ fn looks_like_captcha_html(body: &str) -> bool {
     if !trimmed.starts_with('<') {
         return false;
     }
-    let lower = trimmed[..trimmed.len().min(4096)].to_ascii_lowercase();
+    let mut end = trimmed.len().min(4096);
+    while end > 0 && !trimmed.is_char_boundary(end) {
+        end -= 1;
+    }
+    let lower = trimmed[..end].to_ascii_lowercase();
     lower.contains("cf-turnstile")
         || lower.contains("g-recaptcha")
         || lower.contains("hcaptcha")

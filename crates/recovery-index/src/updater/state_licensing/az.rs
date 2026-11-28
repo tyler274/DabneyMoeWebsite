@@ -564,6 +564,23 @@ pub fn map_adhs_status(raw: &str) -> LicenseStatus {
 pub fn classify_az_provider_license(board: &str, credential_label: &str) -> Option<StaffLicense> {
     let board_lower = board.trim().to_ascii_lowercase();
     let cred_lower = credential_label.trim().to_ascii_lowercase();
+    let has_tok = |needle: &str| {
+        cred_lower
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|tok| tok == needle)
+    };
+
+    // Check PA first so "PA - Psychiatry", "PA-C", or "Physician Associate" under the AZ
+    // Medical Board never maps to MD.
+    if cred_lower.contains("physician assistant")
+        || cred_lower.contains("physician associate")
+        || cred_lower.contains("pa-c")
+        || cred_lower.contains("p.a.")
+        || has_tok("pa")
+        || has_tok("pac")
+    {
+        return Some(StaffLicense::Pa);
+    }
 
     // Arizona Board of Osteopathic Examiners strictly licenses DOs, never MDs.
     if board_lower.contains("osteopathic") || board_lower == AZ_OSTEOPATHIC_BOARD_ID {
@@ -574,7 +591,8 @@ pub fn classify_az_provider_license(board: &str, credential_label: &str) -> Opti
             return Some(StaffLicense::DoAddiction);
         }
         if cred_lower.is_empty()
-            || cred_lower.contains("do")
+            || has_tok("do")
+            || cred_lower.contains("d.o.")
             || cred_lower.contains("osteopath")
             || cred_lower.contains("physician")
         {
@@ -582,18 +600,15 @@ pub fn classify_az_provider_license(board: &str, credential_label: &str) -> Opti
         }
     }
 
-    // Arizona Medical Board licenses MDs (and PAs under its sister PA board), never DOs.
-    if (board_lower.contains("medical board") || board_lower == AZ_MEDICAL_BOARD_ID)
-        && !cred_lower.contains("assistant")
-        && !cred_lower.contains("pa-c")
-    {
+    // Arizona Medical Board licenses MDs (PAs already handled above), never DOs.
+    if board_lower.contains("medical board") || board_lower == AZ_MEDICAL_BOARD_ID {
         if cred_lower.contains("psychiatr") {
             return Some(StaffLicense::MdPsychiatrist);
         }
         if cred_lower.contains("addiction") {
             return Some(StaffLicense::MdAddiction);
         }
-        if cred_lower.contains("md")
+        if has_tok("md")
             || cred_lower.contains("m.d.")
             || cred_lower.contains("allopathic")
             || cred_lower.contains("physician")
@@ -603,7 +618,7 @@ pub fn classify_az_provider_license(board: &str, credential_label: &str) -> Opti
     }
 
     // Arizona Board of Behavioral Health Examiners specific credential codes (LISAC/LASAC).
-    if cred_lower.contains("lisac") || cred_lower.contains("lasac") {
+    if has_tok("lisac") || has_tok("lasac") {
         return Some(StaffLicense::AddictionCounselor);
     }
 
