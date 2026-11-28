@@ -142,11 +142,12 @@ pub async fn fetch_cached_text(
 
         if !(200..300).contains(&status) {
             let retryable = matches!(status, 429 | 500 | 502 | 503 | 504);
-            last_err = Some(StateLicenseError::HttpStatus {
+            let err = StateLicenseError::HttpStatus {
                 url: url.to_string(),
                 status,
-            });
+            };
             if retryable && attempt + 1 < MAX_ATTEMPTS {
+                last_err = Some(err);
                 continue;
             }
             if retryable {
@@ -156,7 +157,7 @@ pub async fn fetch_cached_text(
                     }
                 }
             }
-            return Err(last_err.expect("last_err set"));
+            return Err(err);
         }
 
         let _ = cache.put(
@@ -1829,19 +1830,16 @@ fn parse_combined_us_address(
 }
 
 fn split_trailing_zip(s: &str) -> (&str, Option<String>) {
-    let bytes = s.as_bytes();
-    let mut end = bytes.len();
-    while end > 0 && bytes[end - 1].is_ascii_whitespace() {
-        end -= 1;
-    }
-    let slice = &s[..end];
-    // Match optional "-1234" suffix first.
+    let slice = s.trim_end();
+    // Match optional "-1234" suffix first using UTF-8-safe `.get(...)`.
     let base = if slice.len() >= 10 {
-        let tail = &slice[slice.len() - 5..];
-        if tail.starts_with('-') && tail[1..].bytes().all(|b| b.is_ascii_digit()) {
-            &slice[..slice.len() - 5]
-        } else {
-            slice
+        match slice.get(slice.len() - 5..) {
+            Some(tail)
+                if tail.starts_with('-') && tail[1..].bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                &slice[..slice.len() - 5]
+            }
+            _ => slice,
         }
     } else {
         slice
@@ -1849,7 +1847,9 @@ fn split_trailing_zip(s: &str) -> (&str, Option<String>) {
     if base.len() < 5 {
         return (s, None);
     }
-    let zip_cand = &base[base.len() - 5..];
+    let Some(zip_cand) = base.get(base.len() - 5..) else {
+        return (s, None);
+    };
     if !zip_cand.bytes().all(|b| b.is_ascii_digit()) {
         return (s, None);
     }
@@ -1864,8 +1864,8 @@ fn split_trailing_zip(s: &str) -> (&str, Option<String>) {
 
 fn strip_trailing_state<'a>(s: &'a str, expected_state: &str) -> &'a str {
     let trimmed = s.trim_end();
-    if expected_state.len() == 2 {
-        if let Some(tail) = trimmed.get(trimmed.len().saturating_sub(2)..) {
+    if expected_state.len() == 2 && trimmed.len() >= 2 {
+        if let Some(tail) = trimmed.get(trimmed.len() - 2..) {
             if tail.eq_ignore_ascii_case(expected_state) {
                 let prefix = &trimmed[..trimmed.len() - 2];
                 if prefix
@@ -1880,15 +1880,16 @@ fn strip_trailing_state<'a>(s: &'a str, expected_state: &str) -> &'a str {
     }
     if let Some(full_name) = state_full_name(expected_state) {
         if trimmed.len() >= full_name.len() {
-            let tail = &trimmed[trimmed.len() - full_name.len()..];
-            if tail.eq_ignore_ascii_case(full_name) {
-                let prefix = &trimmed[..trimmed.len() - full_name.len()];
-                if prefix
-                    .chars()
-                    .next_back()
-                    .is_none_or(|c| !c.is_ascii_alphabetic())
-                {
-                    return prefix;
+            if let Some(tail) = trimmed.get(trimmed.len() - full_name.len()..) {
+                if tail.eq_ignore_ascii_case(full_name) {
+                    let prefix = &trimmed[..trimmed.len() - full_name.len()];
+                    if prefix
+                        .chars()
+                        .next_back()
+                        .is_none_or(|c| !c.is_ascii_alphabetic())
+                    {
+                        return prefix;
+                    }
                 }
             }
         }
@@ -2828,6 +2829,30 @@ SNF-200,Oakwood Nursing Home,Skilled Nursing Facility,Active,200 Oak Ave,Phoenix
         assert_eq!(
             lookup_json_str(&map, &["SITEMAPPINGID"]).as_deref(),
             Some("1100")
+        );
+    }
+
+    #[test]
+    fn parse_combined_us_address_handles_non_ascii_utf8_without_panicking() {
+        assert_eq!(
+            parse_combined_us_address("100 Café Ave", "OR"),
+            (None, None, None)
+        );
+        assert_eq!(
+            parse_combined_us_address("100 Café Ave, 78701", "TX"),
+            (
+                Some("100 Café Ave".to_string()),
+                None,
+                Some("78701".to_string())
+            )
+        );
+        assert_eq!(
+            parse_combined_us_address("100 Café Ave, Austin, Texas 78701-1234", "TX"),
+            (
+                Some("100 Café Ave".to_string()),
+                Some("Austin".to_string()),
+                Some("78701".to_string()),
+            )
         );
     }
 }
