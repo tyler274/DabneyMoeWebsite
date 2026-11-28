@@ -60,9 +60,15 @@ const fn is_zero(v: &usize) -> bool {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PassportAudience {
-    /// Structured clinical visit brief for a primary doctor or specialist.
+    /// First visit or transfer to a new Primary Care doctor (PCP).
+    NewPrimaryCare,
+    /// Structured clinical visit brief for a medical specialist (cardiologist, endocrinologist, etc.).
     #[default]
     DoctorOrSpecialist,
+    /// Medication history, behavioral context, and questions for a psychiatrist.
+    Psychiatrist,
+    /// Care goals, visit note, and key context for a therapist or counselor.
+    Therapist,
     /// Concise high-contrast 1-page card for ER / urgent care / paramedics.
     EmergencyCard,
     /// Plain-language overview for a family member, caregiver, or anyone else.
@@ -74,26 +80,41 @@ pub enum PassportAudience {
 impl PassportAudience {
     pub const fn label(self) -> &'static str {
         match self {
-            Self::DoctorOrSpecialist => "Doctor / Specialist Visit Brief",
+            Self::NewPrimaryCare => "New Primary Care Doctor Brief",
+            Self::DoctorOrSpecialist => "Medical Specialist Visit Brief",
+            Self::Psychiatrist => "Psychiatrist / Medication Review Brief",
+            Self::Therapist => "Therapist / Counselor Summary",
             Self::EmergencyCard => "Emergency / Urgent Care Card",
-            Self::CaregiverOrAnyone => "Caregiver / Anyone Summary",
+            Self::CaregiverOrAnyone => "Caregiver / Family Summary",
             Self::FullPortableBackup => "Full Portable Record Backup",
         }
     }
 
     pub const fn short_label(self) -> &'static str {
         match self {
-            Self::DoctorOrSpecialist => "Doctor / Specialist",
+            Self::NewPrimaryCare => "New Primary Care",
+            Self::DoctorOrSpecialist => "Medical Specialist",
+            Self::Psychiatrist => "Psychiatrist",
+            Self::Therapist => "Therapist",
             Self::EmergencyCard => "Emergency Card",
-            Self::CaregiverOrAnyone => "Family / Anyone",
+            Self::CaregiverOrAnyone => "Family / Caregiver",
             Self::FullPortableBackup => "Full Backup",
         }
     }
 
     pub const fn description(self) -> &'static str {
         match self {
+            Self::NewPrimaryCare => {
+                "Complete first-visit handoff: active meds, allergies, conditions, key labs, and things you don't want to repeat."
+            }
             Self::DoctorOrSpecialist => {
-                "Selected records, medications, allergies, conditions, visit note, and questions for a clinic visit."
+                "Focused specialist brief: selected records, medications, allergies, conditions, visit note, and questions."
+            }
+            Self::Psychiatrist => {
+                "Medication history, sleep/mood context, labs, and questions—keeps 42 CFR Part 2 SUD records hidden unless you opt in."
+            }
+            Self::Therapist => {
+                "Plain-language care goals, key context, and selected notes—keeps separate counseling & SUD records hidden by default."
             }
             Self::EmergencyCard => {
                 "High-priority medications, allergies, active conditions, and latest key readings for urgent care."
@@ -107,9 +128,18 @@ impl PassportAudience {
         }
     }
 
+    /// Returns `true` for behavioral-health recipient presets where reminding
+    /// the patient about optional 42 CFR Part 2 controls is helpful (never auto-enabling).
+    pub const fn suggests_part2_review(self) -> bool {
+        matches!(self, Self::Psychiatrist | Self::Therapist)
+    }
+
     pub const fn all() -> &'static [Self] {
         &[
+            Self::NewPrimaryCare,
             Self::DoctorOrSpecialist,
+            Self::Psychiatrist,
+            Self::Therapist,
             Self::EmergencyCard,
             Self::CaregiverOrAnyone,
             Self::FullPortableBackup,
@@ -147,6 +177,9 @@ pub struct HealthPassport {
     pub records: Vec<ChartRecord>,
     pub visit_note: String,
     pub visit_questions: Vec<String>,
+    /// Plain-language points the patient is tired of repeating at every new visit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub things_to_know: Vec<String>,
     pub emergency_note: String,
     pub excluded_record_count: usize,
     pub excluded_private_note_count: usize,
@@ -260,7 +293,10 @@ pub fn build_health_passport_with_options(
     options: PassportExportOptions,
 ) -> HealthPassport {
     let allow_part2 = options.include_part2_sud_records;
-    let allow_counseling_notes = options.include_part2_sud_counseling_notes;
+    // Hard statutory invariant (42 CFR § 2.31(b)): separate counseling notes can
+    // NEVER be exported unless BOTH general Part 2 opt-in AND separate § 2.31(b)
+    // opt-in are explicitly enabled.
+    let allow_counseling_notes = allow_part2 && options.include_part2_sud_counseling_notes;
 
     let item_permitted = |conf: crate::ConfidentialityClass| -> bool {
         match conf {
@@ -304,7 +340,11 @@ pub fn build_health_passport_with_options(
                 .cloned()
                 .collect()
         }
-        PassportAudience::DoctorOrSpecialist | PassportAudience::CaregiverOrAnyone => patient
+        PassportAudience::NewPrimaryCare
+        | PassportAudience::DoctorOrSpecialist
+        | PassportAudience::Psychiatrist
+        | PassportAudience::Therapist
+        | PassportAudience::CaregiverOrAnyone => patient
             .records
             .iter()
             .filter(|rec| item_permitted(rec.confidentiality))
@@ -354,7 +394,7 @@ pub fn build_health_passport_with_options(
                 imported_record_count,
                 ..
             } => {
-                if !allow_part2 && !allow_counseling_notes && conn.vendor.is_part2_sensitive() {
+                if !allow_part2 && conn.vendor.is_part2_sensitive() {
                     return None;
                 }
                 Some(PassportPortalSummary {
@@ -392,6 +432,12 @@ pub fn build_health_passport_with_options(
             .map(|q| q.trim().to_string())
             .filter(|q| !q.is_empty())
             .collect(),
+        things_to_know: state
+            .things_to_know
+            .iter()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect(),
         emergency_note: emergency_note.trim().to_string(),
         excluded_record_count,
         excluded_private_note_count: state.personal_notes.len(),
@@ -407,10 +453,159 @@ pub fn build_health_passport_with_options(
 
 const fn audience_slug(audience: PassportAudience) -> &'static str {
     match audience {
-        PassportAudience::DoctorOrSpecialist => "visit",
+        PassportAudience::NewPrimaryCare => "primary-care",
+        PassportAudience::DoctorOrSpecialist => "specialist",
+        PassportAudience::Psychiatrist => "psychiatrist",
+        PassportAudience::Therapist => "therapist",
         PassportAudience::EmergencyCard => "emergency",
         PassportAudience::CaregiverOrAnyone => "caregiver",
         PassportAudience::FullPortableBackup => "backup",
+    }
+}
+
+/// Converts a pasted email, portal message, discharge summary, or paper note
+/// into a structured local [`ChartRecord`] so a patient can gather scattered
+/// information into one place without waiting on EHR integrations.
+pub fn parse_pasted_email_or_summary(
+    source_label: &str,
+    raw_text: &str,
+    recorded_at: &str,
+) -> Result<ChartRecord, String> {
+    let cleaned = raw_text.trim();
+    if cleaned.is_empty() {
+        return Err("Paste an email, visit summary, lab note, or paper record text first.".into());
+    }
+    let mut title = String::new();
+    let mut key_values: Vec<(String, String)> = Vec::new();
+    let mut body_lines: Vec<String> = Vec::new();
+
+    for line in cleaned.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some((k, v)) = trimmed.split_once(':') {
+            let key = k.trim();
+            let val = v.trim();
+            if key.eq_ignore_ascii_case("subject") && title.is_empty() && !val.is_empty() {
+                title = val.chars().take(96).collect();
+                continue;
+            }
+            if !key.is_empty()
+                && !val.is_empty()
+                && key.len() <= 24
+                && val.len() <= 72
+                && key_values.len() < 4
+                && matches!(
+                    key.to_ascii_lowercase().as_str(),
+                    "from"
+                        | "clinic"
+                        | "doctor"
+                        | "provider"
+                        | "date"
+                        | "bp"
+                        | "a1c"
+                        | "hba1c"
+                        | "weight"
+                        | "medication"
+                        | "dose"
+                        | "allergy"
+                )
+            {
+                key_values.push((key.to_string(), val.to_string()));
+            }
+        }
+        if title.is_empty() {
+            title = trimmed.chars().take(96).collect();
+        }
+        body_lines.push(trimmed.to_string());
+    }
+
+    if title.is_empty() {
+        title = "Patient-added visit note or email".into();
+    }
+    let body = body_lines.join(" ");
+    let digest = sha256_hex(cleaned.as_bytes());
+    let short_id: String = digest.chars().take(8).collect();
+    let src = if source_label.trim().is_empty() {
+        "Pasted Email / Note (Patient-Added)"
+    } else {
+        source_label.trim()
+    };
+
+    Ok(ChartRecord {
+        id: format!("pt-note-{short_id}"),
+        kind: crate::RecordKind::PatientMessage,
+        title,
+        recorded_at: if recorded_at.trim().is_empty() {
+            "2026-11-26".into()
+        } else {
+            recorded_at.trim().to_string()
+        },
+        source_label: src.to_string(),
+        body,
+        key_values,
+        confidentiality: crate::ConfidentialityClass::StandardHipaa,
+    })
+}
+
+/// Builds a local-only reference [`ChartRecord`] for a scanned paper document,
+/// PDF lab report, or clinic handout photo selected on the patient's device
+/// (never uploaded off-device).
+#[must_use]
+pub fn build_paper_attachment_record(
+    filename: &str,
+    file_kind: &str,
+    size_bytes: u64,
+    summary_note: &str,
+    recorded_at: &str,
+) -> ChartRecord {
+    let clean_name = filename.trim();
+    let display_name = if clean_name.is_empty() {
+        "Paper record scan".to_string()
+    } else {
+        clean_name.to_string()
+    };
+    let clean_kind = if file_kind.trim().is_empty() {
+        "Document / Photo"
+    } else {
+        file_kind.trim()
+    };
+    let size_label = if size_bytes >= 1_048_576 {
+        format!("{:.1} MB", size_bytes as f64 / 1_048_576.0)
+    } else if size_bytes >= 1024 {
+        format!("{} KB", size_bytes / 1024)
+    } else {
+        format!("{size_bytes} B")
+    };
+    let digest = sha256_hex(format!("{display_name}|{size_bytes}|{summary_note}").as_bytes());
+    let short_id: String = digest.chars().take(8).collect();
+    let body = if summary_note.trim().is_empty() {
+        format!(
+            "Local paper/PDF record reference ({display_name}, {size_label}) kept on your device for visit prep. \
+             Bring the file or printout to your appointment."
+        )
+    } else {
+        summary_note.trim().to_string()
+    };
+
+    ChartRecord {
+        id: format!("pt-doc-{short_id}"),
+        kind: crate::RecordKind::ProgressNote,
+        title: format!("Paper / PDF Record: {display_name}"),
+        recorded_at: if recorded_at.trim().is_empty() {
+            "2026-11-26".into()
+        } else {
+            recorded_at.trim().to_string()
+        },
+        source_label: "Paper / PDF / Photo (Local Only)".into(),
+        body,
+        key_values: vec![
+            ("File".into(), display_name),
+            ("Type".into(), clean_kind.to_string()),
+            ("Size".into(), size_label),
+        ],
+        confidentiality: crate::ConfidentialityClass::StandardHipaa,
     }
 }
 
@@ -664,6 +859,13 @@ pub fn render_passport_markdown(passport: &HealthPassport) -> String {
     }
     out.push_str(&format!("\n## Summary\n{}\n", passport.summary_headline));
 
+    if !passport.things_to_know.is_empty() {
+        out.push_str("\n## Things to Know Up Front (Don't Make Me Repeat)\n");
+        for item in &passport.things_to_know {
+            out.push_str(&format!("- {item}\n"));
+        }
+    }
+
     if !passport.emergency_note.is_empty() {
         out.push_str(&format!(
             "\n## Emergency / Key Instructions\n{}\n",
@@ -757,14 +959,30 @@ pub fn render_passport_markdown(passport: &HealthPassport) -> String {
 /// browser without creating an account.
 #[must_use]
 pub fn render_passport_html(passport: &HealthPassport) -> String {
+    render_passport_html_inner(passport, false)
+}
+
+/// Renders a compact, 1-page waiting-room handout optimized to hand directly
+/// to a receptionist, nurse, primary care doctor, specialist, psychiatrist, or
+/// therapist without scrolling or extra pages.
+#[must_use]
+pub fn render_passport_one_page_html(passport: &HealthPassport) -> String {
+    render_passport_html_inner(passport, true)
+}
+
+fn render_passport_html_inner(passport: &HealthPassport, compact_one_page: bool) -> String {
     let accent = match passport.audience {
         PassportAudience::EmergencyCard => "#b91c1c",
+        PassportAudience::NewPrimaryCare => "#047857",
         PassportAudience::DoctorOrSpecialist => "#0f766e",
+        PassportAudience::Psychiatrist => "#4338ca",
+        PassportAudience::Therapist => "#6d28d9",
         PassportAudience::CaregiverOrAnyone => "#0369a1",
         PassportAudience::FullPortableBackup => "#166534",
     };
     let banner_bg = match passport.audience {
         PassportAudience::EmergencyCard => "#fef2f2",
+        PassportAudience::Psychiatrist | PassportAudience::Therapist => "#f5f3ff",
         _ => "#f0fdfa",
     };
 
@@ -841,6 +1059,18 @@ pub fn render_passport_html(passport: &HealthPassport) -> String {
         questions_html.push_str(&format!("<li>{}</li>", html_escape(q)));
     }
 
+    let mut things_html = String::new();
+    for item in &passport.things_to_know {
+        things_html.push_str(&format!("<li>{}</li>", html_escape(item)));
+    }
+    let things_block = if things_html.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<section class=\"box highlight\"><h2>Key Context — Things to Know Up Front</h2><ul>{things_html}</ul></section>"
+        )
+    };
+
     let emergency_block = if passport.emergency_note.is_empty() {
         String::new()
     } else {
@@ -848,6 +1078,19 @@ pub fn render_passport_html(passport: &HealthPassport) -> String {
             "<section class=\"box warn\"><h2>Emergency &amp; Care Instructions</h2><p>{}</p></section>",
             html_escape(&passport.emergency_note)
         )
+    };
+
+    let page_padding = if compact_one_page { "12px" } else { "24px" };
+    let box_padding = if compact_one_page {
+        "10px 12px"
+    } else {
+        "14px 16px"
+    };
+    let box_margin = if compact_one_page { "9px" } else { "14px" };
+    let title_prefix = if compact_one_page {
+        "1-Page Waiting-Room Handout"
+    } else {
+        "Portable Health Passport"
     };
 
     let demo_notice = if passport.is_synthetic_demo {
@@ -875,36 +1118,37 @@ pub fn render_passport_html(passport: &HealthPassport) -> String {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Portable Health Passport — {name}</title>
+<title>{title_prefix} — {name}</title>
 <style>
 :root {{ --accent: {accent}; --bg: {banner_bg}; }}
+@page {{ margin: 0.45in; }}
 * {{ box-sizing: border-box; }}
-body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #0f172a; background: #fff; margin: 0; padding: 24px; line-height: 1.5; }}
+body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #0f172a; background: #fff; margin: 0; padding: {page_padding}; line-height: 1.45; }}
 .wrap {{ max-width: 860px; margin: 0 auto; }}
-header {{ border-bottom: 3px solid var(--accent); padding-bottom: 14px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }}
-h1 {{ margin: 0; font-size: 24px; color: #01081b; }}
-h2 {{ font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin: 0 0 8px 0; }}
+header {{ border-bottom: 3px solid var(--accent); padding-bottom: 12px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }}
+h1 {{ margin: 0; font-size: 22px; color: #01081b; }}
+h2 {{ font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin: 0 0 6px 0; }}
 .eyebrow {{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent); margin: 0 0 4px 0; }}
 .meta {{ font-size: 12px; color: #475569; }}
-.demo-banner {{ background: #ecfdf5; border: 1px solid #10b981; color: #065f46; padding: 8px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; margin-bottom: 16px; }}
-.box {{ border: 1px solid #cbd5e1; border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }}
+.demo-banner {{ background: #ecfdf5; border: 1px solid #10b981; color: #065f46; padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; margin-bottom: 12px; }}
+.box {{ border: 1px solid #cbd5e1; border-radius: 10px; padding: {box_padding}; margin-bottom: {box_margin}; }}
 .box.highlight {{ background: var(--bg); border-color: var(--accent); }}
 .box.warn {{ background: #fff7ed; border-color: #ea580c; }}
-.grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }}
+.grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }}
 table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-th, td {{ text-align: left; padding: 6px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }}
+th, td {{ text-align: left; padding: 5px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }}
 th {{ font-size: 11px; text-transform: uppercase; color: #475569; }}
 ul, ol {{ margin: 0; padding-left: 20px; font-size: 13px; }}
-li {{ margin-bottom: 4px; }}
+li {{ margin-bottom: 3px; }}
 .pill {{ display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 11px; font-weight: 600; background: #fee2e2; color: #991b1b; }}
 .muted {{ color: #64748b; font-size: 12px; }}
-.rec {{ border-top: 1px solid #e2e8f0; padding-top: 10px; margin-top: 10px; }}
+.rec {{ border-top: 1px solid #e2e8f0; padding-top: 8px; margin-top: 8px; }}
 .rec:first-of-type {{ border-top: 0; padding-top: 0; margin-top: 0; }}
 .rec-head {{ display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 13px; }}
 .rec p {{ margin: 4px 0 0 0; font-size: 13px; color: #1e293b; }}
 .kvs {{ margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }}
 .kv {{ background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 6px; padding: 2px 8px; font-size: 12px; }}
-footer {{ margin-top: 20px; padding-top: 12px; border-top: 1px solid #cbd5e1; font-size: 11px; color: #64748b; font-family: ui-monospace, SFMono-Regular, monospace; }}
+footer {{ margin-top: 16px; padding-top: 10px; border-top: 1px solid #cbd5e1; font-size: 11px; color: #64748b; font-family: ui-monospace, SFMono-Regular, monospace; }}
 @media print {{ body {{ padding: 0; }} .box {{ break-inside: avoid; }} }}
 </style>
 </head>
@@ -914,7 +1158,7 @@ footer {{ margin-top: 20px; padding-top: 12px; border-top: 1px solid #cbd5e1; fo
 {part2_banner}
 <header>
   <div>
-    <p class="eyebrow">Dabney.moe Portable Health Passport · {audience}</p>
+    <p class="eyebrow">Dabney.moe {title_prefix} · {audience}</p>
     <h1>{name}</h1>
     <p class="meta">DOB: {dob} · ID: {ident} · Focus: {focus}</p>
   </div>
@@ -929,6 +1173,7 @@ footer {{ margin-top: 20px; padding-top: 12px; border-top: 1px solid #cbd5e1; fo
   <p style="margin:0;font-size:14px;">{summary}</p>
 </section>
 
+{things_block}
 {emergency_block}
 
 <div class="grid">
@@ -967,6 +1212,10 @@ footer {{ margin-top: 20px; padding-top: 12px; border-top: 1px solid #cbd5e1; fo
 </div>
 </body>
 </html>"#,
+        title_prefix = title_prefix,
+        page_padding = page_padding,
+        box_padding = box_padding,
+        box_margin = box_margin,
         accent = accent,
         banner_bg = banner_bg,
         demo_notice = demo_notice,
@@ -981,6 +1230,7 @@ footer {{ margin-top: 20px; padding-top: 12px; border-top: 1px solid #cbd5e1; fo
         excluded = passport.excluded_record_count,
         priv_omitted = passport.excluded_private_note_count,
         summary = html_escape(&passport.summary_headline),
+        things_block = things_block,
         emergency_block = emergency_block,
         allergies_html = allergies_html,
         probs_html = probs_html,
@@ -1176,7 +1426,41 @@ mod tests {
                 && e["resource"]["meta"]["security"].is_array()
         }));
 
-        // Separate 42 CFR § 2.31(b) opt-in includes the counseling note with `42CFR2.31b` tag.
+        // P0 Regression (TYL-88): Setting `include_part2_sud_counseling_notes = true`
+        // while general `include_part2_sud_records = false` MUST NEVER leak § 2.31(b)
+        // counseling notes or any Part 2 record!
+        let counseling_without_general = build_health_passport_with_options(
+            &nadia,
+            &state,
+            &allergies,
+            &[],
+            PassportAudience::FullPortableBackup,
+            "",
+            "2026-11-26T04:30:00Z",
+            PassportExportOptions {
+                include_part2_sud_records: false,
+                include_part2_sud_counseling_notes: true,
+            },
+        );
+        assert!(!counseling_without_general.part2_sud_included);
+        assert!(counseling_without_general
+            .part2_redisclosure_notice
+            .is_none());
+        assert_eq!(
+            counseling_without_general.excluded_part2_record_count,
+            kipu_import.records.len()
+        );
+        assert_eq!(
+            counseling_without_general.excluded_part2_counseling_note_count,
+            1
+        );
+        assert!(counseling_without_general
+            .records
+            .iter()
+            .all(|r| !r.confidentiality.is_part2_sud()));
+
+        // Separate 42 CFR § 2.31(b) opt-in (WITH general Part 2 opt-in) includes the
+        // counseling note with `42CFR2.31b` tag.
         let with_counseling = build_health_passport_with_options(
             &nadia,
             &state,
@@ -1200,5 +1484,55 @@ mod tests {
         assert!(serde_json::to_string(&ips_with_cn)
             .unwrap()
             .contains("42CFR2.31b"));
+    }
+
+    #[test]
+    fn universal_intake_and_visit_presets_and_one_page_handout_work() {
+        let email_rec = parse_pasted_email_or_summary(
+            "MyChart Email",
+            "Subject: Lab Follow-Up\nProvider: Dr. Lin\nA1c: 6.7%\nEverything trending nicely, keep current dose.",
+            "2026-11-26",
+        )
+        .expect("parsed email");
+        assert_eq!(email_rec.title, "Lab Follow-Up");
+        assert!(email_rec
+            .key_values
+            .iter()
+            .any(|(k, v)| k == "A1c" && v == "6.7%"));
+        assert!(!email_rec.confidentiality.is_part2_sud());
+
+        let paper_rec = build_paper_attachment_record(
+            "discharge-summary-2025.pdf",
+            "application/pdf",
+            245_760,
+            "ER discharge paperwork noting sulfa allergy.",
+            "2026-11-26",
+        );
+        assert!(paper_rec.title.contains("discharge-summary-2025.pdf"));
+        assert!(paper_rec.key_values.iter().any(|(_, v)| v == "240 KB"));
+
+        let nadia = find_patient("pt-nadia-kulkarni").expect("nadia");
+        let state = default_patient_demo_state(&nadia);
+        let allergies = default_allergies_for_patient(&nadia.id);
+        for &aud in PassportAudience::all() {
+            let p = build_health_passport(
+                &nadia,
+                &state,
+                &allergies,
+                &[],
+                aud,
+                "Emergency contact: Alex 555-0199",
+                "2026-11-26T04:30:00Z",
+            );
+            assert!(p.verify_integrity());
+            assert!(!p.things_to_know.is_empty());
+            let one_page = render_passport_one_page_html(&p);
+            assert!(one_page.contains("1-Page Waiting-Room Handout"));
+            assert!(one_page.contains("Things to Know Up Front"));
+            assert!(one_page.contains("@page"));
+        }
+        assert!(PassportAudience::Psychiatrist.suggests_part2_review());
+        assert!(PassportAudience::Therapist.suggests_part2_review());
+        assert!(!PassportAudience::NewPrimaryCare.suggests_part2_review());
     }
 }

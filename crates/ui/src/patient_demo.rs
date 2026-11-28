@@ -238,12 +238,14 @@ pub fn PatientDemoPage() -> impl IntoView {
     let roi_map = RwSignal::new(initial_rois);
     let passport_audience = RwSignal::new(PassportAudience::DoctorOrSpecialist);
     let emergency_note = RwSignal::new(String::new());
+    let reset_tick = RwSignal::new(0u32);
     let ehr_sync_banner = RwSignal::new(Option::<String>::None);
     let question_input = RwSignal::new(initial_question);
     let threads = RwSignal::new(initial_threads);
     let step_budget = RwSignal::new(RunBudget::default().max_steps);
     let new_private_note = RwSignal::new(String::new());
     let new_visit_question = RwSignal::new(String::new());
+    let new_thing_to_know = RwSignal::new(String::new());
     let next_note_seq = RwSignal::new(2usize);
 
     // Optional on-device Gemini Nano (AICore) & encrypted note vault (`moe.dabney.personal` only).
@@ -508,6 +510,10 @@ pub fn PatientDemoPage() -> impl IntoView {
     let reset_active_demo = move |_| {
         let active_id = selected_id.get();
         focused_record_id.set(None);
+        passport_audience.set(PassportAudience::default());
+        emergency_note.set(String::new());
+        new_thing_to_know.set(String::new());
+        reset_tick.update(|n| *n = n.wrapping_add(1));
         let baseline =
             baseline_charts.with_value(|list| list.iter().find(|p| p.id == active_id).cloned());
         if let Some(fresh_chart) = baseline {
@@ -535,6 +541,11 @@ pub fn PatientDemoPage() -> impl IntoView {
 
     let restore_from_passport = Callback::new(move |passport: HealthPassport| {
         let active_id = selected_id.get_untracked();
+        let part2_protected_count = passport
+            .records
+            .iter()
+            .filter(|rec| rec.confidentiality.is_part2_sud())
+            .count();
         charts.update(|map| {
             if let Some(chart) = map.get_mut(&active_id) {
                 for rec in &passport.records {
@@ -576,7 +587,12 @@ pub fn PatientDemoPage() -> impl IntoView {
         demo_states.update(|map| {
             if let Some(st) = map.get_mut(&active_id) {
                 for rec in &passport.records {
-                    if !st.selected_record_ids.contains(&rec.id) {
+                    // Hard 42 CFR Part 2 fail-closed invariant (TYL-88):
+                    // Never auto-select restored Part 2 SUD or § 2.31(b) records
+                    // for clinician visit packets; keep them unselected until explicit opt-in.
+                    if !rec.confidentiality.is_part2_sud()
+                        && !st.selected_record_ids.contains(&rec.id)
+                    {
                         st.selected_record_ids.push(rec.id.clone());
                     }
                 }
@@ -586,17 +602,54 @@ pub fn PatientDemoPage() -> impl IntoView {
                 if !passport.visit_questions.is_empty() {
                     st.visit_questions = passport.visit_questions.clone();
                 }
+                for item in &passport.things_to_know {
+                    if !st
+                        .things_to_know
+                        .iter()
+                        .any(|existing| existing.eq_ignore_ascii_case(item))
+                    {
+                        st.things_to_know.push(item.clone());
+                    }
+                }
             }
         });
         if !passport.emergency_note.is_empty() {
             emergency_note.set(passport.emergency_note);
         }
+        let part2_msg = if part2_protected_count > 0 {
+            format!(
+                " {part2_protected_count} 42 CFR Part 2 record(s) remain protected (not auto-selected for clinician sharing)."
+            )
+        } else {
+            String::new()
+        };
         ehr_sync_banner.set(Some(format!(
-            "Restored verified Health Passport ({} record(s), {} med(s)) into your local workspace.",
+            "Restored verified Health Passport ({} record(s), {} med(s)) into your local workspace.{part2_msg}",
             passport.records.len(),
             passport.medications.len()
         )));
     });
+
+    let on_add_thing_to_know = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        let text = new_thing_to_know.get().trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        let active_id = selected_id.get();
+        demo_states.update(|map| {
+            if let Some(state) = map.get_mut(&active_id) {
+                if !state
+                    .things_to_know
+                    .iter()
+                    .any(|item| item.eq_ignore_ascii_case(&text))
+                {
+                    state.things_to_know.push(text);
+                }
+            }
+        });
+        new_thing_to_know.set(String::new());
+    };
 
     let jump_to_record = Callback::new(move |record_id: String| {
         active_tab.set(PatientTab::You);
@@ -930,9 +983,9 @@ pub fn PatientDemoPage() -> impl IntoView {
                                     .unwrap_or(0)
                             });
                             if connected_portal_count > 0 {
-                                format!("Doctor Portals ({connected_portal_count} linked)")
+                                format!("{} ({connected_portal_count})", t(locale.get(), Msg::PatientTabPortals))
                             } else {
-                                "Doctor Portals (EHR)".to_string()
+                                t(locale.get(), Msg::PatientTabPortals).to_string()
                             }
                         }}
                     </button>
@@ -1001,7 +1054,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                     })
                                     .unwrap_or(0)
                             });
-                            format!("Release of Info (ROI · {roi_queued_count})")
+                            format!("{} · {roi_queued_count}", t(locale.get(), Msg::PatientTabRoi))
                         }}
                     </button>
                 </div>
@@ -1026,6 +1079,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         charts=charts
                                         allergies_map=allergies_map
                                         demo_states=demo_states
+                                        reset_tick=reset_tick
                                         on_records_updated=Callback::new(move |msg| {
                                             ehr_sync_banner.set(Some(msg));
                                         })
@@ -1048,6 +1102,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                     <AutomatedRoiPanel
                                         patient=patient
                                         roi_map=roi_map
+                                        reset_tick=reset_tick
                                     />
                                 </div>
                             }
@@ -1167,7 +1222,7 @@ pub fn PatientDemoPage() -> impl IntoView {
                                             })}
                                         </div>
                                         <p class="text-sm leading-relaxed text-slate-200">
-                                            {patient.summary.clone()}
+                                            <bdi dir="ltr">{patient.summary.clone()}</bdi>
                                         </p>
                                         <div class="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-3">
                                             <p class="text-xs text-slate-300">
@@ -1648,8 +1703,74 @@ pub fn PatientDemoPage() -> impl IntoView {
                                         linked_portals=patient_portals
                                         audience=passport_audience
                                         emergency_note=emergency_note
+                                        reset_tick=reset_tick
                                         on_restore_passport=restore_from_passport
                                     />
+
+                                    // Things I'm Tired of Explaining (Shown Up Front in Handouts & Exports)
+                                    {
+                                        let active_pid_things = patient.id.clone();
+                                        view! {
+                                            <section class="rounded-2xl border border-cyan-400/25 bg-cyan-500/[0.04] p-5 space-y-3">
+                                                <div>
+                                                    <h3 class="text-base font-semibold text-white">
+                                                        {move || t(locale.get(), Msg::PassportThingsHeading)}
+                                                    </h3>
+                                                    <p class="mt-0.5 text-xs text-slate-300">
+                                                        "Add allergies, medication reactions, or care preferences you never want to re-explain at every new appointment. These appear right at the top of your 1-Page Handout and Passport."
+                                                    </p>
+                                                </div>
+                                                {(!state.things_to_know.is_empty()).then(|| view! {
+                                                    <ul class="space-y-2">
+                                                        {state
+                                                            .things_to_know
+                                                            .iter()
+                                                            .enumerate()
+                                                            .map(|(idx, point)| {
+                                                                let pid = active_pid_things.clone();
+                                                                view! {
+                                                                    <li class="flex items-center justify-between gap-3 rounded-xl border border-cyan-400/20 bg-slate-950/70 px-3.5 py-2.5 text-xs text-slate-100">
+                                                                        <bdi dir="ltr">{point.clone()}</bdi>
+                                                                        <button
+                                                                            type="button"
+                                                                            on:click=move |_| {
+                                                                                demo_states.update(|map| {
+                                                                                    if let Some(st) = map.get_mut(&pid) {
+                                                                                        if idx < st.things_to_know.len() {
+                                                                                            st.things_to_know.remove(idx);
+                                                                                        }
+                                                                                    }
+                                                                                });
+                                                                            }
+                                                                            class="shrink-0 rounded-lg border border-white/15 px-2.5 py-1 text-[11px] text-slate-300 hover:border-rose-400/40 hover:text-rose-200"
+                                                                        >
+                                                                            "Remove"
+                                                                        </button>
+                                                                    </li>
+                                                                }
+                                                            })
+                                                            .collect_view()}
+                                                    </ul>
+                                                })}
+                                                <form on:submit=on_add_thing_to_know class="flex flex-col gap-2 sm:flex-row">
+                                                    <input
+                                                        type="text"
+                                                        aria-label=move || t(locale.get(), Msg::PassportThingsHeading)
+                                                        placeholder=move || t(locale.get(), Msg::PassportThingsPlaceholder)
+                                                        prop:value=move || new_thing_to_know.get()
+                                                        on:input=move |ev| new_thing_to_know.set(event_target_value(&ev))
+                                                        class="min-h-[42px] flex-1 rounded-xl border border-white/15 bg-slate-950 px-3.5 py-2 text-xs text-white placeholder:text-slate-400 focus:border-cyan-400/60 focus:outline-none"
+                                                    />
+                                                    <button
+                                                        type="submit"
+                                                        class="min-h-[42px] rounded-full border border-cyan-400/40 bg-cyan-500/15 px-4 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/25"
+                                                    >
+                                                        {move || t(locale.get(), Msg::PassportThingsAdd)}
+                                                    </button>
+                                                </form>
+                                            </section>
+                                        }
+                                    }
                                     // Practice Connection Control
                                     <section class="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-4">
                                         <div class="flex flex-wrap items-start justify-between gap-3">
@@ -1926,8 +2047,8 @@ fn PatientRecordCard(
                 </div>
             })}
 
-            <h4 class="mt-2.5 text-sm font-semibold text-white">{record.title}</h4>
-            <p class="mt-1.5 text-xs leading-relaxed text-slate-300">{record.body}</p>
+            <h4 class="mt-2.5 text-sm font-semibold text-white"><bdi dir="ltr">{record.title}</bdi></h4>
+            <p class="mt-1.5 text-xs leading-relaxed text-slate-300"><bdi dir="ltr">{record.body}</bdi></p>
 
             {(!record.key_values.is_empty()).then(|| view! {
                 <dl class="mt-3 flex flex-wrap gap-2">
