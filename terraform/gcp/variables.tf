@@ -71,6 +71,12 @@ variable "enable_cloudflare_edge_protection" {
   default     = false
 }
 
+variable "enable_cloudflare_bot_detection" {
+  type        = bool
+  description = "Enable Cloudflare edge bot and automated-client detection (Browser Integrity Check, Bot Fight Mode, and Custom WAF rules challenging curl/headless browsers and cross-site API probes). Set false during development so automated tools can reach dabney.moe while keeping TLS, caching, rate limits, and exploit-scanner blocks active."
+  default     = false
+}
+
 variable "cloudflare_api_token" {
   type        = string
   description = "Cloudflare API token with Zone:DNS:Edit on the dabney.moe zone. May be empty when enable_cloudflare_dns = false."

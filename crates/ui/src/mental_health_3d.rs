@@ -4,15 +4,40 @@
 //! Geometry generation is target-independent and unit-tested on native CI; the
 //! `WebGl2RenderingContext` renderer compiles exclusively for `wasm32` (`hydrate` / `csr`).
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use leptos::prelude::*;
 
 use crate::mental_health_cgm::{
-    glucose_axis_domain, select_notable_spike_peaks, timeline_hour_span,
+    glucose_axis_domain, select_notable_spike_peaks_above, timeline_hour_span,
 };
 use crate::mental_health_cgm_analytics::{downsample_segments_for_chart, DEFAULT_CHART_GAP_HOURS};
 use crate::mental_health_lingo::{LingoReading, MentalHealthCheckIn};
+
+static NEXT_SCENE_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Compute DPR-scaled WebGL2 canvas backing dimensions from CSS layout size, clamping DPR
+/// to `[1.0, 2.0]` and each axis to `[1, 4096]` so the projection aspect matches the rendered box
+/// across mobile and desktop viewports without unbounded VRAM allocation.
+pub fn compute_canvas_backing_size(css_width: f64, css_height: f64, dpr: f64) -> (u32, u32) {
+    let safe_dpr = if dpr.is_finite() {
+        dpr.clamp(1.0, 2.0)
+    } else {
+        1.0
+    };
+    let w = if css_width.is_finite() && css_width > 0.0 {
+        (css_width * safe_dpr).round().clamp(1.0, 4096.0) as u32
+    } else {
+        900
+    };
+    let h = if css_height.is_finite() && css_height > 0.0 {
+        (css_height * safe_dpr).round().clamp(1.0, 4096.0) as u32
+    } else {
+        360
+    };
+    (w, h)
+}
 
 const COLOR_STEADY: [f32; 4] = [0.13, 0.83, 0.93, 1.0];
 const COLOR_STEADY_CURTAIN: [f32; 4] = [0.13, 0.83, 0.93, 0.18];
@@ -287,10 +312,7 @@ pub fn build_lingo_3d_scene_with_range(
     // 3. Gap-aware 3D Glucose ribbons + curtains (each contiguous segment rendered independently
     //    so multi-hour / multi-day sensor-off gaps NEVER draw phantom bridges or curtains).
     let segments = downsample_segments_for_chart(readings, 320, DEFAULT_CHART_GAP_HOURS);
-    let spike_peaks: Vec<LingoReading> = select_notable_spike_peaks(readings, 36)
-        .into_iter()
-        .filter(|r| r.bound.is_ceiling_capped() || r.glucose_mg_dl > target_high)
-        .collect();
+    let spike_peaks = select_notable_spike_peaks_above(readings, target_high, 36);
     let floor_caps = select_notable_floor_caps(readings, 24);
     let z_front = 0.08_f32;
     let z_back = -0.08_f32;
@@ -425,6 +447,8 @@ pub fn LingoMood3DChart(
     checkins: Signal<Vec<MentalHealthCheckIn>>,
     #[prop(optional)] target_range: Option<Signal<(f64, f64)>>,
     #[prop(optional)] monitor_name: Option<Signal<String>>,
+    #[prop(optional)] on_switch_to_2d: Option<Callback<()>>,
+    #[prop(optional)] visible: Option<Signal<bool>>,
 ) -> impl IntoView {
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
     let yaw = RwSignal::new(-0.42_f32);
@@ -434,6 +458,7 @@ pub fn LingoMood3DChart(
     let active_pointer_id = RwSignal::new(Option::<i32>::None);
     let last_xy = RwSignal::new((0_i32, 0_i32));
     let gl_error = RwSignal::new(Option::<String>::None);
+    let viewport_rev = RwSignal::new(0_u64);
 
     let active_range = Memo::new(move |_| {
         target_range
@@ -443,10 +468,12 @@ pub fn LingoMood3DChart(
     });
 
     // Memoize geometry construction strictly on data & target-range changes so camera orbit/zoom
-    // NEVER clones readings or rebuilds the 3D scene on `mousemove`.
+    // NEVER clones readings or rebuilds the 3D scene on `mousemove`. Each rebuilt scene carries a
+    // monotonic ID to prevent pointer-reuse ABA stale GPU uploads.
     let scene_memo = Memo::new(move |_| {
         let (target_low, target_high) = active_range.get();
-        readings.with(|r| {
+        let scene_id = NEXT_SCENE_ID.fetch_add(1, Ordering::Relaxed);
+        let scene = readings.with(|r| {
             checkins.with(|c| {
                 Arc::new(build_lingo_3d_scene_with_range(
                     r,
@@ -455,21 +482,48 @@ pub fn LingoMood3DChart(
                     target_high,
                 ))
             })
-        })
+        });
+        (scene_id, scene)
     });
     let span_label =
         Memo::new(move |_| readings.with(|r| checkins.with(|c| format_trace_span_label(r, c))));
 
     #[cfg(all(target_arch = "wasm32", any(feature = "hydrate", feature = "csr")))]
     {
+        use wasm_bindgen::closure::Closure;
+        use wasm_bindgen::JsCast;
+
+        if let Some(win) = web_sys::window() {
+            let on_resize = Closure::<dyn FnMut()>::new(move || {
+                viewport_rev.update(|v| *v = v.wrapping_add(1));
+            });
+            let _ =
+                win.add_event_listener_with_callback("resize", on_resize.as_ref().unchecked_ref());
+            let resize_cb = StoredValue::new_local(Some(on_resize));
+            on_cleanup(move || {
+                if let (Some(w), Some(cb)) = (
+                    web_sys::window(),
+                    resize_cb.try_update_value(|slot| slot.take()).flatten(),
+                ) {
+                    let _ = w
+                        .remove_event_listener_with_callback("resize", cb.as_ref().unchecked_ref());
+                }
+            });
+        }
+
         let renderer_cache = StoredValue::new_local(std::cell::RefCell::new(
             Option::<CachedWebGl2Renderer>::None,
         ));
         Effect::new(move |_| {
-            let scene = scene_memo.get();
+            let (scene_id, scene) = scene_memo.get();
             let y = yaw.get();
             let p = pitch.get();
             let dist = distance.get();
+            let _ = viewport_rev.get();
+            let is_visible = visible.map(|sig| sig.get()).unwrap_or(true);
+            if !is_visible {
+                return;
+            }
             if let Some(canvas) = canvas_ref.get() {
                 renderer_cache.with_value(|cell| {
                     let mut slot = cell.borrow_mut();
@@ -487,7 +541,7 @@ pub fn LingoMood3DChart(
                     match init_res {
                         Ok(()) => {
                             if let Some(renderer) = slot.as_mut() {
-                                renderer.upload_if_needed(&scene);
+                                renderer.upload_if_needed(scene_id, &scene);
                                 renderer.draw(&canvas, y, p, dist);
                             }
                             gl_error.set(None);
@@ -500,7 +554,7 @@ pub fn LingoMood3DChart(
     }
 
     #[cfg(not(all(target_arch = "wasm32", any(feature = "hydrate", feature = "csr"))))]
-    let _ = (&scene_memo, &gl_error);
+    let _ = (&scene_memo, &gl_error, &viewport_rev, &visible);
 
     let on_pointerdown = move |ev: leptos::ev::PointerEvent| {
         let pointer_id = ev.pointer_id();
@@ -585,7 +639,10 @@ pub fn LingoMood3DChart(
 
     view! {
         <div class="space-y-3">
-            <div class="relative overflow-hidden rounded-xl border border-white/10 bg-slate-950">
+            <div
+                class="relative overflow-hidden rounded-xl border border-white/10 bg-slate-950"
+                class:hidden=move || gl_error.get().is_some()
+            >
                 <canvas
                     node_ref=canvas_ref
                     width="900"
@@ -635,9 +692,23 @@ pub fn LingoMood3DChart(
                 </div>
             </div>
             {move || gl_error.get().map(|err| view! {
-                <p role="status" aria-live="polite" title=err class="text-xs text-amber-300">
-                    "3D chart view is unavailable on this browser; switch to 2D View above to inspect your timeline."
-                </p>
+                <div
+                    role="status"
+                    aria-live="polite"
+                    title=err
+                    class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-400/30 bg-amber-500/10 p-4 text-xs text-amber-200"
+                >
+                    <span>"3D WebGL2 chart view is unavailable in this browser."</span>
+                    {on_switch_to_2d.map(|cb| view! {
+                        <button
+                            type="button"
+                            on:click=move |_| cb.run(())
+                            class="min-h-[36px] rounded-full bg-cyan-500 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-400"
+                        >
+                            "Switch to 2D View"
+                        </button>
+                    })}
+                </div>
             })}
             <p class="text-xs text-slate-400">
                 {move || {
@@ -668,7 +739,7 @@ struct CachedWebGl2Renderer {
     translucent_vao: glow::VertexArray,
     translucent_vbo: glow::Buffer,
     translucent_verts: i32,
-    uploaded_scene_ptr: usize,
+    uploaded_scene_id: u64,
 }
 
 #[cfg(all(target_arch = "wasm32", any(feature = "hydrate", feature = "csr")))]
@@ -818,15 +889,14 @@ impl CachedWebGl2Renderer {
                 translucent_vao,
                 translucent_vbo,
                 translucent_verts: 0,
-                uploaded_scene_ptr: 0,
+                uploaded_scene_id: 0,
             })
         }
     }
 
-    fn upload_if_needed(&mut self, scene: &Arc<Chart3DScene>) {
+    fn upload_if_needed(&mut self, scene_id: u64, scene: &Arc<Chart3DScene>) {
         use glow::HasContext;
-        let ptr = Arc::as_ptr(scene) as usize;
-        if self.uploaded_scene_ptr == ptr {
+        if self.uploaded_scene_id == scene_id {
             return;
         }
         // SAFETY: Buffers belong to `self.gl` and slices are tightly packed `f32` arrays.
@@ -859,12 +929,27 @@ impl CachedWebGl2Renderer {
             self.translucent_verts = (scene.translucent_triangles.len() / 7) as i32;
             self.gl.bind_buffer(glow::ARRAY_BUFFER, None);
         }
-        self.uploaded_scene_ptr = ptr;
+        self.uploaded_scene_id = scene_id;
     }
 
     fn draw(&self, canvas: &web_sys::HtmlCanvasElement, yaw: f32, pitch: f32, distance: f32) {
         use glam::{Mat4, Vec3};
         use glow::HasContext;
+
+        let css_w = f64::from(canvas.client_width());
+        let css_h = f64::from(canvas.client_height());
+        if css_w > 0.0 && css_h > 0.0 {
+            let dpr = web_sys::window()
+                .map(|w| w.device_pixel_ratio())
+                .unwrap_or(1.0);
+            let (target_w, target_h) = compute_canvas_backing_size(css_w, css_h, dpr);
+            if canvas.width() != target_w {
+                canvas.set_width(target_w);
+            }
+            if canvas.height() != target_h {
+                canvas.set_height(target_h);
+            }
+        }
 
         let width = canvas.width().max(1) as i32;
         let height = canvas.height().max(1) as i32;
@@ -1127,5 +1212,16 @@ mod tests {
         );
         assert!(has_color(&ada, COLOR_FLOOR_CAP));
         assert!(has_color(&ada, COLOR_CEILING_CAP));
+    }
+
+    #[test]
+    fn canvas_backing_size_matches_css_aspect_with_clamped_dpr() {
+        // Desktop 1052x300 @ 1x & 2x DPR
+        assert_eq!(compute_canvas_backing_size(1052.0, 300.0, 1.0), (1052, 300));
+        assert_eq!(compute_canvas_backing_size(1052.0, 300.0, 2.0), (2104, 600));
+        // DPR > 2.0 clamps to 2.0 to keep GPU memory bounded
+        assert_eq!(compute_canvas_backing_size(275.0, 300.0, 3.0), (550, 600));
+        // Invalid/zero dimensions fall back cleanly
+        assert_eq!(compute_canvas_backing_size(0.0, 0.0, f64::NAN), (900, 360));
     }
 }

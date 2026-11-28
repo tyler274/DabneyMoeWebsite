@@ -33,7 +33,7 @@ use crate::mental_health_cgm::{export_health_bridge_json_compact, monitor_hint_f
 use crate::mental_health_cgm::{
     glucose_axis_domain, glucose_axis_ticks, nominal_window_hours_for_trace,
     parse_commercial_glucose_input, parse_timestamp, sample_checkins_for_monitor,
-    sample_csv_for_monitor, select_notable_spike_peaks, slice_checkins_window,
+    sample_csv_for_monitor, select_notable_spike_peaks_above, slice_checkins_window,
     slice_readings_window, summarize_commercial_glucose_with_window, timeline_hour_span,
     AdaTimeInRangeBar, AgpPercentileChart, CommercialGlucoseImport, GlucoseImportDiagnostics,
     GlucoseMonitor, GlucoseUnit, GlucoseWindow, MeasurementMethod, ValidationLevel,
@@ -534,10 +534,22 @@ pub fn MentalHealthPage() -> impl IntoView {
         sample_full_payload.set(Some(sample));
         monitor_hint.set(None);
         csv_input.set(compact_textarea_preview(sample));
-        if !user_added_checkins.get_untracked() {
-            checkins.set(sample_checkins);
+        match parse_commercial_glucose_input(sample, None) {
+            Ok(parsed) => {
+                if !user_added_checkins.get_untracked() {
+                    let trace_max_h = parsed.readings.last().map(|r| r.hour_offset).unwrap_or(0.0);
+                    let bounded_checkins: Vec<MentalHealthCheckIn> = sample_checkins
+                        .into_iter()
+                        .filter(|c| c.hour_offset <= trace_max_h + 0.25)
+                        .collect();
+                    checkins.set(bounded_checkins);
+                }
+                apply_parsed_glucose(parsed, None);
+            }
+            Err(err) => {
+                csv_error.set(Some(err));
+            }
         }
-        apply_glucose_text(sample, None, None);
     };
     let load_monitor_preset = move |monitor: GlucoseMonitor| {
         load_sample(
@@ -1948,18 +1960,19 @@ pub fn MentalHealthPage() -> impl IntoView {
                     <div class="flex flex-wrap items-center gap-3 text-xs text-slate-300">
                         <div class="inline-flex rounded-full border border-white/15 bg-slate-900/80 p-0.5" role="group" aria-label="Time window">
                             {GlucoseWindow::ALL.into_iter().map(|w| {
+                                let is_selected = move || window.get() == w;
                                 view! {
                                     <button
                                         type="button"
-                                        aria-pressed=move || window.get() == w
+                                        aria-pressed=move || if is_selected() { "true" } else { "false" }
                                         on:click=move |_| window.set(w)
-                                        class=move || {
-                                            if window.get() == w {
-                                                "rounded-full bg-emerald-400 px-2.5 py-1 font-semibold text-slate-950 transition"
-                                            } else {
-                                                "rounded-full px-2.5 py-1 font-medium text-slate-300 transition hover:text-white"
-                                            }
-                                        }
+                                        class="rounded-full px-2.5 py-1 transition"
+                                        class:bg-emerald-400=is_selected
+                                        class:font-semibold=is_selected
+                                        class:text-slate-950=is_selected
+                                        class:font-medium=move || !is_selected()
+                                        class:text-slate-300=move || !is_selected()
+                                        class:hover:text-white=move || !is_selected()
                                     >
                                         {w.label()}
                                     </button>
@@ -1969,29 +1982,41 @@ pub fn MentalHealthPage() -> impl IntoView {
                         <div class="inline-flex rounded-full border border-white/15 bg-slate-900/80 p-0.5" role="group" aria-label="Chart view mode">
                             <button
                                 type="button"
-                                aria-pressed=move || chart_mode.get() == ChartViewMode::WebGl3D
-                                on:click=move |_| chart_mode.set(ChartViewMode::WebGl3D)
-                                class=move || {
+                                aria-pressed=move || {
                                     if chart_mode.get() == ChartViewMode::WebGl3D {
-                                        "rounded-full bg-cyan-500 px-3 py-1 font-semibold text-slate-950 transition"
+                                        "true"
                                     } else {
-                                        "rounded-full px-3 py-1 font-medium text-slate-300 transition hover:text-white"
+                                        "false"
                                     }
                                 }
+                                on:click=move |_| chart_mode.set(ChartViewMode::WebGl3D)
+                                class="rounded-full px-3 py-1 transition"
+                                class:bg-cyan-500=move || chart_mode.get() == ChartViewMode::WebGl3D
+                                class:font-semibold=move || chart_mode.get() == ChartViewMode::WebGl3D
+                                class:text-slate-950=move || chart_mode.get() == ChartViewMode::WebGl3D
+                                class:font-medium=move || chart_mode.get() != ChartViewMode::WebGl3D
+                                class:text-slate-300=move || chart_mode.get() != ChartViewMode::WebGl3D
+                                class:hover:text-white=move || chart_mode.get() != ChartViewMode::WebGl3D
                             >
                                 "3D View"
                             </button>
                             <button
                                 type="button"
-                                aria-pressed=move || chart_mode.get() == ChartViewMode::Svg2D
-                                on:click=move |_| chart_mode.set(ChartViewMode::Svg2D)
-                                class=move || {
+                                aria-pressed=move || {
                                     if chart_mode.get() == ChartViewMode::Svg2D {
-                                        "rounded-full bg-cyan-500 px-3 py-1 font-semibold text-slate-950 transition"
+                                        "true"
                                     } else {
-                                        "rounded-full px-3 py-1 font-medium text-slate-300 transition hover:text-white"
+                                        "false"
                                     }
                                 }
+                                on:click=move |_| chart_mode.set(ChartViewMode::Svg2D)
+                                class="rounded-full px-3 py-1 transition"
+                                class:bg-cyan-500=move || chart_mode.get() == ChartViewMode::Svg2D
+                                class:font-semibold=move || chart_mode.get() == ChartViewMode::Svg2D
+                                class:text-slate-950=move || chart_mode.get() == ChartViewMode::Svg2D
+                                class:font-medium=move || chart_mode.get() != ChartViewMode::Svg2D
+                                class:text-slate-300=move || chart_mode.get() != ChartViewMode::Svg2D
+                                class:hover:text-white=move || chart_mode.get() != ChartViewMode::Svg2D
                             >
                                 "2D View"
                             </button>
@@ -2017,11 +2042,19 @@ pub fn MentalHealthPage() -> impl IntoView {
                             checkins=windowed_checkins.into()
                             target_range=target_range_signal
                             monitor_name=Signal::derive(move || detected_monitor.get().display_name().to_string())
+                            on_switch_to_2d=Callback::new(move |()| chart_mode.set(ChartViewMode::Svg2D))
+                            visible=Signal::derive(move || {
+                                matches!(
+                                    active_tab.get(),
+                                    MentalHealthTab::Overview | MentalHealthTab::All
+                                )
+                            })
                         />
                     }.into_any(),
                     ChartViewMode::Svg2D => {
                         let (target_low, target_high) = target_range_signal.get();
                         let mon_name = detected_monitor.get().display_name().to_string();
+                        let method = measurement_method.get();
                         view! {
                             <LingoMoodTimelineChart
                                 readings=windowed_readings.get()
@@ -2029,6 +2062,7 @@ pub fn MentalHealthPage() -> impl IntoView {
                                 target_low_mg_dl=target_low
                                 target_high_mg_dl=target_high
                                 monitor_name=mon_name
+                                measurement_method=method
                             />
                         }
                         .into_any()
@@ -2040,6 +2074,13 @@ pub fn MentalHealthPage() -> impl IntoView {
             {move || {
                 glucose_summary.get().map(|summary| {
                     let bins = summary.agp_hourly.clone();
+                    let agp_sensor_ceiling = (summary.ceiling_capped_readings > 0).then(|| {
+                        if summary.monitor == GlucoseMonitor::AbbottLingo {
+                            200.0
+                        } else {
+                            summary.max_mg_dl
+                        }
+                    });
                     let device_badge = format!(
                         "{} · {} · {} · window {}",
                         summary.monitor.display_name(),
@@ -2051,11 +2092,15 @@ pub fn MentalHealthPage() -> impl IntoView {
                         <section class="print-hide print:hidden mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6 space-y-5">
                             <div class="flex flex-wrap items-center justify-between gap-3">
                                 <div>
-                                    <h2 class="text-lg font-semibold text-white">
-                                        "ADA 5-Band Time-in-Range & 24-Hour Ambulatory Glucose Profile (AGP)"
+                                    <h2 class="flex flex-wrap items-center gap-1 text-lg font-semibold text-white">
+                                        <span>"ADA 5-Band Time-in-Range & 24-Hour Ambulatory Glucose Profile (AGP)"</span>
+                                        <InfoTip
+                                            term="AGP"
+                                            text="Ambulatory Glucose Profile stacks every day in your selected window onto one 24-hour clock so you can see your typical daily curve and how much readings vary at each hour."
+                                        />
                                     </h2>
                                     <p class="text-sm text-slate-400">
-                                        "International consensus glucose distribution (TBR <54 / 54–69, TIR 70–180, TITR 70–140, TAR 181–250 / >250) and 5th–95th / 25th–75th / median hourly AGP curve."
+                                        "Standard clinical glucose bands (Low <70, In-Range 70–180, Tight 70–140, High >180 mg/dL) paired with a 24-hour typical-day curve."
                                     </p>
                                 </div>
                                 <span class="inline-flex rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-300">
@@ -2065,10 +2110,19 @@ pub fn MentalHealthPage() -> impl IntoView {
                             <AdaTimeInRangeBar summary=summary />
                             <div class="rounded-xl border border-white/10 bg-slate-950/60 p-4">
                                 <div class="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
-                                    <span class="font-medium text-slate-200">"24-Hour AGP Percentile Ribbon (p5–p95 outer · p25–p75 IQR · p50 median)"</span>
+                                    <span class="inline-flex items-center font-medium text-slate-200">
+                                        <span>"24-Hour Typical Day Curve (AGP · Median, Usual Range & Outer Spread)"</span>
+                                        <InfoTip
+                                            term="Median, IQR & Outer Band"
+                                            text="Median (p50) is your middle reading at each clock hour. IQR (p25–p75) covers the middle 50% of days — your usual range. Outer band (p5–p95) spans 90% of days to show wider swings without single-point outliers."
+                                        />
+                                    </span>
                                     <span>"Local clock hour (00:00–23:00)"</span>
                                 </div>
-                                <AgpPercentileChart bins=bins />
+                                {match agp_sensor_ceiling {
+                                    Some(ceil) => view! { <AgpPercentileChart bins=bins sensor_ceiling_mg_dl=ceil /> }.into_any(),
+                                    None => view! { <AgpPercentileChart bins=bins /> }.into_any(),
+                                }}
                             </div>
                         </section>
                     }
@@ -2128,12 +2182,18 @@ pub fn MentalHealthPage() -> impl IntoView {
                 {move || {
                     let is_personal =
                         loaded_file_label.get().is_some() || user_added_checkins.get();
-                    let baseline = if is_personal {
+                    let current_checkins = checkins.get();
+                    let has_longitudinal_checkins = current_checkins
+                        .iter()
+                        .filter(|c| c.phq9.is_some() || c.gad7.is_some())
+                        .count()
+                        >= 2;
+                    let baseline = if is_personal || has_longitudinal_checkins {
                         Vec::new()
                     } else {
                         sample_assessment_history()
                     };
-                    let series = build_assessment_series(&baseline, &checkins.get());
+                    let series = build_assessment_series(&baseline, &current_checkins);
                     if series.is_empty() {
                         view! {
                             <p class="rounded-xl border border-white/10 bg-slate-950/60 p-4 text-xs text-slate-300">
@@ -2861,6 +2921,39 @@ fn timeline_x_axis_labels(readings: &[LingoReading], max_hour: f64) -> [String; 
     })
 }
 
+fn svg_glucose_point_color(r: &LingoReading, target_low: f64, target_high: f64) -> &'static str {
+    if r.bound.is_floor_capped() {
+        "#f43f5e"
+    } else if r.bound.is_ceiling_capped() {
+        "#f97316"
+    } else if r.glucose_mg_dl < target_low {
+        ROSE
+    } else if r.glucose_mg_dl > target_high {
+        AMBER
+    } else {
+        CYAN
+    }
+}
+
+fn svg_glucose_pair_color(
+    a: &LingoReading,
+    b: &LingoReading,
+    target_low: f64,
+    target_high: f64,
+) -> &'static str {
+    if a.bound.is_floor_capped() || b.bound.is_floor_capped() {
+        "#f43f5e"
+    } else if a.bound.is_ceiling_capped() || b.bound.is_ceiling_capped() {
+        "#f97316"
+    } else if a.glucose_mg_dl < target_low || b.glucose_mg_dl < target_low {
+        ROSE
+    } else if a.glucose_mg_dl > target_high || b.glucose_mg_dl > target_high {
+        AMBER
+    } else {
+        CYAN
+    }
+}
+
 #[component]
 fn LingoMoodTimelineChart(
     readings: Vec<LingoReading>,
@@ -2868,6 +2961,7 @@ fn LingoMoodTimelineChart(
     #[prop(default = 70.0)] target_low_mg_dl: f64,
     #[prop(default = 140.0)] target_high_mg_dl: f64,
     #[prop(optional)] monitor_name: Option<String>,
+    #[prop(default = MeasurementMethod::InterstitialCgm)] measurement_method: MeasurementMethod,
 ) -> impl IntoView {
     let mut target_low = if target_low_mg_dl.is_finite() {
         target_low_mg_dl
@@ -2915,49 +3009,93 @@ fn LingoMoodTimelineChart(
         pad_t + plot_h - norm * plot_h
     };
 
+    const MIN_Y_LABEL_GAP: f64 = 13.0;
     let band_top = y_for_g(target_high);
     let band_bottom = y_for_g(target_low);
+    let band_mid = (band_top + band_bottom) * 0.5;
     let band_h = (band_bottom - band_top).max(1.0);
     let y_180 = y_for_g(180.0);
     let show_180_ref = (target_high - 180.0).abs() > 0.5;
-    let show_180_label = show_180_ref && (y_180 - band_top).abs() > 10.0;
-    let labelled: Vec<f64> = [
-        Some(band_top),
-        Some(band_bottom),
-        show_180_label.then_some(y_180),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+    let show_low_label = (band_bottom - band_top).abs() >= MIN_Y_LABEL_GAP;
+    let mut labelled: Vec<f64> = if show_low_label {
+        vec![band_top, band_bottom]
+    } else {
+        vec![band_mid]
+    };
+    let show_180_label = show_180_ref
+        && labelled
+            .iter()
+            .all(|&l| (y_180 - l).abs() >= MIN_Y_LABEL_GAP);
+    if show_180_label {
+        labelled.push(y_180);
+    }
     let grid_ticks: Vec<(f64, f64)> = glucose_axis_ticks((min_g, max_g))
         .into_iter()
         .map(|g| (g, y_for_g(g)))
-        .filter(|&(_, y)| labelled.iter().all(|&l| (y - l).abs() > 10.0))
+        .filter(|&(_, y)| labelled.iter().all(|&l| (y - l).abs() >= MIN_Y_LABEL_GAP))
         .collect();
 
     let segments = downsample_segments_for_chart(&readings, 360, DEFAULT_CHART_GAP_HOURS);
-    let spike_peaks: Vec<LingoReading> = select_notable_spike_peaks(&readings, 36)
-        .into_iter()
-        .filter(|r| r.bound.is_ceiling_capped() || r.glucose_mg_dl > target_high)
-        .collect();
+    let spike_peaks = select_notable_spike_peaks_above(&readings, target_high, 36);
     let floor_caps = select_svg_floor_cap_markers(&readings, 24);
     let [x_left, x_mid, x_right] = timeline_x_axis_labels(&readings, max_hour);
 
-    // Sample up to 36 evenly spaced points across the timeline for smooth hover/tap inspection.
-    let inspect_points: Vec<LingoReading> = if readings.len() <= 36 {
-        readings.clone()
+    // Sample up to 48 time-distributed points from the rendered segments (never biased by dense
+    // raw-array clusters) so sparse post-gap sections remain inspectable via hover/focus/tap.
+    let rendered_flat: Vec<LingoReading> = segments.iter().flatten().cloned().collect();
+    let inspect_points: Vec<LingoReading> = if rendered_flat.len() <= 48 {
+        rendered_flat
     } else {
-        let step = (readings.len() - 1) as f64 / 35.0;
-        (0..36)
-            .map(|i| readings[((i as f64 * step).round() as usize).min(readings.len() - 1)].clone())
+        let step = (rendered_flat.len() - 1) as f64 / 47.0;
+        (0..48)
+            .map(|i| {
+                rendered_flat[((i as f64 * step).round() as usize).min(rendered_flat.len() - 1)]
+                    .clone()
+            })
             .collect()
     };
 
-    let segment_polylines: Vec<String> = segments
-        .iter()
-        .filter(|seg| seg.len() >= 2)
-        .map(|seg| {
-            seg.iter()
+    // Split each continuous segment into contiguous state-colored polylines (matching 3D view).
+    let mut colored_polylines: Vec<(&'static str, String)> = Vec::new();
+    for seg in segments.iter().filter(|s| s.len() >= 2) {
+        let mut run_color: Option<&'static str> = None;
+        let mut run_pts: Vec<String> = Vec::new();
+        for pair in seg.windows(2) {
+            let color = svg_glucose_pair_color(&pair[0], &pair[1], target_low, target_high);
+            let p0 = format!(
+                "{:.1},{:.1}",
+                x_for(pair[0].hour_offset),
+                y_for_g(pair[0].glucose_mg_dl)
+            );
+            let p1 = format!(
+                "{:.1},{:.1}",
+                x_for(pair[1].hour_offset),
+                y_for_g(pair[1].glucose_mg_dl)
+            );
+            if run_color == Some(color) {
+                run_pts.push(p1);
+            } else {
+                if let Some(prev_col) = run_color.replace(color) {
+                    if run_pts.len() >= 2 {
+                        colored_polylines.push((prev_col, run_pts.join(" ")));
+                    }
+                }
+                run_pts = vec![p0, p1];
+            }
+        }
+        if let Some(col) = run_color {
+            if run_pts.len() >= 2 {
+                colored_polylines.push((col, run_pts.join(" ")));
+            }
+        }
+    }
+
+    let is_bgm = measurement_method == MeasurementMethod::CapillaryBgm;
+    let bgm_guide_points: Option<String> =
+        (is_bgm && segments.iter().map(Vec::len).sum::<usize>() >= 2).then(|| {
+            segments
+                .iter()
+                .flatten()
                 .map(|r| {
                     format!(
                         "{:.1},{:.1}",
@@ -2967,15 +3105,22 @@ fn LingoMoodTimelineChart(
                 })
                 .collect::<Vec<_>>()
                 .join(" ")
-        })
-        .collect();
-    let isolated_points: Vec<(f64, f64)> = segments
+        });
+    let isolated_radius = if is_bgm { 4.0 } else { 3.0 };
+    let isolated_points: Vec<(f64, f64, &'static str)> = segments
         .iter()
         .filter(|seg| seg.len() == 1)
-        .map(|seg| (x_for(seg[0].hour_offset), y_for_g(seg[0].glucose_mg_dl)))
+        .map(|seg| {
+            let r = &seg[0];
+            (
+                x_for(r.hour_offset),
+                y_for_g(r.glucose_mg_dl),
+                svg_glucose_point_color(r, target_low, target_high),
+            )
+        })
         .collect();
 
-    let selected_detail = RwSignal::new(Option::<String>::None);
+    let selected_point = RwSignal::new(Option::<(f64, f64, String)>::None);
     let chart_aria_label = format!(
         "{} continuous glucose monitoring and mental health check-in timeline",
         monitor_name
@@ -3016,23 +3161,67 @@ fn LingoMoodTimelineChart(
                 {show_180_label.then(|| view! {
                     <text x="8" y=y_180 + 4.0 fill=AMBER font-size="10">"180"</text>
                 })}
-                <text x="8" y=band_top + 4.0 fill=SLATE_LIGHT font-size="10">{format!("{target_high:.0}")}</text>
-                <text x="8" y=band_bottom + 4.0 fill=SLATE_LIGHT font-size="10">{format!("{target_low:.0}")}</text>
+                {if show_low_label {
+                    view! {
+                        <>
+                            <text x="8" y=band_top + 4.0 fill=SLATE_LIGHT font-size="10">{format!("{target_high:.0}")}</text>
+                            <text x="8" y=band_bottom + 4.0 fill=SLATE_LIGHT font-size="10">{format!("{target_low:.0}")}</text>
+                        </>
+                    }.into_any()
+                } else {
+                    view! {
+                        <text x="4" y=band_mid + 4.0 fill=SLATE_LIGHT font-size="9">{format!("{target_low:.0}–{target_high:.0}")}</text>
+                    }.into_any()
+                }}
 
-                // Gap-aware glucose segments (never bridged across >2h sensor gaps)
-                {segment_polylines.into_iter().map(|pts| view! {
+                // Subtle dashed guide for discrete capillary fingerstick BGM readings
+                {bgm_guide_points.map(|pts| view! {
                     <polyline
                         fill="none"
-                        stroke=CYAN
+                        stroke="rgba(34, 211, 238, 0.35)"
+                        stroke-width="1.5"
+                        stroke-dasharray="3 4"
+                        points=pts
+                    />
+                })}
+
+                // Gap-aware, state-colored glucose segments (never bridged across >2h sensor gaps)
+                {colored_polylines.into_iter().map(|(color, pts)| view! {
+                    <polyline
+                        fill="none"
+                        stroke=color
                         stroke-width="2.5"
                         stroke-linejoin="round"
                         stroke-linecap="round"
                         points=pts
                     />
                 }).collect_view()}
-                {isolated_points.into_iter().map(|(cx, cy)| view! {
-                    <circle cx=cx cy=cy r="2.5" fill=CYAN />
+                {isolated_points.into_iter().map(|(cx, cy, color)| view! {
+                    <circle cx=cx cy=cy r=isolated_radius fill=color stroke="#0f172a" stroke-width="1.0" />
                 }).collect_view()}
+
+                // Visual hover/focus/tap crosshair & highlight ring
+                {move || selected_point.get().map(|(sx, sy, _)| view! {
+                    <g data-timeline-crosshair="true" pointer-events="none">
+                        <line
+                            x1=sx
+                            y1=pad_t
+                            x2=sx
+                            y2=height - pad_b
+                            stroke="rgba(34, 211, 238, 0.50)"
+                            stroke-width="1.2"
+                            stroke-dasharray="3 3"
+                        />
+                        <circle
+                            cx=sx
+                            cy=sy
+                            r="6.5"
+                            fill="none"
+                            stroke=CYAN
+                            stroke-width="2"
+                        />
+                    </g>
+                })}
 
                 // Sampled invisible hit targets along the glucose trace for hover/tap/keyboard inspection
                 {inspect_points.into_iter().map(|r| {
@@ -3055,9 +3244,9 @@ fn LingoMoodTimelineChart(
                             role="button"
                             aria-label=tip.clone()
                             class="cursor-pointer focus:outline-none"
-                            on:mouseenter=move |_| selected_detail.set(Some(t1.clone()))
-                            on:focus=move |_| selected_detail.set(Some(t2.clone()))
-                            on:click=move |_| selected_detail.set(Some(t3.clone()))
+                            on:mouseenter=move |_| selected_point.set(Some((cx, cy, t1.clone())))
+                            on:focus=move |_| selected_point.set(Some((cx, cy, t2.clone())))
+                            on:click=move |_| selected_point.set(Some((cx, cy, t3.clone())))
                         >
                             <title>{tip.clone()}</title>
                             <circle cx=cx cy=cy r="9" fill="transparent" />
@@ -3084,9 +3273,9 @@ fn LingoMoodTimelineChart(
                                 role="button"
                                 aria-label=tip.clone()
                                 class="cursor-pointer focus:outline-none"
-                                on:mouseenter=move |_| selected_detail.set(Some(t1.clone()))
-                                on:focus=move |_| selected_detail.set(Some(t2.clone()))
-                                on:click=move |_| selected_detail.set(Some(t3.clone()))
+                                on:mouseenter=move |_| selected_point.set(Some((cx, cy, t1.clone())))
+                                on:focus=move |_| selected_point.set(Some((cx, cy, t2.clone())))
+                                on:click=move |_| selected_point.set(Some((cx, cy, t3.clone())))
                             >
                                 <title>{tip.clone()}</title>
                                 <circle cx=cx cy=cy r="5.0" fill="#f97316" stroke="#fff7ed" stroke-width="1.5" />
@@ -3099,9 +3288,9 @@ fn LingoMoodTimelineChart(
                                 role="button"
                                 aria-label=tip.clone()
                                 class="cursor-pointer focus:outline-none"
-                                on:mouseenter=move |_| selected_detail.set(Some(t1.clone()))
-                                on:focus=move |_| selected_detail.set(Some(t2.clone()))
-                                on:click=move |_| selected_detail.set(Some(t3.clone()))
+                                on:mouseenter=move |_| selected_point.set(Some((cx, cy, t1.clone())))
+                                on:focus=move |_| selected_point.set(Some((cx, cy, t2.clone())))
+                                on:click=move |_| selected_point.set(Some((cx, cy, t3.clone())))
                             >
                                 <title>{tip.clone()}</title>
                                 <circle cx=cx cy=cy r="4.5" fill=AMBER stroke="#0f172a" stroke-width="1.5" />
@@ -3124,9 +3313,9 @@ fn LingoMoodTimelineChart(
                             role="button"
                             aria-label=tip.clone()
                             class="cursor-pointer focus:outline-none"
-                            on:mouseenter=move |_| selected_detail.set(Some(t1.clone()))
-                            on:focus=move |_| selected_detail.set(Some(t2.clone()))
-                            on:click=move |_| selected_detail.set(Some(t3.clone()))
+                            on:mouseenter=move |_| selected_point.set(Some((cx, cy, t1.clone())))
+                            on:focus=move |_| selected_point.set(Some((cx, cy, t2.clone())))
+                            on:click=move |_| selected_point.set(Some((cx, cy, t3.clone())))
                         >
                             <title>{tip.clone()}</title>
                             <circle cx=cx cy=cy r="4.5" fill="#f43f5e" stroke="#fff1f2" stroke-width="1.5" />
@@ -3152,9 +3341,9 @@ fn LingoMoodTimelineChart(
                             role="button"
                             aria-label=tip.clone()
                             class="cursor-pointer focus:outline-none"
-                            on:mouseenter=move |_| selected_detail.set(Some(t1.clone()))
-                            on:focus=move |_| selected_detail.set(Some(t2.clone()))
-                            on:click=move |_| selected_detail.set(Some(t3.clone()))
+                            on:mouseenter=move |_| selected_point.set(Some((cx, my, t1.clone())))
+                            on:focus=move |_| selected_point.set(Some((cx, my, t2.clone())))
+                            on:click=move |_| selected_point.set(Some((cx, my, t3.clone())))
                         >
                             <title>{tip.clone()}</title>
                             <line x1=cx y1=pad_t x2=cx y2=height - pad_b stroke="rgba(148,163,184,0.18)" stroke-dasharray="2 3" />
@@ -3176,10 +3365,13 @@ fn LingoMoodTimelineChart(
             <div class="flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-2 text-[11px]">
                 <p role="status" aria-live="polite" class="font-mono text-cyan-200">
                     {move || {
-                        selected_detail.get().unwrap_or_else(|| {
-                            "Hover, focus, or tap any glucose point, peak, dip, or check-in marker for exact values."
-                                .to_string()
-                        })
+                        selected_point
+                            .get()
+                            .map(|(_, _, detail)| detail)
+                            .unwrap_or_else(|| {
+                                "Hover, focus, or tap any glucose point, peak, dip, or check-in marker for exact values."
+                                    .to_string()
+                            })
                     }}
                 </p>
                 <div class="flex flex-wrap items-center gap-3 text-[10px] text-slate-400">
@@ -3194,11 +3386,54 @@ fn LingoMoodTimelineChart(
                     <span class="inline-flex items-center gap-1">
                         <span class="inline-block h-2 w-2 rounded-full bg-rose-500"></span>
                         "Floor cap"
+                        <InfoTip
+                            term="Sensor Caps"
+                            text="Orange markers show readings pinned at the sensor's upper limit (e.g., >200 mg/dL on Lingo); crimson markers show readings pinned at the lower limit (<55 mg/dL)."
+                        />
                     </span>
                 </div>
             </div>
         </div>
     }
+}
+
+fn format_assessment_axis_date(date: &str) -> String {
+    let trimmed = date.trim();
+    if let Some(prefix) = trimmed.get(..10) {
+        if prefix.is_ascii()
+            && prefix.as_bytes().get(4) == Some(&b'-')
+            && prefix.as_bytes().get(7) == Some(&b'-')
+        {
+            return prefix.to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+/// Select non-overlapping X-axis tick indices across `n` evenly spaced points within `plot_w`,
+/// always preserving the first and last point when `n >= 2` and skipping interior labels that
+/// would sit closer than `min_spacing` SVG units.
+fn select_non_overlapping_x_tick_indices(n: usize, plot_w: f64, min_spacing: f64) -> Vec<bool> {
+    if n == 0 {
+        return Vec::new();
+    }
+    if n == 1 {
+        return vec![true];
+    }
+    let step_px = plot_w / (n - 1) as f64;
+    let mut show = vec![false; n];
+    show[0] = true;
+    show[n - 1] = true;
+    let last_x = (n - 1) as f64 * step_px;
+    let mut prev_x = 0.0;
+    for (i, slot) in show.iter_mut().enumerate().take(n - 1).skip(1) {
+        let x = i as f64 * step_px;
+        if x - prev_x >= min_spacing && last_x - x >= min_spacing {
+            *slot = true;
+            prev_x = x;
+        }
+    }
+    show
 }
 
 #[component]
@@ -3211,11 +3446,19 @@ fn Phq9Gad7TrendChart(series: Vec<AssessmentPoint>) -> impl IntoView {
     let pad_b = 28.0_f64;
     let plot_w = width - pad_l - pad_r;
     let plot_h = height - pad_t - pad_b;
+    let plot_right = width - pad_r;
     let max_score = 27.0_f64;
 
-    let count = series.len().max(2);
+    let series_len = series.len();
+    let count = series_len.max(2);
     let x_for = |idx: usize| pad_l + (idx as f64 / (count - 1) as f64) * plot_w;
     let y_for = |score: u8| pad_t + plot_h - (f64::from(score).min(max_score) / max_score) * plot_h;
+    let show_date_label = select_non_overlapping_x_tick_indices(series_len, plot_w, 88.0);
+    let half_step = if series_len >= 2 {
+        (plot_w / (series_len - 1) as f64) * 0.5
+    } else {
+        18.0
+    };
 
     let phq9_points: String = series
         .iter()
@@ -3232,7 +3475,7 @@ fn Phq9Gad7TrendChart(series: Vec<AssessmentPoint>) -> impl IntoView {
 
     let y_mild = y_for(5);
     let y_mod = y_for(10);
-    let selected_point = RwSignal::new(Option::<String>::None);
+    let selected_point = RwSignal::new(Option::<(f64, String)>::None);
 
     view! {
         <div class="space-y-2.5">
@@ -3242,8 +3485,8 @@ fn Phq9Gad7TrendChart(series: Vec<AssessmentPoint>) -> impl IntoView {
                 role="img"
                 aria-label="PHQ-9 and GAD-7 longitudinal score trajectory"
             >
-                <line x1=pad_l y1=y_mod x2=width - pad_r y2=y_mod stroke="rgba(251, 191, 36, 0.35)" stroke-dasharray="4 4" />
-                <line x1=pad_l y1=y_mild x2=width - pad_r y2=y_mild stroke="rgba(52, 211, 153, 0.30)" stroke-dasharray="4 4" />
+                <line x1=pad_l y1=y_mod x2=plot_right y2=y_mod stroke="rgba(251, 191, 36, 0.35)" stroke-dasharray="4 4" />
+                <line x1=pad_l y1=y_mild x2=plot_right y2=y_mild stroke="rgba(52, 211, 153, 0.30)" stroke-dasharray="4 4" />
 
                 <text x="6" y=y_mod + 4.0 fill=AMBER font-size="10">"10"</text>
                 <text x="6" y=y_mild + 4.0 fill=EMERALD font-size="10">"5"</text>
@@ -3251,6 +3494,19 @@ fn Phq9Gad7TrendChart(series: Vec<AssessmentPoint>) -> impl IntoView {
 
                 <polyline fill="none" stroke=VIOLET stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points=phq9_points />
                 <polyline fill="none" stroke=ROSE stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points=gad7_points />
+
+                {move || selected_point.get().map(|(sx, _)| view! {
+                    <line
+                        x1=sx
+                        y1=pad_t
+                        x2=sx
+                        y2=pad_t + plot_h
+                        stroke="rgba(167, 139, 250, 0.55)"
+                        stroke-width="1.2"
+                        stroke-dasharray="3 3"
+                        pointer-events="none"
+                    />
+                })}
 
                 {series.into_iter().enumerate().map(|(i, p)| {
                     let cx = x_for(i);
@@ -3272,37 +3528,62 @@ fn Phq9Gad7TrendChart(series: Vec<AssessmentPoint>) -> impl IntoView {
                     let gad_circle = p.gad7.map(|v| view! {
                         <circle cx=cx cy=y_for(v) r="4.5" fill=ROSE stroke="#0f172a" stroke-width="1.5" />
                     });
+                    let left = (cx - half_step.min(18.0)).max(pad_l);
+                    let right = (cx + half_step.min(18.0)).min(plot_right);
+                    let hit_w = (right - left).max(8.0);
+                    let axis_label = show_date_label
+                        .get(i)
+                        .copied()
+                        .unwrap_or(false)
+                        .then(|| {
+                            let anchor = if i == 0 {
+                                "start"
+                            } else if i + 1 == series_len {
+                                "end"
+                            } else {
+                                "middle"
+                            };
+                            let label_txt = format_assessment_axis_date(&p.date);
+                            view! {
+                                <text x=cx y=height - 8.0 text-anchor=anchor fill=SLATE_LIGHT font-size="10">
+                                    {label_txt}
+                                </text>
+                            }
+                        });
                     view! {
                         <g
                             tabindex="0"
                             role="button"
                             aria-label=tip.clone()
                             class="cursor-pointer focus:outline-none"
-                            on:mouseenter=move |_| selected_point.set(Some(t1.clone()))
-                            on:focus=move |_| selected_point.set(Some(t2.clone()))
-                            on:click=move |_| selected_point.set(Some(t3.clone()))
+                            on:mouseenter=move |_| selected_point.set(Some((cx, t1.clone())))
+                            on:focus=move |_| selected_point.set(Some((cx, t2.clone())))
+                            on:click=move |_| selected_point.set(Some((cx, t3.clone())))
                         >
                             <title>{tip.clone()}</title>
                             <rect
-                                x=(cx - 18.0).max(pad_l)
+                                x=left
                                 y=pad_t
-                                width="36"
+                                width=hit_w
                                 height=plot_h
                                 fill="transparent"
                             />
                             {phq_circle}
                             {gad_circle}
-                            <text x=cx y=height - 8.0 text-anchor="middle" fill=SLATE_LIGHT font-size="10">{p.date}</text>
+                            {axis_label}
                         </g>
                     }
                 }).collect_view()}
             </svg>
             <p role="status" aria-live="polite" class="border-t border-white/5 pt-2 font-mono text-[11px] text-violet-200">
                 {move || {
-                    selected_point.get().unwrap_or_else(|| {
-                        "Hover, focus, or tap any date to inspect PHQ-9 & GAD-7 scores and clinical severity."
-                            .to_string()
-                    })
+                    selected_point
+                        .get()
+                        .map(|(_, detail)| detail)
+                        .unwrap_or_else(|| {
+                            "Hover, focus, or tap any date to inspect PHQ-9 & GAD-7 scores and clinical severity."
+                                .to_string()
+                        })
                 }}
             </p>
         </div>
@@ -3769,5 +4050,57 @@ mod tests {
             "custom target_high != 180 should keep the 180 mg/dL reference line"
         );
         assert!(custom_html.contains(">180</text>"));
+    }
+
+    #[test]
+    fn phq9_chart_thins_dense_axis_labels_and_keeps_endpoints_in_date_format() {
+        let six_mo = sample_lingo_6mo_checkins();
+        let series = build_assessment_series(&[], &six_mo);
+        assert!(series.len() >= 10);
+        let html = view! { <Phq9Gad7TrendChart series=series.clone() /> }.to_html();
+        let first_day = &series.first().unwrap().date[..10];
+        let last_day = &series.last().unwrap().date[..10];
+        assert!(html.contains(first_day));
+        assert!(html.contains(last_day));
+        // Rendered <text> count: 3 Y-axis labels (10, 5, 27) + <= 8 thinned X-axis date labels.
+        let text_count = html.matches("<text").count();
+        assert!(
+            text_count <= 11,
+            "expected thinned X-axis labels (<= 11 total <text>), got {text_count}"
+        );
+    }
+
+    #[test]
+    fn timeline_svg_handles_narrow_range_labels_and_bgm_guide() {
+        let bgm = parse_commercial_glucose_input(
+            crate::mental_health_cgm::sample_csv_for_monitor(GlucoseMonitor::FingerstickBgm),
+            None,
+        )
+        .unwrap();
+        let bgm_html = view! {
+            <LingoMoodTimelineChart
+                readings=bgm.readings
+                checkins=Vec::new()
+                target_low_mg_dl=95.0
+                target_high_mg_dl=105.0
+                measurement_method=MeasurementMethod::CapillaryBgm
+            />
+        }
+        .to_html();
+        // Dashed BGM connecting guide + larger r="4" dots.
+        assert!(bgm_html.contains("stroke-dasharray=\"3 4\""));
+        assert!(bgm_html.contains("r=\"4\""));
+        // 10 mg/dL narrow band on 40..200 axis is 12 SVG units (< 13px), so it collapses into a
+        // single combined non-overlapping label instead of colliding 95 and 105, and suppresses
+        // the nearby 100 grid tick against `band_mid`.
+        assert!(bgm_html.contains("95–105"));
+        assert!(!bgm_html.contains(">100</text>"));
+
+        // Non-ASCII date string must never panic on byte-index slicing.
+        assert_eq!(format_assessment_axis_date("abcd-ef-gé"), "abcd-ef-gé");
+        assert_eq!(
+            format_assessment_axis_date("2026-11-19 12:13"),
+            "2026-11-19"
+        );
     }
 }

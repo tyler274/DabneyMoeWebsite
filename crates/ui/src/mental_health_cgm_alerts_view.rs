@@ -447,7 +447,13 @@ pub fn GlucoseRangeAlertsCard(
                 <div class="flex flex-wrap items-center gap-1.5 text-xs">
                     <button
                         type="button"
-                        aria-pressed=move || config.get().sanitized().preset == GlucoseTargetPreset::TightMetabolic
+                        aria-pressed=move || {
+                            if config.get().sanitized().preset == GlucoseTargetPreset::TightMetabolic {
+                                "true"
+                            } else {
+                                "false"
+                            }
+                        }
                         on:click=apply_tight_preset
                         class=move || {
                             if config.get().sanitized().preset == GlucoseTargetPreset::TightMetabolic {
@@ -461,7 +467,13 @@ pub fn GlucoseRangeAlertsCard(
                     </button>
                     <button
                         type="button"
-                        aria-pressed=move || config.get().sanitized().preset == GlucoseTargetPreset::AdaStandard
+                        aria-pressed=move || {
+                            if config.get().sanitized().preset == GlucoseTargetPreset::AdaStandard {
+                                "true"
+                            } else {
+                                "false"
+                            }
+                        }
                         on:click=apply_ada_preset
                         class=move || {
                             if config.get().sanitized().preset == GlucoseTargetPreset::AdaStandard {

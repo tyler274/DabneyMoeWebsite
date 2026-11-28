@@ -80,8 +80,12 @@ pub fn SensorSaturationBanner(
             <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="flex items-center gap-2">
                     <span class="inline-block h-2.5 w-2.5 rounded-full bg-orange-400"></span>
-                    <h2 class="text-sm font-semibold text-amber-100">
-                        "Sensor Saturation & Bound Clipping Notice"
+                    <h2 class="flex items-center text-sm font-semibold text-amber-100">
+                        <span>"Sensor Saturation & Bound Clipping Notice"</span>
+                        <InfoTip
+                            term="Sensor Saturation"
+                            text="Some consumer sensors stop measuring past a fixed floor or ceiling (for example, Abbott Lingo reports >200 mg/dL at 201 and <55 mg/dL at 54). Readings pinned at a cap are lower or upper bounds rather than exact values."
+                        />
                     </h2>
                 </div>
                 <span class="rounded-full border border-amber-300/30 bg-slate-950/60 px-2.5 py-0.5 text-[11px] font-medium text-amber-200">
@@ -292,7 +296,13 @@ pub fn PeriodComparisonCard(comparison: PeriodComparison) -> impl IntoView {
                 </div>
 
                 <div class="rounded-xl border border-white/10 bg-slate-950/60 p-3">
-                    <p class="text-[11px] font-medium text-slate-400">"Ceiling-Cap %"</p>
+                    <p class="flex items-center text-[11px] font-medium text-slate-400">
+                        <span>"Ceiling-Cap %"</span>
+                        <InfoTip
+                            term="Ceiling-Cap %"
+                            text="Percentage of readings pinned at the sensor's upper measurement limit (e.g., >200 mg/dL on Lingo). Lower percentages mean fewer readings exceeded what the sensor could measure."
+                        />
+                    </p>
                     <p class="mt-1 font-mono text-lg font-bold text-orange-300">
                         {format!("{:.1}%", comparison.recent_ceiling_capped_pct)}
                     </p>
@@ -323,8 +333,12 @@ pub fn CircadianBreakdownSection(periods: Vec<CircadianPeriodSummary>) -> impl I
         >
             <div class="flex flex-wrap items-end justify-between gap-3">
                 <div>
-                    <h2 class="flex items-center text-lg font-semibold text-white">
-                        <span>"Circadian Breakdown (Local Clock Time)"</span>
+                    <h2 class="flex flex-wrap items-center gap-1 text-lg font-semibold text-white">
+                        <span>"Time-of-Day (Circadian) Breakdown"</span>
+                        <InfoTip
+                            term="Circadian"
+                            text="Groups your readings into four 6-hour blocks of local clock time (Overnight, Morning, Afternoon, Evening) so you can spot repeating daily patterns such as dawn rises or evening peaks."
+                        />
                         <InfoTip
                             term="p95"
                             text="95th percentile (p95): 95% of readings in that 6-hour block fall below this level, highlighting typical upper peaks without single-point outliers."
@@ -417,7 +431,7 @@ pub fn CircadianBreakdownSection(periods: Vec<CircadianPeriodSummary>) -> impl I
                                                 <p class=format!("font-mono font-semibold {tbr_cls}")>{format!("{:.1}%", p.tbr_lt_70_pct)}</p>
                                             </div>
                                             <div class="rounded-lg border border-white/5 bg-slate-900/70 px-2 py-1">
-                                                <p class="text-[10px] text-slate-400">"Ceil cap"</p>
+                                                <p class="text-[10px] text-slate-400">"Ceiling cap"</p>
                                                 <p class=format!("font-mono font-semibold {ceil_cls}")>{format!("{:.1}%", p.ceiling_capped_pct)}</p>
                                             </div>
                                         </div>
@@ -536,7 +550,13 @@ pub fn GlycemicEpisodesAndRocSection(
                     </p>
                 </div>
                 <div>
-                    <p class="text-[11px] font-medium text-slate-400">"Mean |15-min Velocity|"</p>
+                    <p class="flex items-center text-[11px] font-medium text-slate-400">
+                        <span>"Avg. 15-Min Speed"</span>
+                        <InfoTip
+                            term="15-Min Glucose Velocity"
+                            text="Average rate of glucose change over unbroken 15-minute intervals, in mg/dL per minute. Lower numbers indicate steadier glucose."
+                        />
+                    </p>
                     <p class="mt-1 font-mono text-base font-semibold text-cyan-200">
                         {format!("{:.2} mg/dL/min ({} pairs)", roc.mean_abs_roc, roc.sample_pairs)}
                     </p>
@@ -709,7 +729,7 @@ pub fn DailyGlucoseAndSessionsSection(
                 {(total_days > 14).then(|| view! {
                     <button
                         type="button"
-                        aria-expanded=move || show_all.get()
+                        aria-expanded=move || if show_all.get() { "true" } else { "false" }
                         on:click=move |_| show_all.update(|v| *v = !*v)
                         class="min-h-[36px] rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3.5 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
                     >
@@ -774,7 +794,8 @@ pub fn DailyGlucoseAndSessionsSection(
                 })}
             </div>
 
-            // 4-color daily TIR bar legend & interactive inspection strip
+            // 4-color daily TIR bar legend & interactive inspection strip (InfoTips live outside
+            // `overflow-x-auto` so popovers are never clipped by the horizontal scroll container)
             <div class="flex flex-wrap items-center justify-between gap-2 text-[11px]">
                 <div class="flex flex-wrap items-center gap-3 text-slate-400">
                     <span class="font-medium text-slate-300">"Daily Bar Legend:"</span>
@@ -794,6 +815,20 @@ pub fn DailyGlucoseAndSessionsSection(
                         <span class="inline-block h-2.5 w-2.5 rounded-sm bg-amber-400"></span>
                         "High (>180)"
                     </span>
+                    <span class="inline-flex items-center text-slate-300">
+                        "Wear %"
+                        <InfoTip
+                            term="Active Wear %"
+                            text="Percentage of expected sensor readings captured during that calendar day."
+                        />
+                    </span>
+                    <span class="inline-flex items-center text-slate-300">
+                        "Sensor Cap"
+                        <InfoTip
+                            term="Ceiling & Floor Cap"
+                            text="Share of that day's readings pinned at the sensor's upper or lower measurement limit (e.g., >200 or <55 mg/dL on Abbott Lingo)."
+                        />
+                    </span>
                 </div>
                 <p role="status" aria-live="polite" class="font-mono text-cyan-200">
                     {move || {
@@ -810,11 +845,11 @@ pub fn DailyGlucoseAndSessionsSection(
                     <thead>
                         <tr class="border-b border-white/10 text-[11px] uppercase tracking-wider text-slate-400">
                             <th class="py-2 pr-3">"Date"</th>
-                            <th class="py-2 pr-3">"Rdgs / Wear"</th>
+                            <th class="py-2 pr-3">"Readings / Wear"</th>
                             <th class="py-2 pr-3">"Mean"</th>
                             <th class="py-2 pr-3">"Min–Max"</th>
-                            <th class="py-2 pr-3">"TIR / 5-Band Mix"</th>
-                            <th class="py-2">"Ceil Cap"</th>
+                            <th class="py-2 pr-3">"TIR / 4-Band Mix"</th>
+                            <th class="py-2">"Ceiling Cap"</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-white/5 text-slate-200">
@@ -839,6 +874,16 @@ pub fn DailyGlucoseAndSessionsSection(
                                         } else {
                                             String::new()
                                         };
+                                        let min_prefix = if day.floor_capped_pct > 0.0 {
+                                            "≤"
+                                        } else {
+                                            ""
+                                        };
+                                        let max_prefix = if day.ceiling_capped_pct > 0.0 {
+                                            "≥"
+                                        } else {
+                                            ""
+                                        };
                                         let date = day.date.clone();
                                         let rdgs = day.reading_count;
                                         let wear = day.active_wear_pct;
@@ -857,7 +902,7 @@ pub fn DailyGlucoseAndSessionsSection(
                                                     {format!("{mean:.0} mg/dL")}
                                                 </td>
                                                 <td class="py-2 pr-3 whitespace-nowrap font-mono text-slate-300">
-                                                    {format!("{min_g:.0}–{max_g:.0}")}
+                                                    {format!("{min_prefix}{min_g:.0}–{max_prefix}{max_g:.0}")}
                                                 </td>
                                                 <td class="py-2 pr-3">
                                                     {
@@ -1046,6 +1091,8 @@ mod tests {
         }
         .to_html();
         assert!(daily_html.contains("Daily Breakdown &amp; Sensor Wear Sessions"));
+        assert!(daily_html.contains("TIR / 4-Band Mix"));
+        assert!(daily_html.contains("≤54–≥201"));
         assert!(daily_html.contains("Show all 28 days"));
         assert!(daily_html.contains("Gaps ≥2h: 1"));
     }
