@@ -43,13 +43,15 @@
       "state": "CT",
       "facilities": 251,
       "retrieved": "2026-11-25",
-      "sha256": "bc8b40296bbc025a221e000b1f4c3f0fec00a600e40de09a164ad47c5eaa7223"
+      "sha256": "10071994e2010c38438342651670f7b0111c19aacbbeebeb72eeb4a3173ea513",
+      "enriched_facilities": 183
     },
     {
       "state": "DC",
       "facilities": 39,
       "retrieved": "2026-11-25",
-      "sha256": "a575ce7f0265e52f36bf9a78ae546e0ac36f68758c5ffe504e28c71a25962926"
+      "sha256": "07e2ef31d7d0aeb4d21ac016bb693c21618caf1403c39afa71307d65c2e1eec1",
+      "enriched_facilities": 3
     },
     {
       "state": "DE",
@@ -133,7 +135,8 @@
       "state": "MD",
       "facilities": 640,
       "retrieved": "2026-11-25",
-      "sha256": "60017ece3d58a1f83c3dacce87a583b2d4f528a281c59aaa9a02a5cfc0eb76dc"
+      "sha256": "81580ef8509f3afc165a6585be32eafa63dc5296d0f64202eaeef7451219f1b2",
+      "enriched_facilities": 2
     },
     {
       "state": "ME",
@@ -145,7 +148,8 @@
       "state": "MI",
       "facilities": 530,
       "retrieved": "2026-11-25",
-      "sha256": "7093e6ea3ca2e71c311ab1f73efe785b25c479559f278e1c6029efa52a309648"
+      "sha256": "6b950c8fcf5ba7a77775b8706b9d20a65d7b9f3dc61c527cc2906f88ccbde176",
+      "enriched_facilities": 281
     },
     {
       "state": "MN",
@@ -157,7 +161,8 @@
       "state": "MO",
       "facilities": 385,
       "retrieved": "2026-11-25",
-      "sha256": "5524ab33fd5adcefcc38c72582aca75075cbd4fa6ac63c6a239739203d01f1cc"
+      "sha256": "e3cd683e5aa16c1dd9c5681c794778dded5bf24d33996cafab5d9f3aaab2847a",
+      "enriched_facilities": 22
     },
     {
       "state": "MP",
@@ -205,7 +210,8 @@
       "state": "NJ",
       "facilities": 520,
       "retrieved": "2026-11-25",
-      "sha256": "43df9dab3006c534e97beaf24ce58634b92dbcef87bbe79926bf2c128808d995"
+      "sha256": "b1e8d23783c05a59168ea2a8572fbd1f5ce15364f1be215caee39fc01bc35201",
+      "enriched_facilities": 34
     },
     {
       "state": "NM",
@@ -290,7 +296,8 @@
       "state": "UT",
       "facilities": 422,
       "retrieved": "2026-11-25",
-      "sha256": "57e2595b281ab21ffa8dc4704d72f4f7f1144dfdd545c1b6da81306900aaae35"
+      "sha256": "320647d7919a11458a0d3da313e61f928db776baf61999e55c938640c2be3537",
+      "enriched_facilities": 22
     },
     {
       "state": "VA",
@@ -320,7 +327,8 @@
       "state": "WI",
       "facilities": 372,
       "retrieved": "2026-11-25",
-      "sha256": "18ecd29a48ad071f85630799a0a979282d0419fdee31c48349126af75cea27c3"
+      "sha256": "b6c1ef5fce3fe64de72c32bd1f34f680785383c2b1bccc2a756c569252c3c717",
+      "enriched_facilities": 6
     },
     {
       "state": "WV",

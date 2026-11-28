@@ -1132,4 +1132,138 @@ mod tests {
         // Taylor Brooks (Wellness) did NOT get LCSW license.
         assert!(catalog.staff_network[4].state_licenses.is_empty());
     }
+
+    #[test]
+    fn central_intake_phone_does_not_cross_attach_multi_site_licenses() {
+        let mut catalog = StateCatalog {
+            state: "AZ".to_string(),
+            retrieved: "2026-11-28".to_string(),
+            facilities: vec![
+                make_facility(
+                    "Horizon Recovery Health",
+                    Some("100 E Camelback Rd"),
+                    "Phoenix",
+                    "AZ",
+                    "85012",
+                    Some("800-555-1234"),
+                ),
+                make_facility(
+                    "Horizon Recovery Health",
+                    Some("4500 N Oracle Rd"),
+                    "Tucson",
+                    "AZ",
+                    "85705",
+                    Some("(800) 555-1234"),
+                ),
+            ],
+            staff_network: Vec::new(),
+        };
+
+        let outcome = StateAdapterOutcome {
+            state: "AZ".to_string(),
+            facility_records: vec![
+                // Site A license: matches Site A by street + ZIP, also lists central intake phone.
+                // Must attach ONLY to Site A, never to Site B.
+                FacilityLicenseRecord {
+                    state: "AZ".to_string(),
+                    agency: "AZDHS".to_string(),
+                    license_number: "ADHS-SITE-A".to_string(),
+                    facility_name: "Horizon Recovery Health LLC".to_string(),
+                    dba_name: None,
+                    license_type: "BHRF".to_string(),
+                    status: LicenseStatus::Active,
+                    street: Some("100 East Camelback Road".to_string()),
+                    city: Some("Phoenix".to_string()),
+                    zip: Some("85012".to_string()),
+                    phone: Some("800-555-1234".to_string()),
+                    licensed_beds: Some(16),
+                    expires_on: None,
+                    disciplinary_actions: None,
+                    inspection_count: None,
+                    verification_url: Some(
+                        "https://azcarecheck.azdhs.gov/s/?lic=ADHS-SITE-A".to_string(),
+                    ),
+                },
+                // Site B license: no street on record, matches Site B by central phone + ZIP 85705.
+                // Conflicting ZIP guard must prevent attaching to Site A (85012).
+                FacilityLicenseRecord {
+                    state: "AZ".to_string(),
+                    agency: "AZDHS".to_string(),
+                    license_number: "ADHS-SITE-B".to_string(),
+                    facility_name: "Horizon Recovery Health LLC".to_string(),
+                    dba_name: None,
+                    license_type: "Outpatient".to_string(),
+                    status: LicenseStatus::Active,
+                    street: None,
+                    city: Some("Tucson".to_string()),
+                    zip: Some("85705".to_string()),
+                    phone: Some("800-555-1234".to_string()),
+                    licensed_beds: None,
+                    expires_on: None,
+                    disciplinary_actions: None,
+                    inspection_count: None,
+                    verification_url: Some(
+                        "https://azcarecheck.azdhs.gov/s/?lic=ADHS-SITE-B".to_string(),
+                    ),
+                },
+                // Third site in another ZIP/street sharing the same central intake phone:
+                // must attach to NEITHER Site A nor Site B.
+                FacilityLicenseRecord {
+                    state: "AZ".to_string(),
+                    agency: "AZDHS".to_string(),
+                    license_number: "ADHS-SITE-C-CONFLICT".to_string(),
+                    facility_name: "Horizon Recovery Health".to_string(),
+                    dba_name: None,
+                    license_type: "BHRF".to_string(),
+                    status: LicenseStatus::Active,
+                    street: Some("999 S Mill Ave".to_string()),
+                    city: Some("Tempe".to_string()),
+                    zip: Some("85281".to_string()),
+                    phone: Some("800-555-1234".to_string()),
+                    licensed_beds: Some(12),
+                    expires_on: None,
+                    disciplinary_actions: None,
+                    inspection_count: None,
+                    verification_url: None,
+                },
+                // Different street inside Site A's ZIP sharing the same central intake phone:
+                // conflicting street guard must prevent attaching to Site A or Site B.
+                FacilityLicenseRecord {
+                    state: "AZ".to_string(),
+                    agency: "AZDHS".to_string(),
+                    license_number: "ADHS-SAME-ZIP-DIFF-STREET".to_string(),
+                    facility_name: "Horizon Recovery Health".to_string(),
+                    dba_name: None,
+                    license_type: "Outpatient".to_string(),
+                    status: LicenseStatus::Active,
+                    street: Some("250 W Osborn Rd".to_string()),
+                    city: Some("Phoenix".to_string()),
+                    zip: Some("85012".to_string()),
+                    phone: Some("800-555-1234".to_string()),
+                    licensed_beds: None,
+                    expires_on: None,
+                    disciplinary_actions: None,
+                    inspection_count: None,
+                    verification_url: None,
+                },
+            ],
+            ..StateAdapterOutcome::default()
+        };
+
+        let summary = apply_state_licensing_to_catalog(&mut catalog, &outcome, "2026-11-28");
+        assert_eq!(summary.facilities_matched, 2);
+        assert_eq!(summary.facility_licenses_attached, 2);
+
+        assert_eq!(catalog.facilities[0].state_licenses.len(), 1);
+        assert_eq!(
+            catalog.facilities[0].state_licenses[0].license_number,
+            "ADHS-SITE-A"
+        );
+
+        assert_eq!(catalog.facilities[1].state_licenses.len(), 1);
+        assert_eq!(
+            catalog.facilities[1].state_licenses[0].license_number,
+            "ADHS-SITE-B"
+        );
+    }
 }
