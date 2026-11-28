@@ -1028,29 +1028,26 @@ fn first_non_empty_str(map: &serde_json::Map<String, Value>, keys: &[&str]) -> O
 fn first_u32(map: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<u32> {
     for &key in keys {
         if let Some(value) = map.get(key) {
-            match value {
-                Value::Number(n) => {
-                    if let Some(u) = n.as_u64() {
-                        return u32::try_from(u).ok();
-                    }
-                    if let Some(f) = n.as_f64() {
-                        if f.is_finite() && f >= 0.0 {
-                            return Some(f.round() as u32);
-                        }
-                    }
-                }
+            let parsed = match value {
+                Value::Number(n) => n.as_u64().and_then(|u| u32::try_from(u).ok()).or_else(|| {
+                    n.as_f64()
+                        .filter(|f| f.is_finite() && *f > 0.0)
+                        .map(|f| f.round() as u32)
+                }),
                 Value::String(s) => {
                     let trimmed = s.trim();
-                    if let Ok(u) = trimmed.parse::<u32>() {
-                        return Some(u);
-                    }
-                    if let Ok(f) = trimmed.parse::<f64>() {
-                        if f.is_finite() && f >= 0.0 {
-                            return Some(f.round() as u32);
-                        }
-                    }
+                    trimmed.parse::<u32>().ok().or_else(|| {
+                        trimmed
+                            .parse::<f64>()
+                            .ok()
+                            .filter(|f| f.is_finite() && *f > 0.0)
+                            .map(|f| f.round() as u32)
+                    })
                 }
-                _ => {}
+                _ => None,
+            };
+            if let Some(v) = parsed.filter(|&n| n > 0) {
+                return Some(v);
             }
         }
     }
