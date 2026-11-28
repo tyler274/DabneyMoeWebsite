@@ -45,7 +45,7 @@ pub fn InfoTip(
             <button
                 type="button"
                 aria-label=format!("Explain {term}")
-                aria-expanded=move || open.get()
+                aria-expanded=move || if open.get() { "true" } else { "false" }
                 aria-describedby=move || open.get().then(|| describedby_id.clone())
                 on:mouseenter=move |_| open.set(true)
                 on:mouseleave=move |_| {
@@ -74,7 +74,7 @@ pub fn InfoTip(
                 data-infotip-term=term
                 class=move || {
                     if open.get() {
-                        "pointer-events-auto absolute bottom-full left-1/2 z-40 mb-2 w-64 -translate-x-1/2 rounded-xl border border-cyan-400/35 bg-slate-950/95 p-3 text-left text-[11px] font-normal normal-case tracking-normal leading-relaxed text-slate-100 shadow-xl backdrop-blur"
+                        "pointer-events-auto absolute bottom-full left-1/2 z-40 mb-2 w-64 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-xl border border-cyan-400/35 bg-slate-950/95 p-3 text-left text-[11px] font-normal normal-case tracking-normal leading-relaxed text-slate-100 shadow-xl backdrop-blur"
                     } else {
                         "hidden"
                     }

@@ -183,14 +183,24 @@ pub fn sample_assessment_history() -> Vec<AssessmentPoint> {
     ]
 }
 
-/// Combine longitudinal baseline assessments with any newly logged check-ins that carry PHQ-9/GAD-7.
+/// Combine longitudinal baseline assessments with any newly logged check-ins that carry PHQ-9/GAD-7,
+/// deduplicating by calendar date (`YYYY-MM-DD`) and sorting chronologically so the trajectory axis
+/// never jumps backward in time.
 pub fn build_assessment_series(
     baseline: &[AssessmentPoint],
     checkins: &[MentalHealthCheckIn],
 ) -> Vec<AssessmentPoint> {
     let mut series = baseline.to_vec();
     for c in checkins {
-        if (c.phq9.is_some() || c.gad7.is_some()) && c.recorded_at != "2026-11-21 07:15" {
+        if c.phq9.is_none() && c.gad7.is_none() {
+            continue;
+        }
+        let checkin_day = c.recorded_at.get(..10).unwrap_or(&c.recorded_at);
+        let duplicate_baseline = baseline.iter().any(|b| {
+            let base_day = b.date.get(..10).unwrap_or(&b.date);
+            base_day == checkin_day && b.phq9 == c.phq9 && b.gad7 == c.gad7
+        });
+        if !duplicate_baseline {
             series.push(AssessmentPoint {
                 date: c.recorded_at.clone(),
                 phq9: c.phq9,
@@ -199,6 +209,7 @@ pub fn build_assessment_series(
             });
         }
     }
+    series.sort_by(|a, b| a.date.cmp(&b.date));
     series
 }
 
@@ -719,6 +730,11 @@ mod tests {
 
         let series = build_assessment_series(&sample_assessment_history(), &checkins);
         assert_eq!(series.len(), 4);
+
+        // Earlier check-ins merged with a later baseline are sorted chronologically.
+        let six_mo = sample_lingo_6mo_checkins();
+        let merged = build_assessment_series(&sample_assessment_history(), &six_mo);
+        assert!(merged.windows(2).all(|w| w[0].date <= w[1].date));
     }
 
     #[test]

@@ -669,13 +669,29 @@ pub fn select_notable_spike_peaks(
     readings: &[LingoReading],
     max_markers: usize,
 ) -> Vec<LingoReading> {
+    select_notable_spike_peaks_above(readings, 140.0, max_markers)
+}
+
+/// Select one representative peak per contiguous excursion above `threshold_mg_dl` (or
+/// ceiling-capped), breaking excursions across sensor gaps exceeding `1.5` hours and spreading
+/// up to `max_markers` across equal-width temporal buckets.
+pub fn select_notable_spike_peaks_above(
+    readings: &[LingoReading],
+    threshold_mg_dl: f64,
+    max_markers: usize,
+) -> Vec<LingoReading> {
     if readings.is_empty() || max_markers == 0 {
         return Vec::new();
     }
+    let threshold = if threshold_mg_dl.is_finite() {
+        threshold_mg_dl
+    } else {
+        140.0
+    };
 
     const EXCURSION_GAP_BREAK_HOURS: f64 = 1.5;
 
-    // Group contiguous readings > 140 mg/dL, breaking across gaps > 1.5h.
+    // Group contiguous readings > threshold (or ceiling-capped), breaking across gaps > 1.5h.
     // For each excursion, pick the midpoint of its peak plateau so flat 201 mg/dL runs
     // emit exactly one clean representative marker.
     struct ExcursionPeak {
@@ -708,7 +724,7 @@ pub fn select_notable_spike_peaks(
     };
 
     for (idx, r) in readings.iter().enumerate() {
-        if r.glucose_mg_dl > 140.0 {
+        if r.bound.is_ceiling_capped() || r.glucose_mg_dl > threshold {
             match active_start {
                 None => {
                     active_start = Some(idx);
@@ -3235,7 +3251,13 @@ pub fn AdaTimeInRangeBar(summary: ClinicalGlucoseSummary) -> impl IntoView {
 
 /// 24-Hour Ambulatory Glucose Profile (AGP) percentile ribbon SVG (`p5–p95`, `p25–p75`, `p50`).
 #[component]
-pub fn AgpPercentileChart(bins: Vec<AgpHourBin>) -> impl IntoView {
+pub fn AgpPercentileChart(
+    bins: Vec<AgpHourBin>,
+    /// Optional sensor ceiling (mg/dL) to draw as a dashed orange reference hairline ONLY when the
+    /// summarized window actually contains ceiling-capped readings.
+    #[prop(optional)]
+    sensor_ceiling_mg_dl: Option<f64>,
+) -> impl IntoView {
     let width = 760.0_f64;
     let height = 210.0_f64;
     let pad_l = 44.0_f64;
@@ -3245,15 +3267,18 @@ pub fn AgpPercentileChart(bins: Vec<AgpHourBin>) -> impl IntoView {
     let plot_w = width - pad_l - pad_r;
     let plot_h = height - pad_t - pad_b;
 
-    let populated: Vec<AgpHourBin> = bins.into_iter().filter(|b| b.count > 0).collect();
+    let mut populated: Vec<AgpHourBin> = bins.into_iter().filter(|b| b.count > 0).collect();
+    populated.sort_by_key(|b| b.hour);
+    let sensor_ceiling = sensor_ceiling_mg_dl.filter(|v| v.is_finite() && *v > 0.0);
     let (min_g, max_g) = glucose_axis_domain(
         populated
             .iter()
             .flat_map(|b| [b.p5, b.p95])
-            .chain([70.0, 180.0]),
+            .chain([70.0, 180.0])
+            .chain(sensor_ceiling),
     );
 
-    let x_for = |h: u8| pad_l + (f64::from(h) / 23.0) * plot_w;
+    let x_for = |h: u8| pad_l + (f64::from(h.min(23)) / 23.0) * plot_w;
     let y_for = |g: f64| {
         let clamped = g.clamp(min_g, max_g);
         pad_t + plot_h - ((clamped - min_g) / (max_g - min_g)) * plot_h
@@ -3264,37 +3289,77 @@ pub fn AgpPercentileChart(bins: Vec<AgpHourBin>) -> impl IntoView {
         .filter(|&(_, y)| {
             [70.0, 140.0, 180.0]
                 .iter()
-                .all(|&r| (y - y_for(r)).abs() > 10.0)
+                .all(|&r| (y - y_for(r)).abs() > 12.0)
         })
         .collect();
 
-    let build_ribbon =
-        |upper: &dyn Fn(&AgpHourBin) -> f64, lower: &dyn Fn(&AgpHourBin) -> f64| -> String {
-            if populated.len() < 2 {
-                return String::new();
+    // Split populated hours across >2h missing blocks (matching `DEFAULT_CHART_GAP_HOURS`) so
+    // sparse/BGM traces never draw phantom ribbons across multi-hour unmeasured overnight/midday
+    // gaps, while 1–2h CGM samples connect smoothly and isolated 1-hour bins render visible
+    // percentile whiskers + median dots instead of a blank plot.
+    let mut contiguous_runs: Vec<Vec<AgpHourBin>> = Vec::new();
+    for bin in &populated {
+        if let Some(last_run) = contiguous_runs.last_mut() {
+            if last_run
+                .last()
+                .is_some_and(|prev| bin.hour.saturating_sub(prev.hour) <= 2)
+            {
+                last_run.push(bin.clone());
+                continue;
             }
-            let mut pts: Vec<String> = populated
-                .iter()
-                .map(|b| format!("{:.1},{:.1}", x_for(b.hour), y_for(upper(b))))
-                .collect();
-            for b in populated.iter().rev() {
-                pts.push(format!("{:.1},{:.1}", x_for(b.hour), y_for(lower(b))));
-            }
-            pts.join(" ")
-        };
+        }
+        contiguous_runs.push(vec![bin.clone()]);
+    }
 
-    let outer_poly = build_ribbon(&|b| b.p95, &|b| b.p5);
-    let iqr_poly = build_ribbon(&|b| b.p75, &|b| b.p25);
-    let median_line: String = populated
+    let build_ribbon_for = |run: &[AgpHourBin],
+                            upper: &dyn Fn(&AgpHourBin) -> f64,
+                            lower: &dyn Fn(&AgpHourBin) -> f64|
+     -> String {
+        if run.len() < 2 {
+            return String::new();
+        }
+        let mut pts: Vec<String> = run
+            .iter()
+            .map(|b| format!("{:.1},{:.1}", x_for(b.hour), y_for(upper(b))))
+            .collect();
+        for b in run.iter().rev() {
+            pts.push(format!("{:.1},{:.1}", x_for(b.hour), y_for(lower(b))));
+        }
+        pts.join(" ")
+    };
+
+    let outer_polys: Vec<String> = contiguous_runs
         .iter()
-        .map(|b| format!("{:.1},{:.1}", x_for(b.hour), y_for(b.p50)))
-        .collect::<Vec<_>>()
-        .join(" ");
+        .filter(|r| r.len() >= 2)
+        .map(|r| build_ribbon_for(r, &|b| b.p95, &|b| b.p5))
+        .collect();
+    let iqr_polys: Vec<String> = contiguous_runs
+        .iter()
+        .filter(|r| r.len() >= 2)
+        .map(|r| build_ribbon_for(r, &|b| b.p75, &|b| b.p25))
+        .collect();
+    let median_lines: Vec<String> = contiguous_runs
+        .iter()
+        .filter(|r| r.len() >= 2)
+        .map(|r| {
+            r.iter()
+                .map(|b| format!("{:.1},{:.1}", x_for(b.hour), y_for(b.p50)))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect();
+    let isolated_bins: Vec<AgpHourBin> = contiguous_runs
+        .iter()
+        .filter(|r| r.len() == 1)
+        .map(|r| r[0].clone())
+        .collect();
 
     let y70 = y_for(70.0);
     let y140 = y_for(140.0);
     let y180 = y_for(180.0);
-    let strip_w = (plot_w / 24.0).max(12.0);
+    let y_ceiling = sensor_ceiling.map(&y_for);
+    let half_hour_step = (plot_w / 23.0) * 0.5;
+    let plot_right = width - pad_r;
     let selected_hour = RwSignal::new(Option::<u8>::None);
     let stored_bins = StoredValue::new(populated.clone());
 
@@ -3308,42 +3373,79 @@ pub fn AgpPercentileChart(bins: Vec<AgpHourBin>) -> impl IntoView {
             >
                 // Round value gridlines, labelled where they clear the 70/140/180 labels
                 {grid_ticks.into_iter().map(|(g, y)| view! {
-                    <line x1=pad_l y1=y x2=width - pad_r y2=y stroke="rgba(148, 163, 184, 0.12)" />
+                    <line x1=pad_l y1=y x2=plot_right y2=y stroke="rgba(148, 163, 184, 0.12)" />
                     <text x="6" y=y + 4.0 fill="#94a3b8" font-size="10">{format!("{g:.0}")}</text>
                 }).collect_view()}
                 // 70-180 clinical target band + 70-140 tight sub-band
                 <rect x=pad_l y=y180 width=plot_w height=(y70 - y180).max(1.0) fill="rgba(45, 212, 191, 0.06)" />
                 <rect x=pad_l y=y140 width=plot_w height=(y70 - y140).max(1.0) fill="rgba(52, 211, 153, 0.09)" />
-                <line x1=pad_l y1=y180 x2=width - pad_r y2=y180 stroke="rgba(251, 191, 36, 0.35)" stroke-dasharray="4 4" />
-                <line x1=pad_l y1=y140 x2=width - pad_r y2=y140 stroke="rgba(52, 211, 153, 0.35)" stroke-dasharray="3 3" />
-                <line x1=pad_l y1=y70 x2=width - pad_r y2=y70 stroke="rgba(251, 113, 133, 0.40)" stroke-dasharray="4 4" />
+                {y_ceiling.map(|yc| view! {
+                    <line
+                        x1=pad_l
+                        y1=yc
+                        x2=plot_right
+                        y2=yc
+                        stroke="rgba(249, 115, 22, 0.50)"
+                        stroke-dasharray="2 3"
+                    />
+                })}
+                <line x1=pad_l y1=y180 x2=plot_right y2=y180 stroke="rgba(251, 191, 36, 0.35)" stroke-dasharray="4 4" />
+                <line x1=pad_l y1=y140 x2=plot_right y2=y140 stroke="rgba(52, 211, 153, 0.35)" stroke-dasharray="3 3" />
+                <line x1=pad_l y1=y70 x2=plot_right y2=y70 stroke="rgba(251, 113, 133, 0.40)" stroke-dasharray="4 4" />
 
-                // Outer 5th-95th ribbon
-                {(!outer_poly.is_empty()).then(|| view! {
-                    <polygon points=outer_poly fill="rgba(34, 211, 238, 0.14)" />
-                })}
-                // Inner 25th-75th IQR ribbon
-                {(!iqr_poly.is_empty()).then(|| view! {
-                    <polygon points=iqr_poly fill="rgba(34, 211, 238, 0.30)" />
-                })}
-                // 50th percentile median curve
-                {(!median_line.is_empty()).then(|| view! {
+                // Outer 5th-95th ribbons (broken across empty clock hours)
+                {outer_polys.into_iter().map(|pts| view! {
+                    <polygon points=pts fill="rgba(34, 211, 238, 0.14)" />
+                }).collect_view()}
+                // Inner 25th-75th IQR ribbons
+                {iqr_polys.into_iter().map(|pts| view! {
+                    <polygon points=pts fill="rgba(34, 211, 238, 0.30)" />
+                }).collect_view()}
+                // 50th percentile median curves
+                {median_lines.into_iter().map(|pts| view! {
                     <polyline
                         fill="none"
                         stroke="#22d3ee"
                         stroke-width="2.5"
                         stroke-linecap="round"
                         stroke-linejoin="round"
-                        points=median_line
+                        points=pts
                     />
-                })}
+                }).collect_view()}
+                // Isolated populated clock hours (1-hour exports or sparse BGM): whisker + median dot
+                {isolated_bins.into_iter().map(|b| {
+                    let cx = x_for(b.hour);
+                    let y_p5 = y_for(b.p5);
+                    let y_p25 = y_for(b.p25);
+                    let y_p50 = y_for(b.p50);
+                    let y_p75 = y_for(b.p75);
+                    let y_p95 = y_for(b.p95);
+                    view! {
+                        <g>
+                            <line x1=cx y1=y_p95 x2=cx y2=y_p5 stroke="rgba(34, 211, 238, 0.45)" stroke-width="2" />
+                            <line x1=cx y1=y_p75 x2=cx y2=y_p25 stroke="rgba(34, 211, 238, 0.85)" stroke-width="5" stroke-linecap="round" />
+                            <circle cx=cx cy=y_p50 r="3.5" fill="#22d3ee" stroke="#0f172a" stroke-width="1.2" />
+                        </g>
+                    }
+                }).collect_view()}
 
-                // Interactive hover / focus / tap hour inspection strips
+                // Interactive hover / focus / tap hour inspection strips (clamped strictly to plot bounds)
                 {populated.into_iter().map(|bin| {
                     let h = bin.hour;
                     let cx = x_for(h);
                     let cy = y_for(bin.p50);
-                    let rx = (cx - strip_w / 2.0).max(pad_l);
+                    let left = if h == 0 {
+                        pad_l
+                    } else {
+                        (cx - half_hour_step).max(pad_l)
+                    };
+                    let right = if h == 23 {
+                        plot_right
+                    } else {
+                        (cx + half_hour_step).min(plot_right)
+                    };
+                    let strip_x = left;
+                    let strip_w = (right - left).max(1.0);
                     let tip = format!(
                         "{h:02}:00 — Median {:.0} mg/dL · IQR (p25–p75) {:.0}–{:.0} · Outer (p5–p95) {:.0}–{:.0} (n={})",
                         bin.p50, bin.p25, bin.p75, bin.p5, bin.p95, bin.count
@@ -3361,7 +3463,7 @@ pub fn AgpPercentileChart(bins: Vec<AgpHourBin>) -> impl IntoView {
                         >
                             <title>{tip}</title>
                             <rect
-                                x=rx
+                                x=strip_x
                                 y=pad_t
                                 width=strip_w
                                 height=plot_h
@@ -4239,5 +4341,133 @@ Time of Glucose Reading [T=(local time) +/- (time zone offset)], Measurement(mg/
             view! { <AgpPercentileChart bins=vec![bin(0, 180.0), bin(12, 310.0)] /> }.to_html();
         assert!(html.contains(">300</text>"), "{html}");
         assert!(html.contains(">100</text>"), "{html}");
+        // Non-contiguous hours (0 and 12) render isolated whiskers/dots instead of bridging across
+        // empty overnight/morning hours.
+        assert!(!html.contains("<polygon"));
+        assert_eq!(html.matches("<circle").count(), 2);
+    }
+
+    #[test]
+    fn select_notable_spike_peaks_above_respects_tight_and_high_custom_thresholds() {
+        let mut readings = Vec::new();
+        // 40 distinct excursions peaking at 165 mg/dL (above 140, below 180)
+        for i in 0..40 {
+            let base = i as f64 * 4.0;
+            readings.push(LingoReading {
+                timestamp: format!("2026-07-01T00:00-07:00#{i}a"),
+                hour_offset: base,
+                glucose_mg_dl: 100.0,
+                lingo_count: None,
+                tag: None,
+                bound: GlucoseReadingBound::Measured,
+            });
+            readings.push(LingoReading {
+                timestamp: format!("2026-07-01T00:30-07:00#{i}b"),
+                hour_offset: base + 0.5,
+                glucose_mg_dl: 165.0,
+                lingo_count: None,
+                tag: None,
+                bound: GlucoseReadingBound::Measured,
+            });
+        }
+        // Plus one moderate excursion at 130 mg/dL and one true >180 excursion at 195 mg/dL.
+        readings.push(LingoReading {
+            timestamp: "2026-07-10T10:00-07:00".to_string(),
+            hour_offset: 170.0,
+            glucose_mg_dl: 130.0,
+            lingo_count: None,
+            tag: None,
+            bound: GlucoseReadingBound::Measured,
+        });
+        readings.push(LingoReading {
+            timestamp: "2026-07-10T12:00-07:00".to_string(),
+            hour_offset: 172.0,
+            glucose_mg_dl: 195.0,
+            lingo_count: None,
+            tag: None,
+            bound: GlucoseReadingBound::Measured,
+        });
+
+        let ada_peaks = select_notable_spike_peaks_above(&readings, 180.0, 36);
+        assert_eq!(ada_peaks.len(), 1);
+        assert!((ada_peaks[0].glucose_mg_dl - 195.0).abs() < 1e-6);
+
+        let tight_trace = vec![
+            LingoReading {
+                timestamp: "2026-07-01T08:00-07:00".to_string(),
+                hour_offset: 0.0,
+                glucose_mg_dl: 98.0,
+                lingo_count: None,
+                tag: None,
+                bound: GlucoseReadingBound::Measured,
+            },
+            LingoReading {
+                timestamp: "2026-07-01T08:30-07:00".to_string(),
+                hour_offset: 0.5,
+                glucose_mg_dl: 128.0,
+                lingo_count: None,
+                tag: None,
+                bound: GlucoseReadingBound::Measured,
+            },
+        ];
+        let tight_peaks = select_notable_spike_peaks_above(&tight_trace, 120.0, 36);
+        assert_eq!(tight_peaks.len(), 1);
+        assert!((tight_peaks[0].glucose_mg_dl - 128.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn agp_renders_single_hour_whisker_clamps_edge_strips_and_marks_ceiling_cap() {
+        let one_bin = AgpHourBin {
+            hour: 10,
+            count: 8,
+            p5: 90.0,
+            p25: 110.0,
+            p50: 145.0,
+            p75: 185.0,
+            p95: 201.0,
+        };
+        let single_html =
+            view! { <AgpPercentileChart bins=vec![one_bin.clone()] sensor_ceiling_mg_dl=200.0 /> }
+                .to_html();
+        assert!(
+            single_html.contains("<circle"),
+            "single populated hour must render a median dot instead of blank SVG"
+        );
+        assert!(
+            single_html.contains("rgba(249, 115, 22, 0.50)"),
+            "ceiling-saturated AGP should render a sensor-cap reference line when explicit ceiling is supplied"
+        );
+        let uncapped_html = view! { <AgpPercentileChart bins=vec![one_bin] /> }.to_html();
+        assert!(
+            !uncapped_html.contains("rgba(249, 115, 22, 0.50)"),
+            "uncapped traces above 200 mg/dL must not draw a false Lingo ceiling-cap line"
+        );
+
+        let edge_bins = vec![
+            AgpHourBin {
+                hour: 0,
+                count: 5,
+                p5: 80.0,
+                p25: 90.0,
+                p50: 100.0,
+                p75: 110.0,
+                p95: 120.0,
+            },
+            AgpHourBin {
+                hour: 23,
+                count: 5,
+                p5: 80.0,
+                p25: 90.0,
+                p50: 100.0,
+                p75: 110.0,
+                p95: 120.0,
+            },
+        ];
+        let edge_html = view! { <AgpPercentileChart bins=edge_bins /> }.to_html();
+        // Hour 23 strip must end strictly at plot_right = 740 (never x=725.5 width=29 overflowing to 754.5).
+        assert!(
+            !edge_html.contains("x=\"725.5\""),
+            "hour 23 hit strip must not overflow past right plot edge"
+        );
     }
 }
